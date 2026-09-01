@@ -19,7 +19,9 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1girl, masterpiece, best quality, red hair, crimson flaming katana, knight armor, intense gaze, fire sparks',
     skills: [{
       name: '일섬: 3연속 홍련참',
-      description: '3연속 베기로 총 18 화염 피해를 입히고 적에게 화상을 부여합니다.',
+      // ⚠️ 엔진은 multiHit을 damage에 **곱한다** (18 × 3 = 54).
+      //    "총 18"이라 적혀 있어 실제의 1/3로 오해하게 만들었다.
+      description: '3연속 베기로 매회 18씩 총 54 화염 피해를 입히고 2턴간 화상(6)을 부여합니다. 30% 확률로 치명타 1.8배.',
       cost: 3,
       damage: 18,
       multiHit: 3,
@@ -45,7 +47,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1girl, masterpiece, ice sorceress, blue silver hair, crystal staff, snowflakes, freezing aura',
     skills: [{
       name: '프로스트 노바 & 기절',
-      description: '12 냉기 피해를 주고 적을 1턴간 완전히 기절시킵니다.',
+      description: '12 냉기 피해를 주고 적을 1턴간 기절시키며 카드 1장을 드로우합니다.',
       cost: 2,
       damage: 12,
       drawCards: 1,
@@ -69,7 +71,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1girl, valkyrie, golden hair, lightning spear, wings of light, electric aura',
     skills: [{
       name: '천벌의 뇌창 & 과충전',
-      description: '20의 강력한 번개 피해와 함께 다음 카드를 2연속 발동합니다!',
+      description: '20 번개 피해를 주고 다음 카드를 2연속 발동합니다. 40% 확률로 치명타 1.8배.',
       cost: 3,
       damage: 20,
       critChance: 0.4,
@@ -93,7 +95,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1girl, holy priestess, blonde, white gold robes, glowing halo, holy barrier',
     skills: [{
       name: '아이기스의 무적 은혜',
-      description: '14 방어막을 얻고 체력을 8 회복하며 1턴간 무적 결계를 펼칩니다.',
+      description: '방어막 14를 얻고 본체 체력 8을 회복하며 1턴간 무적 결계를 펼칩니다.',
       cost: 2,
       shield: 14,
       heal: 8,
@@ -117,7 +119,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1boy, dark assassin, hooded cloak, glowing violet eyes, twin daggers',
     skills: [{
       name: '그림자 흡혈 암살',
-      description: '적 방어막을 100% 무시하고 피해의 50%를 흡혈합니다. (보스 체력 35% 이하 시 처형 2배 피해)',
+      description: '적 방어막을 무시하고 10 피해를 준 뒤 그 50%를 본체 체력으로 흡혈합니다. 상대 체력 35% 이하면 처형으로 2배 피해.',
       cost: 1,
       damage: 10,
       pierceShield: true,
@@ -164,7 +166,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: 'glowing clockwork portal, time rift, holy golden feathers, sacred divine light, cosmic dust',
     skills: [{
       name: '시간의 은총',
-      description: '[즉발 주문] 마나 +1을 충전하고 카드 1장을 드로우하며, 1턴간 무적 결계를 펼칩니다.',
+      description: '[즉발 주문] 마나 +1 충전, 카드 1장 드로우, 본체 체력 8 회복, 1턴간 무적 결계.',
       cost: 2,
       manaGain: 1,
       drawCards: 1,
@@ -189,7 +191,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: 'crystal magical tower, floating glowing blue crystals, mana fountain, fantasy architecture, ancient runes',
     skills: [{
       name: '마나 공명 오라',
-      description: '[건축물 패시브] 매 턴 시작 시 마나 +1을 영구 추가 공급하며, 턴 종료 시 무작위 아군 1체에게 실드 +6을 부여합니다.',
+      description: '[건축물 패시브] 매 턴 시작 시 마나 +1을 공급하고, 턴 종료 시 본체 방어막 +6을 충전합니다.',
       cost: 2,
       passiveEffect: {
         type: 'mana_battery',
@@ -213,7 +215,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: 'magnificent holy fortress castle, glowing golden barrier, heavenly citadel, fantasy stone stronghold',
     skills: [{
       name: '철옹성의 가호',
-      description: '[건축물 도발] 보스의 단일 공격을 최우선으로 흡수합니다. 매 턴 종료 시 모든 아군과 본체에 방어막 +8 & 체력 4를 회복시킵니다.',
+      description: '[건축물 도발] 상대의 단일 공격을 최우선으로 흡수합니다. 매 턴 종료 시 본체 방어막 +8, 본체 체력 +4, 자신의 내구도를 수리합니다.',
       cost: 3,
       taunt: true,
       passiveEffect: {
@@ -243,7 +245,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: '1boy, wandering lone mercenary swordsman, leather cloak, broadsword, rugged handsome, fantasy anime style',
     skills: [{
       name: '신속한 2연속 베기',
-      description: '[범용 용병] 2연속 베기로 12 피해를 입히고 치명타 확률이 +25% 증가합니다.',
+      description: '[범용 용병] 2연속 베기로 매회 12씩 총 24 피해. 25% 확률로 치명타 1.8배.',
       cost: 2,
       damage: 12,
       multiHit: 2,
@@ -316,7 +318,7 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: 'giant ancient stone moss golem, glowing green core crystal, massive rock fists, protective guardian stance',
     skills: [{
       name: '단단한 바위 도발',
-      description: '[범용 도발] 적의 단일 공격을 최우선으로 흡수하며, 소환 시 방어막 +8을 획득합니다.',
+      description: '[범용 도발] 상대의 단일 공격을 최우선으로 흡수하며, 소환 시 본체 방어막 +8을 획득합니다.',
       cost: 2,
       taunt: true,
       shield: 8

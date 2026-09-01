@@ -6,8 +6,9 @@
 //  2) "도발 우선 -> 전방 유닛 -> 본체 직격" 타겟 선택이 3곳에 복붙돼 있었다.
 
 import { escapeHtml } from './dom-utils.js';
-import { resolveTargetKey } from './effect-targets.js';
+import { resolveTargetKey, readHpTarget } from './effect-targets.js';
 import { applyStatus } from './status-effects.js';
+import { battleRng } from './rng.js';
 
 /**
  * 공격 대상 선택. 실드 관통이면 전열을 무시하고 본체(null)를 노린다.
@@ -92,6 +93,26 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     let dmg = skill.damage;
     if (skill.multiHit > 1) dmg *= skill.multiHit;
 
+    // ⚡ 치명타 — 예전에는 **어디에도 구현이 없었다.**
+    //    카드에 "크리 30%" 뱃지가 뜨고 EFFECT_COSTS에서 예산까지 먹는데
+    //    실제로는 아무 일도 하지 않았다.
+    //    ⚠️ 반드시 battleRng를 쓴다. Math.random을 쓰면 PvP 락스텝이 깨진다.
+    if (skill.critChance > 0 && battleRng().chance(skill.critChance)) {
+      const mult = skill.critMultiplier || 1.8;
+      dmg = Math.floor(dmg * mult);
+      addBattleLog(`<span class="text-amber-300 font-bold">⚡ 치명타! 피해가 ${mult}배로 증폭됩니다. (${dmg})</span>`);
+    }
+
+    // 💀 처형 — 상대 본체가 문턱 이하면 배수 피해. 이것도 보스 전용이었다.
+    if (skill.executeThreshold > 0 && helpers.foeHp && helpers.foeMaxHp) {
+      const cur = helpers.foeHp();
+      const max = helpers.foeMaxHp();
+      if (max > 0 && cur <= max * skill.executeThreshold) {
+        dmg = Math.floor(dmg * 2);
+        addBattleLog(`<span class="text-red-400 font-black">💀 처형! 빈사 상태를 노려 피해가 2배가 됩니다. (${dmg})</span>`);
+      }
+    }
+
     // 🎯 플레이어가 대상을 지정했으면 그 대상에게만 들어간다.
     //    (opts.picked — targeting.js가 고른 키 배열)
     const picked = Array.isArray(opts.picked) ? opts.picked : null;
@@ -119,6 +140,17 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     } else {
       dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
     }
+
+    // 🩸 흡혈 — 가한 피해의 일부를 본체 체력으로 되돌린다.
+    //    보스 턴에는 구현돼 있었는데 **플레이어 카드에는 없었다.**
+    //    ([심연의 암살자 레이븐]이 "50% 흡혈"이라 적어놓고 아무것도 안 했다)
+    if (skill.lifestealPercent > 0) {
+      const healed = Math.floor(dmg * skill.lifestealPercent);
+      if (healed > 0) {
+        game.playerHp = Math.min(game.playerMaxHp, game.playerHp + healed);
+        addBattleLog(`<span class="text-rose-300 font-bold">🩸 흡혈로 본체 체력 +${healed} 회복!</span>`);
+      }
+    }
   }
 
   // 2. 방어막
@@ -129,10 +161,24 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     if (helpers.onShielded) helpers.onShielded();
   }
 
-  // 3. 치유
+  // 3. 치유 — ❤️ 본체와 소환수 중 어느 체력을 회복할지 카드가 정한다.
+  //    예전에는 무조건 본체였고, 그래서 카드의 ❤️와 설명문이 서로 다른 것을 가리켰다.
   if (skill.heal > 0) {
-    game.playerHp = Math.min(game.playerMaxHp, game.playerHp + skill.heal);
-    addBattleLog(`<span class="text-emerald-400">💖 ${cardName}의 치유로 체력 +${skill.heal} 회복!</span>`);
+    if (readHpTarget(skill) === 'minion') {
+      // 이 카드가 필드에 낸 소환수를 회복시킨다. 아직 안 나왔으면 시전 대상이 없다.
+      const self = opts.sourceEntity
+        || (game.playerMinions || []).find(m => m && (m.instanceId === card.instanceId || m.name === card.name));
+      if (self) {
+        const before = self.currentHp;
+        self.currentHp = Math.min(self.maxHp, self.currentHp + skill.heal);
+        addBattleLog(`<span class="text-emerald-400">💖 [${escapeHtml(self.name)}] 자신의 체력 ${before} → ${self.currentHp}</span>`);
+      } else {
+        addBattleLog(`<span class="text-slate-400">회복할 소환수가 전장에 없습니다.</span>`);
+      }
+    } else {
+      game.playerHp = Math.min(game.playerMaxHp, game.playerHp + skill.heal);
+      addBattleLog(`<span class="text-emerald-400">💖 ${cardName}의 치유로 본체 체력 +${skill.heal} 회복!</span>`);
+    }
   }
 
   // 4. 마나

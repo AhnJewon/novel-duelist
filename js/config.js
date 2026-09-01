@@ -1,5 +1,6 @@
 // config.js - 게임 상수 및 설정
-import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget } from './effect-targets.js';
+import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
+         HP_TARGETS, readHpTarget, hpTargetCostMultiplier } from './effect-targets.js';
 
 export const ELEMENT_SVG_ART = {
   fire: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="%23ea580c"/><stop offset="60%" stop-color="%23991b1b"/><stop offset="100%" stop-color="%231a0505"/></radialGradient></defs><rect width="400" height="400" fill="url(%23g)"/><circle cx="200" cy="200" r="90" fill="%23fef08a" opacity="0.25"/><text x="200" y="240" font-size="110" text-anchor="middle">🔥</text></svg>`,
@@ -247,8 +248,16 @@ export function evaluateCardPower(cardData) {
   const tMult = targetCostMultiplier(skill);
   const TARGET_SCALED = new Set(['damage', 'heal', 'statusEffect', 'multiHit', 'lifestealPercent']);
 
-  const effectPower = effects.reduce(
-    (sum, e) => sum + e.cost * (TARGET_SCALED.has(e.key) ? tMult : 1), 0);
+  // ❤️ 체력 대상 배수 — 본체 회복이 소환수 회복보다 비싸다.
+  //    본체 체력은 패배까지의 거리를 늘리지만, 소환수 체력은 그 소환수가 죽으면 사라진다.
+  const hMult = hpTargetCostMultiplier(skill);
+
+  const effectPower = effects.reduce((sum, e) => {
+    let c = e.cost;
+    if (TARGET_SCALED.has(e.key)) c *= tMult;
+    if (e.key === 'heal') c *= hMult;
+    return sum + c;
+  }, 0);
   const stats = statPower(cardData || {});
   const used = effectPower + stats;
   const affordable = affordablePower(rarity, cardData ? cardData.cost : 0);
@@ -315,9 +324,13 @@ export function enforcePowerBudget(cardData, skill) {
   const TARGET_SCALED = new Set(['damage', 'heal', 'statusEffect', 'multiHit', 'lifestealPercent']);
   const usedPower = () => {
     const m = targetCostMultiplier(out);
-    return listActiveEffects(out)
-      .reduce((s, e) => s + e.cost * (TARGET_SCALED.has(e.key) ? m : 1), 0)
-      + statPower({ ...cardData, attack: atk, hp, defense: def });
+    const h = hpTargetCostMultiplier(out);
+    return listActiveEffects(out).reduce((s, e) => {
+      let c = e.cost;
+      if (TARGET_SCALED.has(e.key)) c *= m;
+      if (e.key === 'heal') c *= h;      // ❤️ 본체 회복이 소환수 회복보다 비싸다
+      return s + c;
+    }, 0) + statPower({ ...cardData, attack: atk, hp, defense: def });
   };
 
   // 2. 효과를 지우기 전에 마나 코스트를 올려 값을 치른다
@@ -433,16 +446,24 @@ function syncDescriptionNumbers(desc, skill) {
  * 둘이 다른데 설명문은 똑같이 "체력"이라고만 써서 구분이 안 됐다.
  * 실제 동작이 본체이므로 표기를 본체로 통일한다.
  */
-function clarifyHpSubject(desc = '') {
-  return String(desc || '')
-    // "본인이 / 자신의 / 내" + 체력  →  내 본체 체력
-    .replace(/(본인|자신|내)\s*(이|가|의)?\s*체력/g, '내 본체 체력')
-    // 남은 "체력 N 회복 / 체력을 회복"  →  본체 체력
-    .replace(/(?<!본체\s)체력(?=\s*\d*\s*(을|를)?\s*(회복|치유))/g, '본체 체력')
-    // "체력이 절반 이하"
-    .replace(/(?<!본체\s)체력이\s*(절반|반)\s*이하/g, '본체 체력이 절반 이하')
-    // 중복 정리 + 조사 앞 군더더기 공백
+function clarifyHpSubject(desc = '', hpTarget = 'body') {
+  // ❤️ 카드가 "이 소환수" 체력을 대상으로 하면 그렇게 적는다.
+  //    무조건 본체로 못박으면 소환수 회복 카드가 거짓말을 하게 된다.
+  const subject = hpTarget === 'minion' ? '이 소환수의 체력' : '본체 체력';
+  const short = hpTarget === 'minion' ? '이 소환수' : '본체';
+
+  let out = String(desc || '')
+    // "본인이 / 자신의 / 내" + 체력
+    .replace(/(본인|자신|내)\s*(이|가|의)?\s*체력/g, hpTarget === 'minion' ? '이 소환수의 체력' : '내 본체 체력')
+    // 남은 "체력 N 회복 / 체력을 회복"
+    .replace(/(?<!본체\s)(?<!소환수의\s)체력(?=\s*\d*\s*(을|를)?\s*(회복|치유))/g, subject);
+
+  // "체력이 절반 이하" — lowHp 조건은 **언제나 본체**다 (엔진이 그렇게 본다)
+  out = out.replace(/(?<!본체\s)체력이\s*(절반|반)\s*이하/g, '본체 체력이 절반 이하');
+
+  return out
     .replace(/(내\s*)?본체\s*본체/g, '본체')
+    .replace(/이 소환수의\s*이 소환수의/g, '이 소환수의')
     .replace(/\s+(을|를|이|가)\b/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -516,6 +537,12 @@ export function sanitizeAndClampCardData(cardData) {
     skill.attackDown = Math.min(caps.buffValue[1] * 3, Math.max(1, parseInt(skill.attackDown) || 0));
   }
 
+  // ❤️ 체력 대상 정규화 (본체 / 이 소환수).
+  //    주문·함정은 필드에 남지 않으므로 '이 소환수'가 성립하지 않는다 — 본체로 고정.
+  skill.hpTarget = (cardType === 'unit' || cardType === 'structure')
+    ? readHpTarget(skill)
+    : 'body';
+
   // 🎯 대상 규칙 정규화. LLM이 아무 문자열이나 넣어도 안전한 값으로 떨어진다.
   //    여기서 확정된 값이 그대로 예산 계산(targetCostMultiplier)에 쓰인다.
   const tspec = readTargetSpec(skill);
@@ -581,7 +608,7 @@ export function sanitizeAndClampCardData(cardData) {
     //   그냥 "체력"이라고만 쓰면 둘 중 뭔지 알 수 없다.
     //   ⚠️ 숫자 동기화(E) **뒤에** 와야 한다. 앞에 오면 "체력 15 를 회복"처럼
     //      조사가 끼어들어 (E)의 정규식이 숫자를 못 잡는다.
-    desc = clarifyHpSubject(desc);
+    desc = clarifyHpSubject(desc, skill.hpTarget);
 
     skill.description = desc;
   }

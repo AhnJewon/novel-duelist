@@ -91,7 +91,9 @@ function makeComboHelpers() {
     setPlayerStatus: (type, turns, value) => applyStatus(playerStatus, type, turns, value),
     setPlayerBuff: (type, val) => { playerBuffs[type] = val; },
     foeLabel: isPvpActive() ? getFoeName() : '보스',
-    onShielded: () => triggerTraps('player', 'shielded', null)
+    onShielded: () => triggerTraps('player', 'shielded', null),
+    foeHp: () => state.currentBoss ? state.currentBoss.currentHp : 0,
+    foeMaxHp: () => state.currentBoss ? state.currentBoss.maxHp : 0
   };
 }
 
@@ -1692,7 +1694,10 @@ function makeMirroredHelpers() {
     setPlayerStatus: (type, turns, value) => applyStatus(bossStatus, type, turns, value),
     setPlayerBuff: (type, val) => { bossBuffs[type] = val; },
     foeLabel: '나',
-    onShielded: () => triggerTraps('boss', 'shielded', null)
+    onShielded: () => triggerTraps('boss', 'shielded', null),
+    // 거울: 상대 카드 입장에서 '적'은 나다
+    foeHp: () => state.playerHp,
+    foeMaxHp: () => state.playerMaxHp
   };
 }
 

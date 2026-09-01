@@ -31,6 +31,40 @@ export const TARGET_SCOPES = {
 
 export const MAX_TARGET_COUNT = 3;
 
+// ── 체력 대상 ────────────────────────────────────────────────
+//
+// 카드에 찍힌 ❤️는 **그 소환수 자신의 체력**이고,
+// 플레이어 본체 HP는 그것과 완전히 다른 값이다.
+// 예전에는 heal이 무조건 본체를 회복시켜서, 카드마다 어느 쪽인지 알 수 없었다.
+//
+// ⚠️ 값이 다르므로 **비용도 달라야 한다.**
+//    본체 체력은 게임 자체를 연장한다 — 패배까지의 거리를 늘린다.
+//    카드 체력은 그 소환수가 죽으면 같이 사라진다. 국소적이다.
+export const HP_TARGETS = {
+  body: {
+    label: '본체',
+    desc: '플레이어 본체 HP. 패배 조건과 직결된다',
+    costMult: 1.0
+  },
+  minion: {
+    label: '이 소환수',
+    desc: '카드 자신의 체력. 그 소환수가 죽으면 사라진다',
+    costMult: 0.6
+  }
+};
+
+/** 스킬의 체력 대상. 지정이 없으면 예전 동작대로 본체. */
+export function readHpTarget(skill = {}) {
+  return HP_TARGETS[skill.hpTarget] ? skill.hpTarget : 'body';
+}
+
+/** 체력 대상이 비용에 곱하는 배수 */
+export function hpTargetCostMultiplier(skill = {}) {
+  // 체력을 건드리지 않는 스킬은 영향 없음
+  if (!(skill.heal > 0)) return 1;
+  return HP_TARGETS[readHpTarget(skill)].costMult;
+}
+
 /** 스킬에서 대상 규칙을 읽어 정규화한다. 없으면 안전한 기본값. */
 export function readTargetSpec(skill = {}) {
   // 구버전 호환: isAoeSpell은 "적 전체"였다

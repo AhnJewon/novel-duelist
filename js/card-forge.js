@@ -247,6 +247,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "heal": 0-16,
     "multiHit": 1,
     "drawCards": 0-2,
+    "hpTarget": "body|minion",
     "damageReduction": 0-60,
     "attackDown": 0-9,
     "silence": false,
@@ -267,7 +268,12 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
 2. description은 그 수치를 **그대로** 옮겨 적는다. 새로운 숫자를 지어내지 말 것.
    - damage:14 라면 → "적에게 14 피해" (O) / "적에게 20 피해" (X)
 3. 스키마에 없는 수치를 설명문에만 쓰지 말 것. 동작하지 않는다.
-4. "체력"은 **누구 것인지 반드시 밝힐 것.**
+4. ❤️ "hpTarget"으로 heal이 **누구 체력을 회복하는지** 정한다.
+   - "body"   = 플레이어 본체 HP. 패배 조건과 직결돼 **더 비싸다** (예산 x1.0).
+   - "minion" = 이 소환수 자신의 체력(카드의 ❤️). 죽으면 사라져 **더 싸다** (예산 x0.6).
+   - 주문·함정은 필드에 남지 않으므로 자동으로 body가 된다.
+   - 설명문에도 "본체 체력" / "이 소환수의 체력"으로 명확히 쓸 것.
+5. "체력"은 **누구 것인지 반드시 밝힐 것.**
    - "본체 체력" = 플레이어 본체 HP. heal과 lowHp 조건은 **전부 이쪽**이다.
    - 카드에 찍힌 ❤️는 그 소환수 자신의 체력이며 heal로 회복되지 않는다.
    - ✅ "본체 체력 12를 회복한다"   ❌ "체력을 회복한다"
