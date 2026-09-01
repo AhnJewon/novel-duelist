@@ -240,7 +240,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "hp": 14-38,
   "skill": {
     "name": "컨셉에 맞춘 독창적인 스킬명",
-    "description": "생생한 한국어 효과 설명 (절대 % 사용 금지, 정수 수치만 사용)",
+    "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",
     "cost": 1-3,
     "damage": 0-22,
     "shield": 0-16,
@@ -257,9 +257,21 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
       "type": "none|stun|freeze|burn|shock|poison|vulnerable",
       "duration": 1-2,
       "value": 0-8
-    }
+    },
+    "description": "위 수치를 그대로 옮긴 한국어 설명 (맨 마지막에 작성)"
   }
 }
+
+📝 설명문 작성 규칙 (**수치를 먼저, 설명은 나중에**):
+1. damage/shield/heal 같은 **수치를 먼저 확정**한다.
+2. description은 그 수치를 **그대로** 옮겨 적는다. 새로운 숫자를 지어내지 말 것.
+   - damage:14 라면 → "적에게 14 피해" (O) / "적에게 20 피해" (X)
+3. 스키마에 없는 수치를 설명문에만 쓰지 말 것. 동작하지 않는다.
+4. "체력"은 **누구 것인지 반드시 밝힐 것.**
+   - "본체 체력" = 플레이어 본체 HP. heal과 lowHp 조건은 **전부 이쪽**이다.
+   - 카드에 찍힌 ❤️는 그 소환수 자신의 체력이며 heal로 회복되지 않는다.
+   - ✅ "본체 체력 12를 회복한다"   ❌ "체력을 회복한다"
+5. 수비력(defense)은 그 소환수가 받는 피해를 그만큼 깎는다 (최소 1은 관통).
 
 🎯 TARGET RULES (대상 규칙 — 카드 성능에 직접 반영된다):
 - "targetScope"가 넓을수록 카드가 **강해지고 마나도 비싸진다.**

@@ -35,6 +35,18 @@ export const TRAP_TRIGGERS = {
     needs: null,
     match: ({ event, card }) => event === 'playCard' && card.cardType === 'spell'
   },
+  foePlaysStructure: {
+    label: '상대가 건축물을 세울 때',
+    needs: null,
+    match: ({ event, card }) => event === 'playCard' && card.cardType === 'structure'
+  },
+  foeTrapActivates: {
+    label: '상대의 함정이 발동할 때',
+    needs: null,
+    // ⚠️ 함정을 **세울 때**가 아니라 **발동할 때** 반응한다.
+    //    세트에 반응하면 뒷면 정보가 새어 나가 함정의 의미가 사라진다.
+    match: ({ event }) => event === 'trapFired'
+  },
   foePlaysElement: {
     label: '상대가 특정 속성 카드를 낼 때',
     needs: 'element',          // trap.condition.element 에 속성 지정

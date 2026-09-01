@@ -168,9 +168,9 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
   } else {
     statBarHtml = `
       <div class="mt-1 flex items-center justify-between px-2 py-0.5 rounded-lg bg-black/90 border border-slate-800 text-[11px] font-black relative z-10 shrink-0">
-        <span class="text-red-400 flex items-center gap-0.5"><i data-lucide="sword" class="w-3 h-3"></i> ${card.attack}</span>
-        <span class="text-blue-400 flex items-center gap-0.5"><i data-lucide="shield" class="w-3 h-3"></i> ${card.defense}</span>
-        <span class="text-emerald-400 flex items-center gap-0.5"><i data-lucide="heart" class="w-3 h-3"></i> ${card.hp || 30}</span>
+        <span title="이 소환수의 공격력" class="text-red-400 flex items-center gap-0.5"><i data-lucide="sword" class="w-3 h-3"></i> ${card.attack}</span>
+        <span title="이 소환수의 방어력" class="text-blue-400 flex items-center gap-0.5"><i data-lucide="shield" class="w-3 h-3"></i> ${card.defense}</span>
+        <span title="이 소환수 자신의 체력입니다 (플레이어 본체 HP와 다릅니다)" class="text-emerald-400 flex items-center gap-0.5"><i data-lucide="heart" class="w-3 h-3"></i> ${card.hp || 30}</span>
       </div>
     `;
   }

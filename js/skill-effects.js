@@ -23,11 +23,24 @@ export function selectFrontTarget(minions = [], { pierceShield = false } = {}) {
 /**
  * 엔티티에 피해를 적용하고 사망 여부를 돌려준다.
  */
-export function damageEntity(entity, dmg) {
-  if (!entity) return { died: false, dealt: 0 };
-  const amount = Math.max(0, Math.floor(dmg));
+/**
+ * 소환수에게 피해를 준다.
+ *
+ * 🐛 예전에는 **수비력을 완전히 무시했다.** 카드에 표시되고 파워 예산까지
+ *    차지하는데 전투에서는 아무 일도 하지 않는 순수한 장식이었다.
+ *
+ * 이제 수비력만큼 피해를 깎는다. 단 **최소 1은 들어간다** —
+ *    수비력이 공격력보다 높다고 완전 무적이 되면 판이 멈춘다.
+ *
+ * @param opts.pierce 수비를 무시할지 (실드 관통 계열)
+ */
+export function damageEntity(entity, dmg, { pierce = false } = {}) {
+  if (!entity) return { died: false, dealt: 0, blocked: 0 };
+  const raw = Math.max(0, Math.floor(dmg));
+  const def = pierce ? 0 : Math.max(0, parseInt(entity.defense) || 0);
+  const amount = Math.max(raw > 0 ? 1 : 0, raw - def);
   entity.currentHp -= amount;
-  return { died: entity.currentHp <= 0, dealt: amount };
+  return { died: entity.currentHp <= 0, dealt: amount, blocked: raw - amount };
 }
 
 /**
@@ -50,7 +63,7 @@ export function strikeFrontLine(minions, dmg, ctx) {
     return { target: null, died: false, minions };
   }
 
-  const { died } = damageEntity(target, dmg);
+  const { died } = damageEntity(target, dmg, { pierce: pierceShield });
   addBattleLog(`<span class="text-yellow-400">🛡️ [${escapeHtml(target.name)}] ${absorbLabel || '이(가) 공격을 대신 흡수했습니다!'} (-${dmg} HP)</span>`);
   if (died) {
     addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
@@ -89,7 +102,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
         if (key === 'face') { hitFace = true; continue; }
         const t = resolveTargetKey(game, key);
         if (t && t.entity) {
-          damageEntity(t.entity, dmg);
+          damageEntity(t.entity, dmg, { pierce: !!skill.pierceShield });
           addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(t.entity.name)}] -${dmg} 피해!</span>`);
         }
       }
@@ -98,7 +111,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       if (hitFace) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
     } else if (allowAoe && skill.isAoeSpell) {
       game.bossMinions.forEach(bm => {
-        damageEntity(bm, dmg);
+        damageEntity(bm, dmg, { pierce: !!skill.pierceShield });
         addBattleLog(`<span class="text-red-300">💥 [${cardName}] 광역 폭격: 부하 [${escapeHtml(bm.name)}] -${dmg} 피해!</span>`);
       });
       game.bossMinions = removeDead(game.bossMinions);
@@ -112,6 +125,8 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
   if (skill.shield > 0) {
     game.playerMaxShield += skill.shield;
     addBattleLog(`<span class="text-blue-400">🛡️ ${cardName}의 가호로 방어막 +${skill.shield} 획득!</span>`);
+    // 🐛 'shielded' 이벤트를 아무도 쏘지 않아 foeShielded 함정이 죽어 있었다
+    if (helpers.onShielded) helpers.onShielded();
   }
 
   // 3. 치유

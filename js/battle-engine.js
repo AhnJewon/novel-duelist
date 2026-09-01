@@ -61,6 +61,9 @@ let _pendingSummonSlot = null;
 // 🎯 대상 지정을 마치고 playCard로 되돌아올 때 실어 보내는 대상 키 배열
 let _pendingPicked = null;
 
+// 🪤 함정 연쇄 방지 — 함정이 함정을 부르는 무한 루프를 한 단계에서 끊는다
+let _trapChainGuard = false;
+
 /** 세트된 함정 목록 (UI/디버깅용) */
 export function getTrapZone(sideKey) {
   return trapZones[sideKey] || [];
@@ -87,7 +90,8 @@ function makeComboHelpers() {
     setBossStatus: (type, turns, value) => applyStatus(bossStatus, type, turns, value),
     setPlayerStatus: (type, turns, value) => applyStatus(playerStatus, type, turns, value),
     setPlayerBuff: (type, val) => { playerBuffs[type] = val; },
-    foeLabel: isPvpActive() ? getFoeName() : '보스'
+    foeLabel: isPvpActive() ? getFoeName() : '보스',
+    onShielded: () => triggerTraps('player', 'shielded', null)
   };
 }
 
@@ -634,6 +638,15 @@ function triggerTraps(actorKey, event, card = null) {
     `);
     audio.playCrit();
 
+    // 🪤 함정이 터졌다는 사실 자체가 이벤트다 (foeTrapActivates가 여기 반응한다).
+    //    ⚠️ 무한 연쇄를 막으려고 **한 단계만** 전파한다.
+    //       함정이 함정을 부르고 그게 또 함정을 부르면 판이 멈춘다.
+    if (!_trapChainGuard) {
+      _trapChainGuard = true;
+      try { triggerTraps(defenderKey, 'trapFired', trap); }
+      finally { _trapChainGuard = false; }
+    }
+
     // 함정 효과는 기존 스킬 어휘를 그대로 쓴다 — 새 엔진이 필요 없다
     const skill = (trap.skills && trap.skills[0]) || trap.skill;
     if (!skill) return;
@@ -878,8 +891,8 @@ export function resolveMinionAttack(slotIdx, targetKey) {
     if (!target) {
       dealDamageToBoss(finalAtk, entity.name);
     } else {
-      const { died } = damageEntity(target, finalAtk);
-      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${finalAtk} 피해)</span>`);
+      const { died, dealt, blocked } = damageEntity(target, finalAtk);
+      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${dealt} 피해${blocked > 0 ? ` · 수비력이 ${blocked} 흡수` : ''})</span>`);
       if (died) {
         addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(target.name)}] 처치!</span>`);
         state.bossMinions = removeDead(state.bossMinions);
@@ -905,6 +918,12 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   const bm = minion || (state.bossMinions || [])[slotIdx];
   if (!bm) return;
   if (state.playerHp <= 0) return;
+
+  // 🐛 상대 공격이 내 함정을 발동시키지 않고 있었다.
+  //    `attack` 이벤트를 플레이어 공격에서만 쏘고 있어서
+  //    "상대가 공격할 때" 함정이 PvE에서 영영 터지지 않았다.
+  triggerTraps('boss', 'attack', bm);
+  if (state.playerHp <= 0) return;   // 함정이 판을 끝냈을 수 있다
 
   // 🌐 PvP: 상대가 고른 대상을 그대로 재생한다.
   //    상대 화면 기준의 `foe:N`은 내 화면에서는 **내 전장의 N번**이다.
@@ -1426,8 +1445,15 @@ function applyDirectDamageToPlayer(dmg, pierceShield = false) {
   }
 
   if (finalDmg > 0) {
+    const wasAbove = state.playerHp > state.playerMaxHp * 0.5;
     state.playerHp -= finalDmg;
     addBattleLog(`<span class="text-red-500 font-bold">🩸 플레이어가 ${finalDmg} 피해를 입었습니다!</span>`);
+
+    // 🐛 'damaged' 이벤트를 아무도 쏘지 않아 selfLowHp 함정이 죽어 있었다.
+    //    절반 아래로 **떨어지는 순간**에만 쏜다 (매 피격마다 쏘면 계속 터진다).
+    if (wasAbove && state.playerHp <= state.playerMaxHp * 0.5 && state.playerHp > 0) {
+      triggerTraps('boss', 'damaged', null);
+    }
   }
 }
 
@@ -1665,7 +1691,8 @@ function makeMirroredHelpers() {
     setBossStatus: (type, turns, value) => applyStatus(playerStatus, type, turns, value),
     setPlayerStatus: (type, turns, value) => applyStatus(bossStatus, type, turns, value),
     setPlayerBuff: (type, val) => { bossBuffs[type] = val; },
-    foeLabel: '나'
+    foeLabel: '나',
+    onShielded: () => triggerTraps('boss', 'shielded', null)
   };
 }
 

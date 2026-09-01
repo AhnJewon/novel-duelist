@@ -387,15 +387,30 @@ function syncDescriptionNumbers(desc, skill) {
   // ⚠️ `%`가 붙은 숫자는 건드리지 않는다.
   //    "피해를 50% 줄인다"의 50은 피해량이 아니라 **비율**이다.
   //    바꿔버리면 "피해를 24% 줄인다"처럼 엉뚱한 뜻이 된다.
+  // ⚠️ 숫자와 명사 사이에 **조사가 낀다**: "15를 회복", "20의 피해", "10만큼 회복"
+  //    이걸 허용하지 않으면 조사가 붙은 순간 동기화가 통째로 실패한다.
+  const JOSA = '(?:\\s*(?:을|를|이|가|의|만큼|정도)?)';
   const rules = [
-    [skill.damage, /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:추가\s*)?(?:고정\s*)?(?:피해|데미지|damage))/gi],
-    [skill.shield, /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:방어막|실드|보호막|shield))/gi],
-    [skill.heal,   /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:회복|치유|heal))/gi]
+    [skill.damage, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
+    [skill.shield, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:방어막|실드|보호막|shield))`, 'gi')],
+    [skill.heal,   new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')]
   ];
 
   for (const [value, re] of rules) {
     if (!Number.isFinite(value) || value <= 0) continue;
     out = out.replace(re, (_m, _num, tail) => `${value}${tail}`);
+  }
+
+  // 어순이 뒤집힌 표기도 있다: "방어막 99를 얻는다", "체력 15 회복"
+  // 위 규칙은 `숫자 + 명사`만 잡으므로 `명사 + 숫자`도 따로 본다.
+  const reverse = [
+    [skill.damage, /((?:피해|데미지)\s*)(\d+)(?!\s*%)/gi],
+    [skill.shield, /((?:방어막|실드|보호막)\s*)(\d+)(?!\s*%)/gi],
+    [skill.heal,   /((?:체력)\s*)(\d+)(?!\s*%)/gi]
+  ];
+  for (const [value, re] of reverse) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    out = out.replace(re, (_m, head) => `${head}${value}`);
   }
 
   // 위 규칙에 안 걸린 비상식적인 큰 수는 남겨두면 오해를 부른다.
@@ -408,6 +423,29 @@ function syncDescriptionNumbers(desc, skill) {
   });
 
   return out;
+}
+
+/**
+ * 설명문의 "체력"이 **플레이어 본체**임을 못박는다.
+ *
+ * 카드에 찍힌 ❤️는 그 소환수 자신의 체력이지만,
+ * 엔진의 `skill.heal`과 `lowHp` 트리거는 **플레이어 본체 HP**를 본다.
+ * 둘이 다른데 설명문은 똑같이 "체력"이라고만 써서 구분이 안 됐다.
+ * 실제 동작이 본체이므로 표기를 본체로 통일한다.
+ */
+function clarifyHpSubject(desc = '') {
+  return String(desc || '')
+    // "본인이 / 자신의 / 내" + 체력  →  내 본체 체력
+    .replace(/(본인|자신|내)\s*(이|가|의)?\s*체력/g, '내 본체 체력')
+    // 남은 "체력 N 회복 / 체력을 회복"  →  본체 체력
+    .replace(/(?<!본체\s)체력(?=\s*\d*\s*(을|를)?\s*(회복|치유))/g, '본체 체력')
+    // "체력이 절반 이하"
+    .replace(/(?<!본체\s)체력이\s*(절반|반)\s*이하/g, '본체 체력이 절반 이하')
+    // 중복 정리 + 조사 앞 군더더기 공백
+    .replace(/(내\s*)?본체\s*본체/g, '본체')
+    .replace(/\s+(을|를|이|가)\b/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 export function sanitizeAndClampCardData(cardData) {
@@ -536,6 +574,14 @@ export function sanitizeAndClampCardData(cardData) {
     //     skill.damage는 24로 깎이는데 카드에는 200이라 적혀 있었다.
     //     플레이어에게 거짓말을 하는 셈이고, 밸런스가 망가진 것처럼 보인다.
     desc = syncDescriptionNumbers(desc, skill);
+
+    // (F) 🐛 "체력"이 **누구 것인지** 명시한다.
+    //   카드에 찍힌 ❤️는 그 소환수 자신의 체력인데,
+    //   엔진의 heal/lowHp는 **플레이어 본체 체력**을 본다.
+    //   그냥 "체력"이라고만 쓰면 둘 중 뭔지 알 수 없다.
+    //   ⚠️ 숫자 동기화(E) **뒤에** 와야 한다. 앞에 오면 "체력 15 를 회복"처럼
+    //      조사가 끼어들어 (E)의 정규식이 숫자를 못 잡는다.
+    desc = clarifyHpSubject(desc);
 
     skill.description = desc;
   }
