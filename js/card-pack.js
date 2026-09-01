@@ -193,6 +193,8 @@ export async function openBoosterPack(fastMode = false) {
   if (openBtn) openBtn.disabled = true;
   if (fastOpenBtn) fastOpenBtn.disabled = true;
   if (actionBox) actionBox.classList.add('hidden');
+  // 새 팩이므로 지난 팩에서 잠갔던 저장 버튼과 선택 상태를 되돌린다
+  resetPackActionButtons();
   if (progressBox) progressBox.classList.remove('hidden');
 
   audio.playMagic();
@@ -673,12 +675,57 @@ async function revealSingleCardSlot(slot, cardData) {
   await new Promise(r => setTimeout(r, 180));
 
   slot.innerHTML = '';
-  slot.className = 'w-[205px] h-[335px] flex items-center justify-center transition-all duration-300';
-  
+  slot.className = 'w-[205px] h-[335px] flex flex-col items-center justify-center gap-1.5 transition-all duration-300';
+
   const cardEl = createCardElement(cardData, null, false);
   slot.appendChild(cardEl);
 
+  // ☑️ 카드별 선택 — 원하는 것만 보관함에 넣을 수 있게 한다.
+  //    기본은 전부 선택. 빼고 싶은 것만 끄면 된다.
+  const pick = document.createElement('button');
+  pick.className = 'pack-pick-btn w-full';
+  pick.dataset.cardId = cardData.id;
+  pick.dataset.picked = '1';
+  pick.onclick = () => togglePackPick(cardData.id);
+  slot.appendChild(pick);
+  paintPickButton(pick);
+  updatePickCount();          // 공개될 때마다 "선택한 N장" 표시를 맞춘다
+
   slot.style.transform = 'rotateY(0deg)';
+}
+
+// ── ☑️ 개봉 카드 선택 ────────────────────────────────────────
+// 5장을 통째로 받거나 버리는 것 말고, **원하는 것만** 고를 수 있어야 한다.
+const packPicked = new Set();
+
+function paintPickButton(btn) {
+  const on = btn.dataset.picked === '1';
+  btn.className = `pack-pick-btn w-full px-2 py-1 rounded-lg text-[11px] font-black border transition ${
+    on ? 'bg-emerald-600/90 border-emerald-400 text-white'
+       : 'bg-[#191d33] border-slate-600 text-slate-400 hover:text-white'}`;
+  btn.innerHTML = on ? '☑️ 보관함에 넣기' : '⬜ 제외됨';
+}
+
+export function togglePackPick(cardId) {
+  const btn = document.querySelector(`.pack-pick-btn[data-card-id="${CSS.escape(String(cardId))}"]`);
+  if (!btn) return;
+  btn.dataset.picked = btn.dataset.picked === '1' ? '0' : '1';
+  if (btn.dataset.picked === '1') packPicked.add(cardId); else packPicked.delete(cardId);
+  paintPickButton(btn);
+  updatePickCount();
+}
+
+/** 지금 선택된 카드들 */
+function pickedPackCards() {
+  const btns = [...document.querySelectorAll('.pack-pick-btn')];
+  if (btns.length === 0) return openedPackCards.slice();
+  const ids = new Set(btns.filter(b => b.dataset.picked === '1').map(b => b.dataset.cardId));
+  return openedPackCards.filter(c => ids.has(String(c.id)));
+}
+
+function updatePickCount() {
+  const el = document.getElementById('pack-pick-count');
+  if (el) el.innerText = String(pickedPackCards().length);
 }
 
 function renderPackSummary() {
@@ -700,12 +747,21 @@ function renderPackSummary() {
   `;
 }
 
-export async function savePackCardsToCollection() {
+/**
+ * 개봉한 카드를 보관함에 넣는다.
+ * @param onlyPicked true면 선택된 카드만, false면 5장 전부
+ */
+export async function savePackCardsToCollection(onlyPicked = false) {
   if (openedPackCards.length === 0) return;
+  const targets = onlyPicked ? pickedPackCards() : openedPackCards;
+  if (targets.length === 0) {
+    alert('보관함에 넣을 카드를 하나 이상 선택하세요.');
+    return;
+  }
 
   // 🃏 acquireCard가 신규/중복/가루를 판단한다
   const result = { new: 0, copy: 0, dust: 0, dustGained: 0 };
-  for (const card of openedPackCards) {
+  for (const card of targets) {
     const r = await acquireCard(card);
     if (r.kind === 'new') result.new++;
     else if (r.kind === 'copy') result.copy++;
@@ -722,17 +778,25 @@ export async function savePackCardsToCollection() {
   if (result.dust > 0) parts.push(`💎 가루 +${result.dustGained} (상한 초과 ${result.dust}장)`);
   alert(`${parts.join('\n')}\n\n보관함: ${state.cardsCollection.length}종 / 보유 가루: ${getDust()}`);
 
-  const actionBox = document.getElementById('pack-action-box');
-  if (actionBox) actionBox.classList.add('hidden');
+  // 🐛 예전에는 pack-action-box를 통째로 숨겼다. 그 안에 "한 팩 더 개봉"이
+  //    같이 들어 있어서, 저장만 해도 재개봉 버튼이 사라졌다.
+  //    저장 여부와 재개봉은 무관하다 — 저장 버튼만 잠근다.
+  lockPackSaveButtons('보관함에 저장됨');
   if (window._renderGrimoire) window._renderGrimoire();
 }
 
 export async function addPackCardsToActiveDeck() {
   if (openedPackCards.length === 0) return;
-  for (const card of openedPackCards) await acquireCard(card);
-  
+  // 덱 투입도 **선택된 카드만** 대상으로 한다 (선택이 없으면 전부)
+  const targets = pickedPackCards();
+  if (targets.length === 0) {
+    alert('덱에 넣을 카드를 하나 이상 선택하세요.');
+    return;
+  }
+  for (const card of targets) await acquireCard(card);
+
   let addedCount = 0;
-  openedPackCards.forEach(c => {
+  targets.forEach(c => {
     if (state.activeDeckCardIds.length < MAX_DECK_SIZE && !state.activeDeckCardIds.includes(c.id)) {
       state.activeDeckCardIds.push(c.id);
       addedCount++;
@@ -742,10 +806,34 @@ export async function addPackCardsToActiveDeck() {
   await saveCardsToStorage();
   await saveActiveDeckToStorage();
   audio.playDraw();
-  alert(`✨ ${addedCount}장의 카드가 현재 출전 덱에 즉시 편성되었습니다! (보관함에도 5장 모두 저장됨)`);
-  
-  const actionBox = document.getElementById('pack-action-box');
-  if (actionBox) actionBox.classList.add('hidden');
+  alert(`✨ ${addedCount}장이 출전 덱에 편성되었습니다. (선택한 ${targets.length}장은 보관함에도 저장됨)`);
+
+  // 여기서도 재개봉 버튼은 남긴다
+  lockPackSaveButtons('덱에 편성됨');
+  if (window._renderGrimoire) window._renderGrimoire();
+}
+
+/**
+ * 저장/덱투입 버튼만 잠근다. **"한 팩 더 개봉"은 건드리지 않는다.**
+ * 보관 여부와 다음 팩을 여는 것은 별개의 결정이다.
+ */
+function lockPackSaveButtons(label) {
+  ['btn-pack-save-picked', 'btn-pack-save-all', 'btn-pack-to-deck'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.disabled = true;
+    b.classList.add('opacity-40', 'cursor-not-allowed');
+  });
+  const note = document.getElementById('pack-saved-note');
+  if (note) {
+    note.textContent = `✅ ${label}`;
+    note.classList.remove('hidden');
+  }
+  // 선택 토글도 잠근다 — 이미 저장했는데 바꿀 수 있으면 혼란스럽다
+  document.querySelectorAll('.pack-pick-btn').forEach(b => {
+    b.disabled = true;
+    b.classList.add('opacity-50', 'cursor-not-allowed');
+  });
 }
 
 // ============================================================
@@ -810,4 +898,18 @@ export function packModeDirective(packMode) {
 - 이 카드군의 연계는 "${t.comboAction}" 이다. 카드 효과가 이 연계와 어울리게 하라.\n`;
   }
   return '';
+}
+
+/** 새 팩을 열 때 저장 버튼 잠금과 선택 상태를 되돌린다 */
+function resetPackActionButtons() {
+  ['btn-pack-save-picked', 'btn-pack-save-all', 'btn-pack-to-deck'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.disabled = false;
+    b.classList.remove('opacity-40', 'cursor-not-allowed');
+  });
+  const note = document.getElementById('pack-saved-note');
+  if (note) note.classList.add('hidden');
+  packPicked.clear();
+  updatePickCount();
 }
