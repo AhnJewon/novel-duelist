@@ -197,3 +197,13 @@
 30. **피해 로그에 요청값을 찍지 마세요.** `damageEntity`의 반환값(`dealt`)을 쓰고
     `describeDamageExtras()`로 근거를 붙이세요. 요청값을 찍으면 수비력·취약·감전이
     붙는 순간 로그가 거짓이 됩니다. → [DECISIONS #73](docs/DECISIONS.md)
+
+31. **`targetSide`가 효과 성격과 맞는지 확인하세요.** 스킬 하나에 대상 진영은
+    한 개뿐인데 한 카드에 성격이 다른 효과가 섞입니다. 해로운 효과에 `self`/`ally`,
+    이로운 효과에 `foe`가 오면 `sanitizeAndClampCardData`가 교정합니다. 새 효과를
+    추가하면 그 판정(`harmfulEffect`/`beneficialEffect`)에도 넣으세요.
+    → [DECISIONS #74](docs/DECISIONS.md)
+
+32. **`needsTargetPick`이 true인 효과는 `opts.picked`를 반드시 읽으세요.**
+    heal이 이걸 어겨서 대상을 고르게 하고도 본체를 회복했습니다.
+    → [DECISIONS #74](docs/DECISIONS.md)

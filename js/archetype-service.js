@@ -1049,13 +1049,21 @@ export async function rebalanceExistingCards({ dryRun = false, silent = false } 
     const fixed = sanitizeAndClampCardData(card);
     const after = evaluateCardPower(fixed);
 
+    const oldSkill = (card.skills && card.skills[0]) || card.skill || {};
+    const newSkill = fixed.skill || {};
     const costChanged = before.cost !== after.cost;
     const effectsChanged = before.effects.length !== after.effects.length;
     const statsChanged = (card.attack || 0) !== (fixed.attack || 0)
       || (card.hp || 0) !== (fixed.hp || 0)
       || (card.defense || 0) !== (fixed.defense || 0);
+    // 🐛 대상·설명 교정은 코스트나 효과 수를 바꾸지 않아 **감지되지 않았다.**
+    //    ("자신 1체에 12 피해" 같은 카드가 보관함에 남아 있었다 → DECISIONS #74)
+    const targetChanged = (oldSkill.targetSide || 'foe') !== (newSkill.targetSide || 'foe')
+      || (oldSkill.targetScope || 'single') !== (newSkill.targetScope || 'single');
+    const descChanged = String(oldSkill.description || '') !== String(newSkill.description || '');
     if (!before.overBudget && before.illegal.length === 0
-        && !costChanged && !effectsChanged && !statsChanged) continue;
+        && !costChanged && !effectsChanged && !statsChanged
+        && !targetChanged && !descChanged) continue;
 
     log.push({
       카드: card.name,
@@ -1065,7 +1073,11 @@ export async function rebalanceExistingCards({ dryRun = false, silent = false } 
       '후(사용)': after.used,
       '지불가능': after.affordable,
       '마나': `${before.cost} → ${after.cost}`,
-      사유: before.overBudget ? '예산 초과' : (costChanged ? '마나 과다' : '효과/스탯 교정'),
+      사유: before.overBudget ? '예산 초과'
+        : costChanged ? '마나 과다'
+        : targetChanged ? '대상 교정'
+        : (effectsChanged || statsChanged) ? '효과/스탯 교정'
+        : '설명문 교정',
       제거됨: before.effects.filter(e => !after.effects.some(a => a.key === e.key)).map(e => e.label).join(', ')
     });
     touched.push({ card, fixed });

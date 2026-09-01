@@ -126,6 +126,10 @@ export function hasTargetableEffect(skill = {}) {
 export function describeTarget(skill = {}) {
   const { side, scope, count } = readTargetSpec(skill);
   const s = TARGET_SIDES[side] ? TARGET_SIDES[side].label : '적';
+  // 🐛 수정: self는 **이 카드 자신**이라 셀 수 있는 대상이 아니다.
+  //    예전에는 "자신 1체에 12 피해"처럼 말이 안 되는 문장이 나왔다.
+  //    (게다가 self는 고를 대상이 없어 실제로는 보스를 때렸다 → sanitize에서 교정)
+  if (side === 'self') return '자신';
   if (scope === 'all') return `${s} 전체`;
   if (scope === 'random') return `무작위 ${s}`;
   if (scope === 'multi') return `${s} ${count}체`;

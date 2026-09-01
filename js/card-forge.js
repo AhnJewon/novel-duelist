@@ -363,8 +363,17 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   random은 지정이 아니라 무작위라 오히려 약하다(0.8배).
 - 예산을 넘으면 시스템이 자동으로 범위를 좁히거나 효과를 지운다.
   낮은 등급에 "적 전체"를 붙이면 대부분 잘려 나간다.
-- 치유·버프는 "targetSide": "ally", 공격·디버프는 "foe"가 자연스럽다.
-- 대상이 필요 없는 효과(내 방어막, 마나 수급)는 "targetSide": "self"로 둘 것.
+🎯 targetSide는 **누구를 겨냥하는가**다. 스킬 하나에 하나만 있다.
+- 공격·디버프(damage / attackDown / silence / statusEffect) → "foe"
+- 남을 치유하거나 버프 → "ally"
+- 양쪽 다 고를 수 있게 하려면 → "any"
+- "self"는 **겨냥하는 효과가 하나도 없을 때만** 쓴다.
+  ⚠️ 내 방어막(shield)·마나 수급(manaGain)·드로우(drawCards)는 애초에
+     겨냥이 필요 없어 targetSide를 보지 않는다. 그것들 때문에 "self"를
+     고르지 마라 — 같은 카드에 damage가 있으면 그 피해가 "자신"을 향하게 되고,
+     이 엔진에는 **자기 피해 메커니즘이 없어서** 카드 설명과 실제가 어긋난다.
+  * ✅ "적 1체에 12 피해 + 내 방어막 8"  → "targetSide": "foe"
+  * ❌ 같은 카드에 "targetSide": "self"  → "자신 1체에 12 피해"라는 이상한 카드가 된다
 ${customDirective}`;
 
   const reasoningSelect = document.getElementById('forge-reasoning-mode');

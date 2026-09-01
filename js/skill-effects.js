@@ -200,7 +200,20 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
   // 3. 치유 — ❤️ 본체와 소환수 중 어느 체력을 회복할지 카드가 정한다.
   //    예전에는 무조건 본체였고, 그래서 카드의 ❤️와 설명문이 서로 다른 것을 가리켰다.
   if (skill.heal > 0) {
-    if (readHpTarget(skill) === 'minion') {
+    // 🐛 수정: 플레이어가 **고른 아군 소환수**를 무시하고 있었다.
+    //    needsTargetPick은 heal도 대상 지정이 필요하다고 판단해 선택을 받는데
+    //    (hasTargetableEffect에 heal이 있다) 여기서 picked를 보지 않아
+    //    "아군 1체를 회복" 카드가 대상을 고르게 하고도 본체를 회복했다.
+    const pickedAllies = (Array.isArray(opts.picked) ? opts.picked : [])
+      .map(k => resolveTargetKey(game, k))
+      .filter(t => t && t.entity && t.kind === 'allyMinion');
+    if (pickedAllies.length > 0) {
+      for (const t of pickedAllies) {
+        const before = t.entity.currentHp;
+        t.entity.currentHp = Math.min(t.entity.maxHp, t.entity.currentHp + skill.heal);
+        addBattleLog(`<span class="text-emerald-400">💖 [${escapeHtml(t.entity.name)}] 체력 ${before} → ${t.entity.currentHp}</span>`);
+      }
+    } else if (readHpTarget(skill) === 'minion') {
       // 이 카드가 필드에 낸 소환수를 회복시킨다. 아직 안 나왔으면 시전 대상이 없다.
       const self = opts.sourceEntity
         || (game.playerMinions || []).find(m => m && (m.instanceId === card.instanceId || m.name === card.name));

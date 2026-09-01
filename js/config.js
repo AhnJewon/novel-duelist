@@ -873,9 +873,15 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   if (skill.executeThreshold > 0) parts.push(`상대 체력 ${Math.round(skill.executeThreshold * 100)}% 이하면 처형(2배)`);
   if (skill.shield > 0) parts.push(`본체 방어막 +${skill.shield}`);
   if (skill.heal > 0) {
-    parts.push(readHpTarget(skill) === 'minion'
-      ? `이 소환수의 체력 ${skill.heal} 회복`
-      : `본체 체력 ${skill.heal} 회복`);
+    // 🎯 아군을 지정하는 회복이면 그렇게 적는다.
+    //    (heal이 picked를 존중하게 된 뒤로는 "아군 1체 회복"이 실제 동작이다)
+    if (t.side === 'ally' && (t.scope === 'single' || t.scope === 'multi')) {
+      parts.push(`${tgt}의 체력 ${skill.heal} 회복`);
+    } else {
+      parts.push(readHpTarget(skill) === 'minion'
+        ? `이 소환수의 체력 ${skill.heal} 회복`
+        : `본체 체력 ${skill.heal} 회복`);
+    }
   }
   if (skill.damageReduction > 0) parts.push(`받는 피해 ${skill.damageReduction}% 감소`);
   if (skill.attackDown > 0) parts.push(`${tgt}의 공격력 -${skill.attackDown}`);
@@ -1173,6 +1179,48 @@ export function sanitizeAndClampCardData(cardData) {
   skill.targetSide = tspec.side;
   skill.targetScope = tspec.scope;
   skill.targetCount = tspec.count;
+
+  // 🎯 대상 진영이 효과의 성격과 맞는지 확인한다.
+  //
+  //    🐛 "자신 1체에 12 피해" 같은 카드가 나오던 원인:
+  //    `targetSide`는 스킬 하나에 **한 개**뿐인데 한 카드에 성격이 다른 효과가
+  //    섞인다("적에게 12 피해 + 내 방어막 8"). LLM이 방어막을 보고 'self'를 고르면
+  //    피해까지 자신을 향하게 된다.
+  //
+  //    그리고 이 엔진에는 **자기 피해(sacrifice) 메커니즘이 없다.**
+  //    self는 고를 대상이 없어(collectTargetKeys에 self 분기 없음) 피해가 조용히
+  //    `dealDamageToBoss`로 흘러갔다 — 카드엔 "자신"이라 적히고 보스를 때렸다.
+  //
+  //    ally도 같은 문제인데 **더 나쁘다.** collectTargetKeys가 아군을 대상으로
+  //    내주므로, 플레이어에게 "내 소환수를 골라 때리라"고 요구한다.
+  const harmfulEffect = (skill.damage || 0) > 0
+    || (skill.attackDown || 0) > 0
+    || !!skill.silence
+    || (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none');
+  const beneficialEffect = (skill.heal || 0) > 0 || (skill.shield || 0) > 0;
+
+  let sideFixReason = null;
+  if (harmfulEffect && (skill.targetSide === 'self' || skill.targetSide === 'ally')) {
+    sideFixReason = `공격 효과의 대상이 '${skill.targetSide}'였다 → 'foe' (자기/아군 피해 메커니즘이 없다)`;
+    skill.targetSide = 'foe';
+  } else if (!harmfulEffect && beneficialEffect && skill.targetSide === 'foe') {
+    // 회복·방어막은 엔진이 **무조건 내 쪽에** 적용한다. 'foe'로 두면 설명이 거짓이 되고
+    // 대상 선택이 상대 전장을 가리킨다.
+    sideFixReason = `이로운 효과의 대상이 'foe'였다 → 'ally'`;
+    skill.targetSide = 'ally';
+  }
+
+  if (sideFixReason) {
+    console.log(`[Target] "${cardData.name || '무명'}" ${sideFixReason}`);
+    // ⚠️ 설명문에 옛 대상이 남아 있으면 교정한 데이터와 어긋난다.
+    //    문장 전체를 데이터에서 다시 만든다 (부분 치환은 조사가 어긋난다).
+    if (/자신|스스로|자기|아군|내\s*소환수|적을?\s*(치유|회복)/.test(String(skill.description || ''))) {
+      const before = skill.description;
+      skill.description = describeSkillFromData(skill, cardType);
+      console.log(`[Target] 설명문 재생성: "${before}" → "${skill.description}"`);
+    }
+  }
+
   // 구버전 필드와 어긋나지 않게 맞춰둔다 (isAoeSpell == 전체 대상)
   skill.isAoeSpell = tspec.scope === 'all';
 
