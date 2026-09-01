@@ -7,7 +7,7 @@ import { rollRandomRarity, RARITY_BALANCE_CAPS, RARITY_STYLE, ELEMENT_CONFIG, sa
 
 import { checkOllamaOnline, callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
-import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPrompt, cleanCardName } from './archetype-service.js';
+import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { escapeHtml } from './dom-utils.js';
 import { coerceCardElement } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
@@ -628,7 +628,7 @@ Return ONLY JSON:
     cardName = fixed;
   }
   // 🏷️ 카드군 소속 카드는 이름에 키워드를 포함해야 덱 서치 콤보가 잡아낸다
-  cardName = cleanCardName(cardName);
+  cardName = enforceKeywordInName(cardName, themeObj, cardType);
 
   const rawCard = {
     id: `pack-${Date.now()}-${Math.floor(Math.random() * 10000)}`,

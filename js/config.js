@@ -377,10 +377,13 @@ export function enforcePowerBudget(cardData, skill) {
 function syncDescriptionNumbers(desc, skill) {
   let out = String(desc || '');
 
+  // ⚠️ `%`가 붙은 숫자는 건드리지 않는다.
+  //    "피해를 50% 줄인다"의 50은 피해량이 아니라 **비율**이다.
+  //    바꿔버리면 "피해를 24% 줄인다"처럼 엉뚱한 뜻이 된다.
   const rules = [
-    [skill.damage, /(\d+)(\s*(?:의\s*)?(?:추가\s*)?(?:고정\s*)?(?:피해|데미지|damage))/gi],
-    [skill.shield, /(\d+)(\s*(?:의\s*)?(?:방어막|실드|보호막|shield))/gi],
-    [skill.heal,   /(\d+)(\s*(?:의\s*)?(?:회복|치유|heal))/gi]
+    [skill.damage, /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:추가\s*)?(?:고정\s*)?(?:피해|데미지|damage))/gi],
+    [skill.shield, /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:방어막|실드|보호막|shield))/gi],
+    [skill.heal,   /(\d+)(?!\s*%)(\s*(?:의\s*)?(?:회복|치유|heal))/gi]
   ];
 
   for (const [value, re] of rules) {
@@ -390,7 +393,9 @@ function syncDescriptionNumbers(desc, skill) {
 
   // 위 규칙에 안 걸린 비상식적인 큰 수는 남겨두면 오해를 부른다.
   // (예: "적 방어막을 100 무시하고") — 세 자리 이상은 두 자리로 눌러 표기만 정리한다.
-  out = out.replace(/\b(\d{3,})\b/g, (m) => {
+  // ⚠️ %가 붙은 숫자는 비율이므로 건드리지 않는다
+  //    ("100% 무효"가 "10% 무효"로 바뀌면 뜻이 완전히 달라진다)
+  out = out.replace(/\b(\d{3,})\b(?!\s*%)/g, (m) => {
     const n = parseInt(m, 10);
     return String(Math.min(99, Math.max(1, Math.round(n / 10))));
   });
@@ -461,7 +466,11 @@ export function sanitizeAndClampCardData(cardData) {
   if (skill.description) {
     let desc = skill.description;
     // (A) % 증가 / 상승 -> 정수치로 변환
-    desc = desc.replace(/(\d+)\s*%\s*(공격력\s*)?(증가|상승|강화|증폭)/g, (m, p1, p2, p3) => {
+    //     ⚠️ **확률·치명타는 예외.** "치명타 확률 25% 증가"의 25%는 스탯 배율이 아니라
+    //        비율 그 자체다. 정수로 바꾸면 "치명타 확률 +3 증가"라는 헛소리가 된다.
+    desc = desc.replace(/(\d+)\s*%\s*(공격력\s*)?(증가|상승|강화|증폭)/g, (m, p1, p2, p3, offset, whole) => {
+      const before = whole.slice(Math.max(0, offset - 12), offset);
+      if (/(확률|치명|크리|흡혈|명중|회피)\s*$/.test(before)) return m;   // 비율이므로 그대로
       const val = Math.min(caps.buffValue[1], Math.max(caps.buffValue[0], Math.round(parseInt(p1) / 10) || 2));
       return `${p2 || ''}+${val} ${p3}`;
     });
@@ -473,8 +482,29 @@ export function sanitizeAndClampCardData(cardData) {
     desc = desc.replace(/(\d+)\s*%\s*(추가\s*)?(피해|데미지)/g, (m, p1, p2, p3) => {
       return `${caps.spellDamage[0]} ${p3}`;
     });
-    // (D) 남아있는 모든 % 기호 제거
-    desc = desc.replace(/(\d+)\s*%/g, '$1');
+    // (D) 남은 % 처리.
+    //
+    // 🐛 예전에는 **모든 %를 무조건 지웠다.** 그래서 정당한 확률 표기가
+    //    "20% 확률로" → "20 확률로" 같은 말이 안 되는 문장이 됐다.
+    //
+    //    %가 문제가 되는 건 **스탯 배율**일 때다 ("공격력 20% 증가" → 스펙 인플레).
+    //    그건 위 (A)(B)(C)에서 이미 정수로 바꿨다.
+    //    **확률·비율**은 %가 있어야 뜻이 통한다 — 남긴다.
+    //    화이트리스트로 "살릴 %"를 고르려 했더니 계속 빠뜨렸다
+    //    ("50% 줄인다"의 '줄'을 놓쳐 "50 줄인다"가 됐다).
+    //    → 기본을 **살리는 쪽**으로 뒤집는다. 위험한 경우는 (A)(B)(C)가 이미
+    //      정수로 바꿨으므로, 남은 %는 대부분 정당한 비율이다.
+    //      스탯 이름에 바로 붙은 %만 정수로 떨어뜨린다 (스펙 인플레 방지).
+    desc = desc.replace(/(공격력|체력|방어력|방어막|실드)\s*(\d+)\s*%/g,
+      (m, stat, num) => `${stat} +${Math.min(caps.buffValue[1], Math.max(1, Math.round(parseInt(num) / 10)))}`);
+
+    // (D-2) 분수·모호한 배율 표기를 정수 %로 굳힌다.
+    //   "피해를 1/2로 줄이고" 처럼 읽는 사람마다 다르게 해석되는 표기를 없앤다.
+    desc = desc
+      .replace(/1\s*\/\s*2/g, '50%')
+      .replace(/1\s*\/\s*3/g, '33%')
+      .replace(/1\s*\/\s*4/g, '25%')
+      .replace(/절반으로\s*(줄|감소)/g, '50% $1');
 
     // (E) 🐛 설명문의 숫자를 **클램프된 실제 값**과 맞춘다.
     //     예전에는 이 단계가 없어서 LLM이 "200 피해를 준다"라고 쓰면

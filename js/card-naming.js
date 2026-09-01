@@ -170,3 +170,25 @@ export function fixCardName(name = '', cardType = 'unit', rand = Math.random) {
 export function conceptTypeHint(concept = '') {
   return detectNameType(concept);
 }
+
+/**
+ * 타입 정체 단어를 **무조건** 붙인다.
+ *
+ * fixCardName()은 이름이 타입에 맞으면 그대로 두지만,
+ * "카드 이름이 카드군 이름 그 자체"인 경우엔 그래도 이름 구실을 못 한다.
+ *   "심연의 그림자단" (소환수) → 타입 판정은 통과하지만 카드 이름이 아니다
+ * 이럴 때 쓴다.
+ *
+ * @param base    수식어로 쓸 문구 (카드군 이름 등)
+ * @param rand    0~1 난수
+ */
+export function forceTypeHead(base = '', cardType = 'unit', rand = Math.random) {
+  const spec = getNamingSpec(cardType);
+  // 카드군 이름의 집단 접미사를 떼어 수식어로 만든다 ("심연의 그림자단" → "심연의 그림자")
+  let stem = String(base || '').trim().replace(/(기사단|결사|사단|단|군|대|회)$/, '').trim();
+  stem = stem.replace(/[의,\s]+$/g, '').trim();
+
+  const pool = spec.head.filter(w => w.length >= 2);
+  const head = pool[Math.floor(rand() * pool.length)] || spec.label;
+  return stem ? `${stem} ${head}` : head;
+}

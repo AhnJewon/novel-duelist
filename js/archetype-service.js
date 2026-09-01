@@ -4,7 +4,7 @@ import { state, dbLoad, dbSave, saveCardsToStorage, saveActiveDeckToStorage } fr
 import { DEFAULT_THEME_ARCHETYPES } from './data.js';
 import { runArchetypeCombo, normalizeComboAction, inferComboActionFromText } from './archetype-combos.js';
 import { evaluateCardPower, sanitizeAndClampCardData } from './config.js';
-import { nameMatchesType, fixCardName } from './card-naming.js';
+import { nameMatchesType, fixCardName, forceTypeHead } from './card-naming.js';
 import { sanitizeElementPolicy, normalizeTrigger, normalizeScaling,
          coerceCardElement, describeCombo, isElementAllowed,
          normalizeComboScope, describeScope } from './archetype-identity.js';
@@ -13,6 +13,9 @@ import { findSimilarArchetypes, compareArchetypeSemantics, ensureArchetypeEmbedd
          EMBED_SIM_MERGE, EMBED_SIM_GRAY } from './embedding-service.js';
 
 export const STORAGE_KEY_ARCHETYPES = 'novel_duelist_archetypes';
+
+/** 이름 충돌을 가를 때 쓰는 속성 한국어 표기 */
+const ELEMENT_LABELS = { fire: '작열', water: '심해', lightning: '뇌명', holy: '성광', dark: '흑야', nature: '녹야' };
 
 // 카드군 테마 로드 (IndexedDB 영구 저장소 연동)
 export async function loadArchetypes() {
@@ -772,7 +775,7 @@ const MAX_CARD_NAME_LEN = 16;
  * ⚠️ 키워드가 이름에 **한 번** 들어가는 건 자연스럽다 ("심연의 암살자 레이븐").
  *    카드군 이름이 통째로 접두일 때만 벗긴다.
  */
-export function enforceKeywordInName(cardName = '', theme = null) {
+export function enforceKeywordInName(cardName = '', theme = null, cardType = 'unit') {
   let name = cleanCardName(cardName);
 
   if (theme && theme.name) {
@@ -781,6 +784,14 @@ export function enforceKeywordInName(cardName = '', theme = null) {
       const rest = name.slice(full.length).replace(/^[\s\-–—:]+/, '').trim();
       // 남은 부분이 이름 구실을 할 때만 벗긴다
       if (rest.length >= 2) name = rest;
+    }
+
+    // 🐛 카드 이름이 **카드군 이름 그 자체**인 경우.
+    //    LLM이 "심연의 그림자단" 소속 카드를 그냥 "심연의 그림자단"이라 지어서,
+    //    서로 다른 카드 여러 장이 전부 같은 이름으로 보관함에 쌓였다.
+    //    카드군은 뱃지로 이미 표시되므로 이건 이름이 아니다 — 정체를 붙여준다.
+    if (name === full || name === full.replace(/(단|군|대|회|결사|기사단)$/, '')) {
+      name = forceTypeHead(full, cardType, Math.random);
     }
   }
 
@@ -898,6 +909,8 @@ export async function repairArchetypeRecords({ dryRun = false, silent = false } 
   let cardFixes = 0;
   const elementLog = [];
   const nameLog = [];
+  // 이번 보수에서 이미 쓰인 카드 이름 (중복 방지)
+  const usedNames = new Set();
   for (const card of cards) {
     const theme = list.find(a => a.id === card.themeId || a.name === card.themeName);
 
@@ -908,7 +921,24 @@ export async function repairArchetypeRecords({ dryRun = false, silent = false } 
       : fixCardName(card.name, card.cardType || 'unit');
     const nameTypeFixed = typeName !== card.name;
 
-    const cleaned = enforceKeywordInName(typeName, theme || null);
+    let cleaned = enforceKeywordInName(typeName, theme || null, card.cardType || 'unit');
+
+    // 🐛 서로 다른 카드가 같은 이름으로 쌓여 있었다.
+    //    (LLM이 카드군 이름을 그대로 카드 이름으로 써서 "심연의 그림자단"이 3장)
+    //    acquireCard는 이름+카드군으로 중복을 판정하므로, 이름이 겹치면
+    //    별개 카드가 중복으로 오인되거나 보관함에서 구분이 안 된다.
+    //    같은 이름이 이미 있으면 다른 정체 단어로 다시 짓는다.
+    if (usedNames.has(cleaned)) {
+      for (let attempt = 0; attempt < 6 && usedNames.has(cleaned); attempt++) {
+        cleaned = forceTypeHead(theme ? theme.name : cleaned, card.cardType || 'unit');
+      }
+      // 그래도 겹치면 속성으로 갈라준다 (무한 반복보다 낫다)
+      if (usedNames.has(cleaned)) {
+        const elName = (ELEMENT_LABELS[card.element] || card.element || '');
+        cleaned = `${elName} ${cleaned}`.trim();
+      }
+    }
+    usedNames.add(cleaned);
 
     // 🐛 카드군 속성 정책 위반 교정.
     //    카드팩이 카드군을 알기 전에 속성을 뽑아 저장하던 시절의 카드들은

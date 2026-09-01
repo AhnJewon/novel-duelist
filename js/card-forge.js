@@ -5,7 +5,7 @@ import { openSettingsModal } from './ui.js';
 import { rollRandomRarity, RARITY_BALANCE_CAPS, sanitizeAndClampCardData } from './config.js';
 import { callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
-import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName } from './archetype-service.js';
+import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { proposeArchetype } from './archetype-proposal.js';
@@ -684,7 +684,7 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     typedName = fixed;
   }
   // 🏷️ 카드군 소속 카드는 이름에 키워드를 포함해야 덱 서치 콤보가 잡아낸다
-  const finalName = cleanCardName(typedName);
+  const finalName = enforceKeywordInName(typedName, finalTheme, cardType);
 
   const rawCard = {
     id: `custom-${Date.now()}`,
