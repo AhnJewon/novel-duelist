@@ -198,11 +198,39 @@ function listActiveEffects(skill = {}) {
  *    조여야 카드가 전부 만능이 되는 것을 막을 수 있다.
  *    (이전: base 1/2/3/4, perMana 1.0/1.5/2.0/2.5)
  */
+/**
+ * maxCost — 예산을 치르려고 마나를 올릴 수 있는 상한.
+ *
+ * ⚠️ **저등급 고코스트 카드는 일부러 허용한다.**
+ *    "효과는 좋지만 그만큼 비싼 COMMON"은 그 자체로 정당한 선택지다.
+ *    (덱에 넣을지 말지를 고민하게 만드는 카드)
+ *
+ * 🐛 다만 예전엔 전 등급이 6이라 **모든 카드가** 고코스트로 수렴했다.
+ *    원인은 이 표가 아니라 LLM이 카드마다 효과를 잔뜩 넣는 것이었다.
+ *    → 상한은 한 칸만 낮춰 여지를 남기고,
+ *      분포는 프롬프트에서 잡는다 ("대부분은 효과 1개, 소수만 복합").
+ */
+/**
+ * 🐛 예산이 **스탯 범위와 맞지 않아** 모든 카드가 상한 마나로 밀렸다.
+ *
+ *    COMMON 최소 스탯(공6/방2/체14) = 2.85 파워
+ *    COMMON 2마나 예산 (구: 0.5+1.6) = 2.1
+ *    → 스탯만으로 이미 초과. 효과가 0개여도 마나가 끝까지 올라갔다.
+ *      그래서 "효과 1개 COMMON"조차 5마나가 됐다.
+ *
+ * 아래 값은 RARITY_BALANCE_CAPS의 **전형적인 카드**가 자기 등급의
+ * 전형적인 마나에서 예산에 맞도록 역산한 것이다.
+ *   common 전형(공8/방4/체18 + 효과1, 2마나) ≈ 4.9  →  1.5 + 2×1.7 = 4.9
+ *   legendary 전형(공22/방11/체35 + 효과3, 4마나) ≈ 14.3 → 3.5 + 4×2.7 = 14.3
+ *
+ * ⚠️ 스탯 범위(RARITY_BALANCE_CAPS)나 STAT_POWER_DIVISOR를 바꾸면
+ *    이 표도 함께 다시 계산해야 한다. 안 그러면 또 커브가 무너진다.
+ */
 export const RARITY_POWER = {
-  common:    { base: 0.5, perMana: 0.8, maxCost: 6 },
-  rare:      { base: 1.0, perMana: 1.2, maxCost: 6 },
-  epic:      { base: 1.5, perMana: 1.6, maxCost: 6 },
-  legendary: { base: 2.0, perMana: 2.0, maxCost: 6 }
+  common:    { base: 1.5, perMana: 1.7, maxCost: 5 },
+  rare:      { base: 2.2, perMana: 2.0, maxCost: 5 },
+  epic:      { base: 2.8, perMana: 2.4, maxCost: 6 },
+  legendary: { base: 3.5, perMana: 2.7, maxCost: 6 }
 };
 
 /**
@@ -469,6 +497,91 @@ function clarifyHpSubject(desc = '', hpTarget = 'body') {
     .trim();
 }
 
+/**
+ * 🪤 함정이 아닌 카드에서 **반응형 문구**를 걷어낸다.
+ *
+ * `trapTrigger` 필드는 막았지만 LLM은 필드를 안 쓰고 **설명문에 산문으로** 쓴다.
+ *   "어떤 적 카드가 소환될 때 그 카드를 즉시 제거하고..."  ← 소환수에 붙어 있었다
+ * 필드가 비어 있으니 엔진은 아무것도 하지 않고, 카드만 거짓말을 한다.
+ * 게다가 소환수가 이런 걸 하면 함정 카드의 존재 이유가 사라진다.
+ *
+ * ⚠️ "소환 시 / 발동 시"는 **자기 자신을 낼 때**라 정상이다. 지우면 안 된다.
+ *    지우는 것은 **상대 행동**이나 **지속 조건**에 반응하는 절뿐이다.
+ */
+function stripReactiveClauses(desc = '') {
+  let out = String(desc || '');
+
+  // 상대 행동에 반응하는 절 — 문장 단위로 통째로 제거
+  const REACTIVE = [
+    // "(어떤) 적/상대 (카드)가 ~할 때/하면 ~한다"
+    /[^.。]*?(?:적|상대)[^.。]*?(?:소환|발동|사용|공격|낼|내면|플레이)[^.。]*?(?:때|때마다|하면|되면)[^.。]*?[.。]?/g,
+    // "내/본체 체력이 N% 이하가 될 때 ~"  (지속 감시 조건)
+    /[^.。]*?체력이[^.。]*?(?:이하|미만)[^.。]*?(?:될\s*때|일\s*때|되면)[^.。]*?[.。]?/g,
+    // "다음 턴에 ~" (지연 효과 — 예약 시스템이 없다)
+    /[^.。]*?다음\s*턴에[^.。]*?[.。]?/g
+  ];
+
+  for (const re of REACTIVE) out = out.replace(re, ' ');
+
+  out = out.replace(/\s{2,}/g, ' ').replace(/^[\s,·]+|[\s,·]+$/g, '').trim();
+  return out;
+}
+
+/**
+ * 스킬 데이터로부터 설명문을 **직접 만든다.**
+ *
+ * LLM 산문은 계속 실제 동작과 어긋난다 (없는 효과를 쓰고, 수치를 지어내고,
+ * 함정 효과를 소환수에 붙인다). 정규식으로 뒤쫓는 데는 한계가 있다.
+ * 여기서 만든 문장은 **데이터가 곧 문장**이라 절대 어긋나지 않는다.
+ *
+ * 산문이 통째로 걸러졌을 때의 대체용으로 쓴다.
+ */
+export function describeSkillFromData(skill = {}, cardType = 'unit') {
+  const parts = [];
+  const t = readTargetSpec(skill);
+  const tgt = describeTarget(skill);
+
+  if (skill.damage > 0) {
+    const total = skill.multiHit > 1 ? skill.damage * skill.multiHit : skill.damage;
+    parts.push(skill.multiHit > 1
+      ? `${tgt}에게 ${skill.damage}씩 ${skill.multiHit}연타(총 ${total}) 피해`
+      : `${tgt}에게 ${skill.damage} 피해`);
+  }
+  if (skill.pierceShield) parts.push('방어막 관통');
+  if (skill.critChance > 0) parts.push(`${Math.round(skill.critChance * 100)}% 확률로 치명타 ${skill.critMultiplier || 1.8}배`);
+  if (skill.lifestealPercent > 0) parts.push(`가한 피해의 ${Math.round(skill.lifestealPercent * 100)}%를 본체 체력으로 흡혈`);
+  if (skill.executeThreshold > 0) parts.push(`상대 체력 ${Math.round(skill.executeThreshold * 100)}% 이하면 처형(2배)`);
+  if (skill.shield > 0) parts.push(`본체 방어막 +${skill.shield}`);
+  if (skill.heal > 0) {
+    parts.push(readHpTarget(skill) === 'minion'
+      ? `이 소환수의 체력 ${skill.heal} 회복`
+      : `본체 체력 ${skill.heal} 회복`);
+  }
+  if (skill.damageReduction > 0) parts.push(`받는 피해 ${skill.damageReduction}% 감소`);
+  if (skill.attackDown > 0) parts.push(`${tgt}의 공격력 -${skill.attackDown}`);
+  if (skill.silence) parts.push(`${tgt}의 효과 무효화`);
+  if (skill.manaGain > 0) parts.push(`마나 +${skill.manaGain}`);
+  if (skill.drawCards > 0) parts.push(`카드 ${skill.drawCards}장 드로우`);
+  if (skill.doubleCastNext) parts.push('다음 카드 2연속 발동');
+  if (skill.invulnerableTurns > 0) parts.push(`${skill.invulnerableTurns}턴간 무적`);
+  if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
+    const st = skill.statusEffect;
+    const val = st.value ? ` ${st.value}` : '';
+    parts.push(`${tgt}에게 ${st.type}${val} (${st.duration || 1}턴)`);
+  }
+  if (skill.passiveEffect) {
+    const p = skill.passiveEffect;
+    if (p.manaPerTurn) parts.push(`매 턴 마나 +${p.manaPerTurn}`);
+    if (p.endTurnShield) parts.push(`턴 종료 시 본체 방어막 +${p.endTurnShield}`);
+    if (p.endTurnAoeShield) parts.push(`턴 종료 시 본체 방어막 +${p.endTurnAoeShield} & 자기 내구도 수리`);
+    if (p.endTurnAoeHeal) parts.push(`턴 종료 시 본체 체력 +${p.endTurnAoeHeal}`);
+  }
+  if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
+
+  if (parts.length === 0) return cardType === 'trap' ? '조건 충족 시 발동합니다.' : '특별한 효과가 없습니다.';
+  return parts.join(' · ') + '.';
+}
+
 export function sanitizeAndClampCardData(cardData) {
   if (!cardData) return cardData;
   const rarity = (cardData.rarity && RARITY_BALANCE_CAPS[cardData.rarity]) ? cardData.rarity : 'common';
@@ -609,6 +722,17 @@ export function sanitizeAndClampCardData(cardData) {
     //   ⚠️ 숫자 동기화(E) **뒤에** 와야 한다. 앞에 오면 "체력 15 를 회복"처럼
     //      조사가 끼어들어 (E)의 정규식이 숫자를 못 잡는다.
     desc = clarifyHpSubject(desc, skill.hpTarget);
+
+    // (G) 🪤 함정이 아닌데 반응형 문구를 썼으면 그 절을 걷어낸다.
+    //     걷어낸 뒤 남는 게 없으면 **데이터로부터 설명을 만든다** —
+    //     빈 설명보다 정확한 자동 문장이 낫다.
+    //     ⚠️ 조건절만 지우면 **남은 서술도 대개 구현되지 않은 효과**다.
+    //        ("어떤 적 카드가 소환될 때 그 카드를 즉시 제거하고 1 마나를 획득한다"
+    //         → 조건만 빼면 "그 카드를 즉시 제거하고..." 라는 여전히 없는 효과)
+    //        그래서 어중간하게 자르지 않고 **통째로 데이터에서 다시 만든다.**
+    if (cardType !== 'trap' && stripReactiveClauses(desc) !== desc) {
+      desc = describeSkillFromData(skill, cardType);
+    }
 
     skill.description = desc;
   }

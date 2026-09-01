@@ -8,6 +8,7 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
+import { validateCardPlan, buildRetryDirective } from './card-validator.js';
 import { proposeArchetype } from './archetype-proposal.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 
@@ -263,6 +264,19 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   }
 }
 
+💠 효과 개수와 마나 커브 (**가장 자주 어기는 규칙**):
+- **대부분의 카드는 효과가 1개다.** 2개는 가끔, 3개 이상은 드물어야 한다.
+  효과를 많이 넣을수록 시스템이 마나를 올리는데, 모든 카드가 그러면
+  **저코스트 카드가 사라져 게임이 굴러가지 않는다.**
+- 등급별 기본 자세:
+  * common    — 효과 1개, 마나 1~2. 단순하고 싸야 한다. 이게 덱의 뼈대다.
+  * rare      — 효과 1~2개, 마나 2~3
+  * epic      — 효과 2개, 마나 3~4
+  * legendary — 효과 2~3개, 마나 3~5
+- ⭐ 예외는 **의도적으로** 만들어라: "효과는 강하지만 그만큼 비싼 COMMON"은
+  좋은 카드다. 단 이런 카드는 **드물게** 나와야 선택지가 된다.
+  10장 중 1~2장이면 충분하다.
+
 📝 설명문 작성 규칙 (**수치를 먼저, 설명은 나중에**):
 1. damage/shield/heal 같은 **수치를 먼저 확정**한다.
 2. description은 그 수치를 **그대로** 옮겨 적는다. 새로운 숫자를 지어내지 말 것.
@@ -293,14 +307,42 @@ ${customDirective}`;
   const currentReasoningMode = reasoningSelect ? reasoningSelect.value : (state.settings.reasoningMode || 'fast');
 
   try {
-    const cardData = await callOllamaChat({
-      messages: [
-        { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' },
-        { role: 'user', content: `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}` }
-      ],
+    const basePrompt = `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`;
+    const sysMsg = { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' };
+
+    let cardData = await callOllamaChat({
+      messages: [sysMsg, { role: 'user', content: basePrompt }],
       timeoutMs: 300000, // 5분 타임아웃
       reasoningMode: currentReasoningMode
     });
+
+    // 🔁 규칙 위반이면 **한 번만** 되묻는다.
+    //    프롬프트로 예방하고, 어기면 짚어서 고치게 하고,
+    //    그래도 어기면 sanitizeAndClampCardData가 결정론적으로 잘라낸다.
+    //    ⚠️ 재시도를 늘리면 카드 한 장에 수십 초가 더 든다. 1회로 고정.
+    const problems = validateCardPlan(cardData, targetType);
+    if (problems.length > 0) {
+      console.info('[Forge] 규칙 위반 — LLM에게 재요청합니다:\n' + problems.map(p => ' • ' + p).join('\n'));
+      if (loadingEl) {
+        const t = loadingEl.querySelector('span');
+        if (t) t.innerText = '🔁 규칙 위반을 고쳐 다시 기획 중...';
+      }
+      try {
+        const retry = await callOllamaChat({
+          messages: [sysMsg, { role: 'user', content: basePrompt + buildRetryDirective(problems) }],
+          timeoutMs: 300000,
+          reasoningMode: currentReasoningMode
+        });
+        const stillBad = validateCardPlan(retry, targetType);
+        // 재시도가 더 낫거나 같으면 채택한다 (더 나빠졌으면 원본을 쓴다)
+        if (stillBad.length < problems.length) cardData = retry;
+        if (stillBad.length > 0) {
+          console.info(`[Forge] 재요청 후에도 ${stillBad.length}건 남음 — 결정론적 보수로 처리합니다.`);
+        }
+      } catch (e) {
+        console.warn('[Forge] 재요청 실패, 원본을 보수해서 씁니다:', e.message);
+      }
+    }
 
     applyGeneratedCardData(cardData);
   } catch (err) {
