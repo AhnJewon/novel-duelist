@@ -91,12 +91,18 @@
 |---|---|
 | 새 카드군 연계 추가 | `js/archetype-combos.js` **한 곳** |
 | 카드군 속성 정책 / 발동조건 / 증가방식 | `js/archetype-identity.js` **한 곳** |
+| 카드군 플레이스타일 (덱 설계도) | `js/archetype-identity.js`의 `ARCHETYPE_PLAYSTYLES` |
+| 건축물 패시브 · 오라 | `js/config.js`의 `buildStructurePassive` + `js/battle-engine.js`의 오라 계산 |
 | 카드군 초기화 · 병합 · 보수 | `js/archetype-service.js` (콘솔에서 `resetArchetypes()`) |
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
 | PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
+| 카드 타입별 예산 (소환수/건축물/마법/함정) | `js/config.js`의 `TYPE_POWER` **한 곳** |
+| 효과 **크기**의 값 (피해 28 vs 8) | `js/config.js`의 `EFFECT_MAGNITUDE` **한 곳** |
 | 전투 무작위 / 재현 | `js/rng.js` (`initBattle({seed})`) |
 | 새 상태이상 추가 | `js/status-effects.js` **한 곳** |
+| 상태이상 적용 범위 (소환수 전용 여부) | `js/status-effects.js`의 `entityOnly` + `config.js`의 `ENTITY_ONLY_STATUSES` |
+| 스탯 체증·체감 곡선 | `js/config.js`의 `STAT_CURVE` |
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
 | 밸런스 수치 조정 | `js/config.js`의 `RARITY_BALANCE_CAPS` **+ 프롬프트 텍스트도 함께** |
 | 카드 생성 프롬프트 | `js/card-forge.js`(1장) / `js/card-pack.js`(5장) |
@@ -131,3 +137,55 @@
 
 한국어 주석. **"왜"**를 남기세요 — "무엇"은 코드가 말합니다.
 버그를 고쳤으면 `// 🐛 수정:` 으로 과거 동작을 적어두세요.
+
+16. **건축물 오라를 `entity.attack`에 더해 저장하지 마세요.** 건축물이 죽어도
+    보너스가 남습니다. 항상 읽는 시점에 `auraAttackBonus()`로 계산하세요.
+    → [DECISIONS #67](docs/DECISIONS.md)
+
+17. **건축물 패시브를 속성으로 분기하지 마세요.** 한 번 그렇게 했다가 자유도를
+    죽여서 되돌렸습니다. 판단 주체는 **LLM > 카드군 플레이스타일** 순입니다.
+    → [DECISIONS #67](docs/DECISIONS.md)
+
+18. **카드팩 선택을 카드 id로 식별하지 마세요.** 중복 카드가 나오면 깨집니다.
+    슬롯 인덱스(`data-pack-idx`)를 쓰세요. → [DECISIONS #68](docs/DECISIONS.md)
+
+19. **`affordablePower`를 타입 없이 부르지 마세요.** 세 번째 인자가 카드 타입입니다.
+    빼면 전부 소환수 예산으로 계산돼 타입별 분리가 무효가 됩니다.
+    → [DECISIONS #69](docs/DECISIONS.md)
+
+20. **`trapTrigger`에 비용을 매기지 마세요 (cost 0).** 발동조건은 제약이지 능력이
+    아닙니다. 조건부 보상은 `TYPE_POWER.trap.budgetMult` 한 곳에서만 줍니다.
+    → [DECISIONS #69](docs/DECISIONS.md)
+
+21. **예산에 카드 타입 예외를 추가하지 마세요.** 예외가 필요해 보이면 거의 항상
+    `TYPE_POWER` 수치가 잘못된 것입니다. 건축물 예외를 넣었다가 제거한 이력이
+    있습니다. → [DECISIONS #69](docs/DECISIONS.md)
+
+22. **`EFFECT_MAGNITUDE.perUnit`을 임의로 낮추지 마세요.** "커먼 등급 중간값 ≈ 1단위"
+    기준으로 맞춰져 있습니다. 낮추면 **모든 카드가 비싸져** 코스트 곡선이 통째로
+    올라갑니다. → [DECISIONS #70](docs/DECISIONS.md)
+
+23. **`multiHit`을 `EFFECT_MAGNITUDE`에 추가하지 마세요.** `damage`가 이미
+    총량(damage × multiHit)으로 값을 냅니다. 이중 청구가 됩니다.
+    → [DECISIONS #70](docs/DECISIONS.md)
+
+24. **효과 수치를 깎는 코드를 추가하면 `syncDescriptionNumbers`도 다시 돌리세요.**
+    안 하면 카드에 28이라 적혀 있는데 20이 들어갑니다.
+    → [DECISIONS #70](docs/DECISIONS.md)
+
+25. **소환수 상태이상을 두 곳에서 소모하지 마세요.** `tickMinionStatuses()`가
+    유일한 소모 지점입니다. `refreshMinions`와 `foeMinionAttack`은 `blockedBy`
+    플래그만 읽습니다. 두 번 소모하면 기절이 절반 턴만 갑니다.
+    → [DECISIONS #72](docs/DECISIONS.md)
+
+26. **`config.js`의 `ENTITY_ONLY_STATUSES`와 `status-effects.js`의 `entityOnly`를
+    같이 고치세요.** 순환 import를 피해 복제한 목록입니다. 한쪽만 고치면 예산과
+    실제 동작이 어긋납니다. → [DECISIONS #72](docs/DECISIONS.md)
+
+27. **LLM 프롬프트(템플릿 리터럴) 안에서 백틱을 쓰지 마세요.** 리터럴이 조기
+    종료돼 `SyntaxError`가 납니다. 큰따옴표를 쓰세요.
+    → [DECISIONS #72](docs/DECISIONS.md)
+
+28. **`STAT_CURVE`의 `pivot`을 옮기지 마세요.** pivot에서 선형과 같아지도록
+    정규화돼 있어서, 옮기면 **모든 카드의 코스트가 움직입니다.**
+    → [DECISIONS #71](docs/DECISIONS.md)

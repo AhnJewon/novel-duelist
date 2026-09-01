@@ -18,7 +18,12 @@ import { EFFECT_COSTS } from './config.js';
 const IMPLEMENTED_FIELDS = new Set([
   ...Object.keys(EFFECT_COSTS),
   'name', 'description', 'cost', 'critMultiplier', 'reductionTurns',
-  'targetSide', 'targetScope', 'targetCount', 'hpTarget', 'condition'
+  'targetSide', 'targetScope', 'targetCount', 'hpTarget', 'condition',
+  // 🏛️ 건축물 패시브 — EFFECT_COSTS의 'aura'는 passiveEffect **안에** 들어가므로
+  //    스킬 최상위 키로는 나타나지 않는다. taunt도 예산에 있지만 별도 키다.
+  'passiveEffect', 'taunt',
+  // 💫 본체 지정 상태이상 옵트인 (BODY_STATUS_COST_MULT 할증을 치른다)
+  'bodyStatus'
 ]);
 
 /** 상대 행동/지속 조건에 반응하는 문구 — 함정 전용이다 */

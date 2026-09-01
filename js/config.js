@@ -129,6 +129,11 @@ export const EFFECT_COSTS = {
   multiHit:          { cost: 2, minRarity: 'rare',      label: '연타' },
   critChance:        { cost: 2, minRarity: 'rare',      label: '치명타' },
   passiveEffect:     { cost: 3, minRarity: 'rare',      label: '지속 패시브' },
+  // 🏛️ 오라 — "이 카드가 전장에 있는 동안". 쌓이지 않으므로 매 턴 누적형보다 싸고,
+  //    건축물이 부서지면 즉시 사라지므로 낮은 등급에도 허용한다.
+  //    ⚠️ 이건 카드 한 장과 마나를 지불하고 얻는 효과다. 전개 수만으로 공짜로
+  //       붙던 오토체스식 종족 버프(DECISIONS #4)와는 다르다.
+  aura:              { cost: 2, minRarity: 'common',    label: '전장 오라' },
   isAoeSpell:        { cost: 3, minRarity: 'rare',      label: '광역' },
   lifestealPercent:  { cost: 3, minRarity: 'rare',      label: '흡혈' },
 
@@ -138,18 +143,111 @@ export const EFFECT_COSTS = {
   doubleCastNext:    { cost: 4, minRarity: 'epic',      label: '더블캐스트' },
 
   // 🪤 함정 — 조건부 발동이라 즉발보다 싸다 (조건이 안 맞으면 아무 일도 없다)
-  trapTrigger:       { cost: 1, minRarity: 'common',    label: '함정 발동조건' },
+  // 🪤 발동조건은 **제약이지 능력이 아니다.** 값을 매기지 않는다.
+  //    🐛 예전에는 cost 1을 청구했다. 그러면 조건부 함정이 즉발 마법보다
+  //       불리해지고, 그걸 보상하려 함정 예산 배수를 올리면 총량이 부풀었다.
+  //       조건부의 보상은 TYPE_POWER.trap.budgetMult 한 곳에서만 준다.
+  trapTrigger:       { cost: 0, minRarity: 'common',    label: '함정 발동조건' },
 
   // 🛡️ 방어·무력화 계열
   //    LLM이 설명문에는 자주 쓰는데 엔진에 없어서 **글자만 있고 동작하지 않던** 효과들이다.
   //    ("피해를 50% 줄이고", "공격력을 0으로", "효과를 무효화")
   damageReduction:   { cost: 2, minRarity: 'rare',      label: '피해 경감' },
+  // ❤️ 본체 최대 체력 증가 — 영구적이라 비싸다.
+  //    본체 체력이 낮아서 상태이상·직격이 위협적인 문제를 카드로 풀 수 있게 한다.
+  maxHpGain:         { cost: 3, minRarity: 'rare',      label: '최대 체력 증가' },
   attackDown:        { cost: 2, minRarity: 'rare',      label: '공격력 약화' },
   silence:           { cost: 3, minRarity: 'epic',      label: '효과 무효화' },
 
   // 게임을 끝내는 효과 — legendary 전용
   invulnerableTurns: { cost: 5, minRarity: 'legendary', label: '무적' }
 };
+
+// ============================================================
+// 📏 효과 **크기**의 값
+// ------------------------------------------------------------
+// 🐛 예전에는 EFFECT_COSTS가 효과의 **존재**만 값매겼다.
+//    그래서 "28 피해"와 "8 피해"가 똑같이 1점이었다. 크기는 오직
+//    RARITY_BALANCE_CAPS가 등급별로 상한만 걸었을 뿐, 같은 등급 안에서
+//    상한을 꽉 채운 카드와 하한만 쓴 카드가 같은 값을 냈다.
+//
+// 이제 크기도 값을 낸다:  실제비용 = 기본비용 × max(1, 크기 / perUnit)
+//
+// ⚠️ perUnit은 **커먼 등급 중간값이 대략 1단위가 되도록** 맞췄다.
+//    (커먼 피해 중간값 10 → 10/10 = 1단위 → 비용 1 = 예전과 동일)
+//    이렇게 하면 기존 밸런스 곡선을 유지하면서 등급 내 편차만 반영된다.
+//    perUnit을 낮추면 모든 카드가 비싸져 코스트가 전반적으로 올라갑니다.
+//
+// ⚠️ multiHit은 여기 없다. damage가 **총량**(damage × multiHit)으로 값을
+//    내므로 multiHit까지 크기로 매기면 이중 청구가 된다.
+//    multiHit의 기본비용은 "여러 번 쪼개 때리는 유틸리티" 값으로만 남긴다.
+// ============================================================
+export const EFFECT_MAGNITUDE = {
+  damage:            { read: s => (s.damage || 0) * Math.max(1, s.multiHit || 1), perUnit: 10 },
+  // 영구 증가라 회복(perUnit 8)보다 단가가 비싸다
+  maxHpGain:         { read: s => s.maxHpGain || 0,                               perUnit: 5 },
+  shield:            { read: s => s.shield || 0,                                  perUnit: 8 },
+  heal:              { read: s => s.heal || 0,                                    perUnit: 8 },
+  attackDown:        { read: s => s.attackDown || 0,                              perUnit: 3 },
+  damageReduction:   { read: s => s.damageReduction || 0,                         perUnit: 20 },
+  drawCards:         { read: s => s.drawCards || 0,                               perUnit: 1.5 },
+  manaGain:          { read: s => s.manaGain || 0,                                perUnit: 1.5 },
+  invulnerableTurns: { read: s => s.invulnerableTurns || 0,                        perUnit: 1 },
+  // 확률·비율 계열은 0~1로 저장된다. 100을 곱해 퍼센트로 읽는다.
+  lifestealPercent:  { read: s => (s.lifestealPercent || 0) * 100,                 perUnit: 35 },
+  critChance:        { read: s => (s.critChance || 0) * 100,                       perUnit: 35 },
+  executeThreshold:  { read: s => (s.executeThreshold || 0) * 100,                 perUnit: 25 },
+  // 상태이상은 위력 × 지속턴이 실제 총량이다
+  statusEffect:      { read: s => (s.statusEffect && s.statusEffect.value || 0)
+                                  * Math.max(1, (s.statusEffect && s.statusEffect.duration) || 1), perUnit: 16 },
+  // 🏛️ 건축물 패시브 — 매 턴 누적분. 마나는 방어막보다 값이 크므로 8을 곱한다.
+  passiveEffect:     { read: s => { const p = s.passiveEffect || {};
+                        return (p.manaPerTurn || 0) * 8 + (p.endTurnShield || 0)
+                             + (p.endTurnAoeShield || 0) + (p.endTurnAoeHeal || 0); }, perUnit: 12 },
+  // 🏛️ 오라 — 지속되지만 쌓이지 않는다. 경감%는 스탯과 자릿수가 달라 8로 나눠 맞춘다.
+  aura:              { read: s => { const a = (s.passiveEffect && s.passiveEffect.aura) || {};
+                        return (a.attackBonus || 0) + (a.defenseBonus || 0)
+                             + (a.damageReduction || 0) / 8; }, perUnit: 2.5 }
+};
+
+/**
+ * 💫 본체 지정 상태이상 할증.
+ *
+ * 기절·빙결·화상·맹독은 기본적으로 **소환수 전용**이다
+ * (status-effects.js의 `entityOnly`). 본체는 체력이 낮아 행동 봉쇄와
+ * 지속 피해에 대응할 여지가 없기 때문이다.
+ *
+ * 그래도 본체를 노리는 카드를 만들고 싶으면 `skill.bodyStatus = true`로
+ * **더 큰 파워 비용을 치르고** 살 수 있다. 공짜로 열어주지는 않는다.
+ */
+export const BODY_STATUS_COST_MULT = 2.5;
+
+/**
+ * 크기를 반영한 효과 비용.
+ * 크기 정보가 없는 효과(광역·관통·무효화 등)는 기본비용 그대로다.
+ */
+export function scaledEffectCost(key, baseCost, skill) {
+  const mag = EFFECT_MAGNITUDE[key];
+  let cost = baseCost;
+  if (mag) {
+    const units = mag.read(skill) / mag.perUnit;
+    cost = baseCost * Math.max(1, units);
+  }
+  // 💫 소환수 전용 상태이상을 본체에 걸겠다고 산 경우 할증
+  if (key === 'statusEffect' && skill.bodyStatus
+      && skill.statusEffect && ENTITY_ONLY_STATUSES.has(skill.statusEffect.type)) {
+    cost *= BODY_STATUS_COST_MULT;
+  }
+  return cost;
+}
+
+/**
+ * 소환수 전용 상태이상 목록.
+ * ⚠️ status-effects.js의 `entityOnly`와 **반드시 같아야 한다.**
+ *    config.js가 status-effects.js를 import하면 순환이 생기므로 여기에 복제했다.
+ *    한쪽만 고치면 예산과 실제 동작이 어긋난다.
+ */
+export const ENTITY_ONLY_STATUSES = new Set(['stun', 'freeze', 'burn', 'poison']);
 
 // 스킬 객체에서 실제로 켜져 있는 효과 목록을 뽑는다
 function listActiveEffects(skill = {}) {
@@ -162,12 +260,24 @@ function listActiveEffects(skill = {}) {
       on = (skill.multiHit || 1) > 1;
     } else if (key === 'trapTrigger') {
       on = !!skill.trapTrigger;
-    } else if (key === 'passiveEffect' || key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'silence') {
+    } else if (key === 'aura') {
+      // 🏛️ 오라는 passiveEffect 안에 들어 있다 — 따로 값을 매겨야
+      //    "매 턴 효과 + 오라"를 둘 다 달고도 공짜인 구멍이 안 생긴다
+      on = !!(skill.passiveEffect && skill.passiveEffect.aura);
+    } else if (key === 'passiveEffect') {
+      // 오라만 있는 경우는 aura 쪽에서 값을 치르므로 여기서 또 받지 않는다
+      on = !!(skill.passiveEffect && hasPerTurnPassive(skill.passiveEffect));
+    } else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'silence') {
       on = !!skill[key];
     } else {
       on = (skill[key] || 0) > 0;
     }
-    if (on) active.push({ key, ...spec });
+    if (on) {
+      // 📏 크기를 반영한 비용으로 덮어쓴다.
+      //    ⚠️ baseCost를 따로 남긴다 — 로그·진단에서 "기본 1점인데 크기 때문에
+      //       2.8점"인지 구분해야 어디서 예산이 샜는지 읽을 수 있다.
+      active.push({ key, ...spec, baseCost: spec.cost, cost: scaledEffectCost(key, spec.cost, skill) });
+    }
   }
   return active;
 }
@@ -236,28 +346,121 @@ export const RARITY_POWER = {
 /**
  * 스탯도 파워를 소비한다.
  * 이 값으로 나눈 몫이 스탯 파워 점수다. 숫자가 클수록 스탯이 싸다.
+ *
+ * ⚠️ 이건 **소환수 기준값**이다. 타입별 값은 TYPE_POWER.statDivisor를 쓴다.
+ *    (기존 코드 호환을 위해 남겨둔 이름)
  */
 export const STAT_POWER_DIVISOR = {
-  attack: 5,    // 공격력 5당 1점 (이전 6 — 조임)
-  hp: 10,       // 체력 10당 1점 (이전 12 — 조임)
+  attack: 5,    // 공격력 5당 1점
+  hp: 10,       // 체력 10당 1점
   defense: 8    // 방어력 8당 1점
 };
 
-/** 지불 가능한 총 파워 */
-export function affordablePower(rarity, cost) {
-  const spec = RARITY_POWER[rarity] || RARITY_POWER.common;
-  const c = Math.max(0, Math.min(spec.maxCost, parseInt(cost) || 0));
-  return spec.base + c * spec.perMana;
+// ============================================================
+// 🃏 카드 타입별 예산
+// ------------------------------------------------------------
+// 🐛 왜 나눴나: 예전에는 네 타입이 RARITY_POWER 하나를 **공유**했다.
+//    그런데 마법·함정은 스탯이 0이라 예산 전부가 효과로 갔다.
+//    같은 등급·같은 마나에서 효과에 쓸 수 있는 여유가 이렇게 벌어졌다:
+//
+//      커먼 1마나 → 소환수 0.4 / 건축물 1.2 / 마법 3.2 / 함정 3.2   (8배)
+//      레전더리 3마나 → 소환수 4.0 / 건축물 6.5 / 마법 11.6 / 함정 11.6
+//
+//    소환수는 자기 스탯에 예산을 다 쓰고 효과를 못 달아 코스트가 올라갔고
+//    (저코스트 카드가 사라지는 원인), 마법·함정은 효과를 무제한 쌓았다.
+//
+// 두 손잡이로 조정한다:
+//   budgetMult   — 타입의 총 예산 배수 (소환수 1.00 기준)
+//   statDivisor  — 그 타입에서 스탯이 얼마나 비싼가
+//
+// ⚠️ 수치를 만질 때는 **효과 여유**(예산 − 스탯)를 보세요. 예산만 보면
+//    스탯이 0인 마법·함정이 실제로 얼마나 강해지는지 놓칩니다.
+// ============================================================
+export const TYPE_POWER = {
+  unit: {
+    label: '소환수',
+    budgetMult: 1.00,
+    statDivisor: { attack: 5, hp: 10, defense: 8 },
+    why: '기준. 스탯과 효과를 모두 갖고, 살아 있는 동안 매 턴 공격한다.'
+  },
+  structure: {
+    label: '건축물',
+    budgetMult: 0.90,
+    // 🏛️ 체력이 소환수의 **절반값**이다. 공격을 못 하므로 버티는 값어치뿐인데,
+    //    예전에는 소환수와 같은 값을 매겨 체력(hp×1.3)이 예산을 다 먹었다.
+    //    그래서 커먼 건축물은 패시브를 달 여유가 없었다.
+    statDivisor: { attack: 5, hp: 20, defense: 14 },
+    why: '공격하지 않는다. 대신 전장에 남아 지속 효과를 낸다.'
+  },
+  spell: {
+    label: '마법',
+    // 일회용이라 판에 남지 않는다. 스탯이 0이므로 총량을 낮춰야 소환수와 맞는다.
+    budgetMult: 0.70,
+    statDivisor: null,
+    why: '일회용 즉발. 판에 남지 않으므로 총량이 낮다.'
+  },
+  trap: {
+    label: '함정',
+    // 조건이 안 맞으면 **아무 일도 없다.** 그 위험을 총량으로 보상한다.
+    // 마법(0.70)보다 높고 소환수(1.00)보다 낮다 — 조건부 보상은 여기서만 준다.
+    // ⚠️ trapTrigger에 값을 다시 매기면 이 보상이 상쇄된다. 그쪽은 cost 0이다.
+    budgetMult: 0.85,
+    statDivisor: null,
+    why: '조건부. 발동하지 못할 위험을 총량으로 보상받는다.'
+  }
+};
+
+export function typePowerSpec(cardType) {
+  return TYPE_POWER[cardType] || TYPE_POWER.unit;
 }
 
-/** 스탯이 소비하는 파워 */
+/**
+ * 지불 가능한 총 파워.
+ * @param cardType 타입별 배수를 적용한다. 생략하면 소환수 기준.
+ */
+export function affordablePower(rarity, cost, cardType = 'unit') {
+  const spec = RARITY_POWER[rarity] || RARITY_POWER.common;
+  const c = Math.max(0, Math.min(spec.maxCost, parseInt(cost) || 0));
+  return (spec.base + c * spec.perMana) * typePowerSpec(cardType).budgetMult;
+}
+
+/**
+ * 스탯 곡선 지수. 1이면 선형(예전), 1보다 크면 **고타점이 비싸진다.**
+ *
+ * 🐛 왜 선형이 틀렸나: 예전에는 `공격력 / 5`처럼 선형이었다. 그러면
+ *    공격력 26이 6의 정확히 4.3배 값이 된다. 하지만 실제 가치는 선형보다
+ *    빠르게 오른다 — 고타점은 **한 방에 상대 소환수를 정리하는 문턱**을
+ *    넘기 때문이다. 공격력 10짜리 두 기와 20짜리 한 기는 총합이 같아도
+ *    20짜리가 훨씬 강하다 (교환에서 이기고, 도발을 뚫고, 처형 사거리가 길다).
+ *
+ * 체력은 반대로 **체감**한다. 체력 40은 20의 두 배지만, 어차피 한 턴에
+ * 여러 번 맞으면 죽고 방어막·회복으로 메울 수 있어 두 배만큼 강하지 않다.
+ *
+ * ⚠️ 기준점 정규화: `(값/기준)^지수 × (기준/단가)` 꼴로 계산해
+ *    **등급 중간값에서는 선형과 같은 값**이 나오게 맞췄다.
+ *    그래서 전형적인 카드의 코스트는 그대로고, 극단값만 벌어진다.
+ */
+export const STAT_CURVE = {
+  attack:  { exp: 1.35, pivot: 14 },   // 체증 — 고타점은 문턱을 넘는다
+  hp:      { exp: 0.85, pivot: 24 },   // 체감 — 체력은 쌓아도 선형만큼은 아니다
+  defense: { exp: 1.15, pivot: 7 }     // 약한 체증 — 수비력은 피해를 매번 깎는다
+};
+
+function curvedStat(raw, divisor, curve) {
+  const v = Math.max(0, parseInt(raw) || 0);
+  if (v === 0) return 0;
+  if (!curve) return v / divisor;
+  // 기준값(pivot)에서 선형과 정확히 같아지도록 정규화한다
+  return Math.pow(v / curve.pivot, curve.exp) * (curve.pivot / divisor);
+}
+
+/** 스탯이 소비하는 파워 (타입별 단가 + 체증/체감 곡선) */
 export function statPower(cardData) {
-  const type = cardData.cardType || 'unit';
-  if (type === 'spell' || type === 'trap') return 0;   // 주문·함정은 스탯이 없다
-  const atk = (parseInt(cardData.attack) || 0) / STAT_POWER_DIVISOR.attack;
-  const hp = (parseInt(cardData.hp) || 0) / STAT_POWER_DIVISOR.hp;
-  const def = (parseInt(cardData.defense) || 0) / STAT_POWER_DIVISOR.defense;
-  return atk + hp + def;
+  const div = typePowerSpec(cardData.cardType || 'unit').statDivisor;
+  if (!div) return 0;   // 마법·함정은 스탯이 없다
+  return curvedStat(cardData.attack, div.attack, STAT_CURVE.attack)
+       + curvedStat(cardData.hp, div.hp, STAT_CURVE.hp)
+       + curvedStat(cardData.defense, div.defense, STAT_CURVE.defense);
 }
 
 /**
@@ -266,6 +469,7 @@ export function statPower(cardData) {
  */
 export function evaluateCardPower(cardData) {
   const rarity = (cardData && RARITY_POWER[cardData.rarity]) ? cardData.rarity : 'common';
+  const cardType = (cardData && cardData.cardType) || 'unit';   // 타입별 예산 배수용
   const skill = (cardData && (cardData.skill || (cardData.skills && cardData.skills[0]))) || {};
   const effects = listActiveEffects(skill);
 
@@ -288,7 +492,7 @@ export function evaluateCardPower(cardData) {
   }, 0);
   const stats = statPower(cardData || {});
   const used = effectPower + stats;
-  const affordable = affordablePower(rarity, cardData ? cardData.cost : 0);
+  const affordable = affordablePower(rarity, cardData ? cardData.cost : 0, cardType);
   const illegal = effects.filter(e => rarityRank(e.minRarity) > rarityRank(rarity));
 
   return {
@@ -322,7 +526,16 @@ export function evaluateCardPower(cardData) {
 export function enforcePowerBudget(cardData, skill) {
   const rarity = (RARITY_POWER[cardData.rarity]) ? cardData.rarity : 'common';
   const spec = RARITY_POWER[rarity];
+  const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;   // 크기 하한용
+  // ⚠️ 깊은 복사가 필요하다. statusEffect / passiveEffect는 중첩 객체이고
+  //    2-c 단계가 그 안의 수치를 깎으므로, 얕은 복사면 **호출자의 원본까지**
+  //    바뀐다 (LLM 응답 객체가 조용히 변형되는 버그가 된다).
   const out = { ...skill };
+  if (skill.statusEffect) out.statusEffect = { ...skill.statusEffect };
+  if (skill.passiveEffect) {
+    out.passiveEffect = { ...skill.passiveEffect };
+    if (skill.passiveEffect.aura) out.passiveEffect.aura = { ...skill.passiveEffect.aura };
+  }
   const removed = [];
   let cost = Math.max(1, Math.min(spec.maxCost, parseInt(cardData.cost) || 1));
   let atk = parseInt(cardData.attack) || 0;
@@ -332,13 +545,38 @@ export function enforcePowerBudget(cardData, skill) {
   const clearEffect = (key) => {
     if (key === 'statusEffect') out.statusEffect = { type: 'none', duration: 0, value: 0 };
     else if (key === 'multiHit') out.multiHit = 1;
-    else if (key === 'passiveEffect') delete out.passiveEffect;
+    else if (key === 'passiveEffect') {
+      // 매 턴 누적분만 지운다 — 오라는 별도 항목(aura)이 담당한다
+      if (out.passiveEffect) {
+        for (const k of PER_TURN_PASSIVE_KEYS) delete out.passiveEffect[k];
+        if (Object.keys(out.passiveEffect).length === 0) delete out.passiveEffect;
+      }
+    }
+    else if (key === 'aura') {
+      if (out.passiveEffect) {
+        delete out.passiveEffect.aura;
+        if (Object.keys(out.passiveEffect).length === 0) delete out.passiveEffect;
+      }
+    }
     else if (key === 'trapTrigger') delete out.trapTrigger;
     else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext') out[key] = false;
     else out[key] = 0;
   };
 
   // 1. 등급 요건 미달 제거
+  //
+  //    🏛️ 건축물에 예외 처리가 있었는데 **없앴다.**
+  //    예전에는 커먼 건축물의 패시브가 통째로 삭제돼(백지 카드) 여기서
+  //    `if (isStructure && ...) continue`로 건너뛰었다. 하지만 그건 증상만
+  //    가린 것이었다. 진짜 원인은 **모든 타입이 예산을 공유**해서
+  //    건축물의 체력(hp×1.3)이 예산을 다 먹은 것이었다.
+  //    TYPE_POWER로 타입별 예산을 나눈 뒤에는 예외가 필요 없다.
+  //    (등급 4 × 마나 2 × 플레이스타일 6 = 48개 조합을 **최대 스탯**으로
+  //     돌려 전부 패시브가 유지되는 것을 확인했다 → DECISIONS #69)
+  //
+  //    ⚠️ 여기에 타입 예외를 다시 추가하고 싶어지면, 먼저 TYPE_POWER 쪽이
+  //       잘못된 게 아닌지 보세요. 예외는 거의 항상 예산 모델의 오류 신호입니다.
+  const cardType = cardData.cardType || 'unit';
   for (const e of listActiveEffects(out)) {
     if (rarityRank(e.minRarity) > rarityRank(rarity)) {
       clearEffect(e.key);
@@ -364,9 +602,25 @@ export function enforcePowerBudget(cardData, skill) {
   // 2. 효과를 지우기 전에 마나 코스트를 올려 값을 치른다
   //    "낮은 등급이 여러 효과를 갖되 마나를 많이 쓴다"는 규칙이 여기서 나온다
   let costRaised = 0;
-  while (usedPower() > affordablePower(rarity, cost) && cost < spec.maxCost) {
+  while (usedPower() > affordablePower(rarity, cost, cardType) && cost < spec.maxCost) {
     cost++;
     costRaised++;
+  }
+
+  // 2-a. 🐛 반대로 **너무 싸게 먹히면 코스트를 내린다.**
+  //
+  //   예전에는 예산이 코스트를 **올리기만** 했다. 그래서 생성기가 무작위로
+  //   높은 코스트를 뽑으면 그대로 남았고, "6마나 커먼 소환수, 효과 없음,
+  //   예산 10 중 3.9 사용" 같은 카드가 나왔다. 이건 선택지가 아니라 死카드다.
+  //
+  //   ⚠️ 저등급 고코스트 카드 자체를 없애는 게 아니다. **효과가 좋아서**
+  //      값을 치르는 카드는 usedPower가 높으므로 여기서 내려가지 않는다.
+  //      값을 치를 것이 없는 카드만 내려간다.
+  const costFloor = Math.max(1, (RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common).costRange[0]);
+  let costLowered = 0;
+  while (cost > costFloor && usedPower() <= affordablePower(rarity, cost - 1, cardType)) {
+    cost--;
+    costLowered++;
   }
 
   // 2-b. 🎯 그래도 넘치면 **대상 범위를 좁힌다.**
@@ -379,7 +633,7 @@ export function enforcePowerBudget(cardData, skill) {
     return false;
   };
   let narrowed = 0;
-  while (usedPower() > affordablePower(rarity, cost) && narrowOnce()) {
+  while (usedPower() > affordablePower(rarity, cost, cardType) && narrowOnce()) {
     narrowed++;
     // 범위를 줄여 여유가 생겼으면 마나를 다시 올려볼 필요는 없다 (이미 최대)
   }
@@ -387,17 +641,76 @@ export function enforcePowerBudget(cardData, skill) {
     removed.push({ key: 'targetScope', label: '대상 범위', reason: `예산에 맞춰 ${describeTarget(out)}(으)로 축소` });
   }
 
+  // 2-c. 📏 그래도 넘치면 **효과의 크기를 깎는다.**
+  //
+  //   효과 크기가 예산에 들어간 뒤로는 이 단계가 반드시 필요하다.
+  //   없으면 "28 피해"짜리 카드가 예산을 넘을 때 **피해 효과를 통째로 잃는다.**
+  //   크기를 20으로 줄이는 편이 훨씬 덜 파괴적이다.
+  //
+  //   등급 하한(RARITY_BALANCE_CAPS)까지만 깎는다. 그 아래로 내려가면
+  //   등급 표기와 실제 성능이 어긋난다.
+  const trimFloor = {
+    damage: caps.spellDamage[0], shield: caps.shieldValue[0], heal: caps.healValue[0],
+    attackDown: caps.buffValue[0], drawCards: 1, manaGain: 1, damageReduction: 10,
+    invulnerableTurns: 1, critChance: 0.15, lifestealPercent: 0.2, executeThreshold: 0.2
+  };
+  const RATIO_KEYS = new Set(['critChance', 'lifestealPercent', 'executeThreshold']);
+  const trimOnce = () => {
+    // 지금 가장 비싼 크기 효과를 한 단계 깎는다 (비싼 것부터 줄이는 게 효율적)
+    let pick = null, pickCost = 0;
+    for (const e of listActiveEffects(out)) {
+      if (!EFFECT_MAGNITUDE[e.key]) continue;
+      const floor = trimFloor[e.key];
+      if (floor === undefined) continue;
+      if (typeof out[e.key] !== 'number' || out[e.key] <= floor) continue;
+      if (e.cost > pickCost) { pickCost = e.cost; pick = e.key; }
+    }
+    if (pick) {
+      const step = RATIO_KEYS.has(pick) ? 0.05 : Math.max(1, Math.round(out[pick] * 0.1));
+      out[pick] = Math.max(trimFloor[pick], Number((out[pick] - step).toFixed(2)));
+      return true;
+    }
+    // 상태이상은 중첩 필드다. 지속턴을 먼저 줄이고 그다음 위력을 줄인다.
+    const st = out.statusEffect;
+    if (st && st.type && st.type !== 'none') {
+      if ((st.duration || 1) > 1) { st.duration -= 1; return true; }
+      if ((st.value || 0) > caps.buffValue[0]) { st.value = Math.max(caps.buffValue[0], st.value - 2); return true; }
+    }
+    // 🏛️ 건축물 패시브 / 오라의 수치
+    const p = out.passiveEffect;
+    if (p) {
+      for (const k of ['endTurnAoeShield', 'endTurnShield', 'endTurnAoeHeal']) {
+        if ((p[k] || 0) > 2) { p[k] = Math.max(2, p[k] - 2); return true; }
+      }
+      if (p.aura) {
+        for (const k of ['attackBonus', 'defenseBonus']) {
+          if ((p.aura[k] || 0) > 1) { p.aura[k] -= 1; return true; }
+        }
+        if ((p.aura.damageReduction || 0) > 5) { p.aura.damageReduction = Math.max(5, p.aura.damageReduction - 5); return true; }
+      }
+    }
+    return false;
+  };
+  let trimmedValues = 0;
+  // ⚠️ 상한 200 — trimOnce가 항상 감소하므로 무한 루프는 없지만,
+  //    누군가 floor보다 큰 step을 넣으면 진동할 수 있다. 방어적으로 둔다.
+  while (usedPower() > affordablePower(rarity, cost, cardType) && trimmedValues < 200 && trimOnce()) {
+    trimmedValues++;
+  }
+
   // 3. 그래도 넘치면 비싼 효과부터 제거
+  //    🏛️ 여기에도 건축물 예외가 있었지만 없앴다 (위 1단계 주석 참고).
+  //       타입별 예산이 생긴 뒤로는 건축물 패시브가 예산에 정상적으로 들어간다.
   let effects = listActiveEffects(out).sort((a, b) => b.cost - a.cost);
   for (const e of effects) {
-    if (usedPower() <= affordablePower(rarity, cost)) break;
+    if (usedPower() <= affordablePower(rarity, cost, cardType)) break;
     clearEffect(e.key);
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
 
   // 4. 그래도 넘치면 스탯을 깎는다
   let guard = 0;
-  while (usedPower() > affordablePower(rarity, cost) && guard++ < 40) {
+  while (usedPower() > affordablePower(rarity, cost, cardType) && guard++ < 40) {
     if (atk >= hp / 2 && atk > 1) atk -= 1;
     else if (hp > 4) hp -= 2;
     else if (def > 0) def -= 1;
@@ -409,7 +722,7 @@ export function enforcePowerBudget(cardData, skill) {
     out.damage = Math.max(1, skill.damage || 0) || 8;
   }
 
-  return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised };
+  return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised, costLowered, trimmedValues };
 }
 
 // 🛡️ 카드 데이터 정수화 및 등급별 엄격한 밸런스 클램핑 처리기 (% 표기 완전 제거)
@@ -434,7 +747,12 @@ function syncDescriptionNumbers(desc, skill) {
   const rules = [
     [skill.damage, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
     [skill.shield, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:방어막|실드|보호막|shield))`, 'gi')],
-    [skill.heal,   new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')]
+    [skill.heal,   new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')],
+    // 🐛 드로우·마나 수급이 빠져 있었다. 예산이 값을 깎아 drawCards가 3→1이
+    //    되어도 설명문은 "카드 3장을 뽑는다"로 남았다. 카드가 거짓말을 한다.
+    //    ⚠️ "카드 3장" / "3장의 카드" 두 어순을 모두 본다.
+    [skill.drawCards, /(\d+)(?!\s*%)(\s*장)/gi],
+    [skill.manaGain,  new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:마나|mana))`, 'gi')]
   ];
 
   for (const [value, re] of rules) {
@@ -447,7 +765,9 @@ function syncDescriptionNumbers(desc, skill) {
   const reverse = [
     [skill.damage, /((?:피해|데미지)\s*)(\d+)(?!\s*%)/gi],
     [skill.shield, /((?:방어막|실드|보호막)\s*)(\d+)(?!\s*%)/gi],
-    [skill.heal,   /((?:체력)\s*)(\d+)(?!\s*%)/gi]
+    [skill.heal,   /((?:체력)\s*)(\d+)(?!\s*%)/gi],
+    [skill.drawCards, /((?:카드)\s*)(\d+)(?=\s*장)/gi],
+    [skill.manaGain,  /((?:마나)\s*\+?\s*)(\d+)(?!\s*%)/gi]
   ];
   for (const [value, re] of reverse) {
     if (!Number.isFinite(value) || value <= 0) continue;
@@ -560,6 +880,7 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   if (skill.damageReduction > 0) parts.push(`받는 피해 ${skill.damageReduction}% 감소`);
   if (skill.attackDown > 0) parts.push(`${tgt}의 공격력 -${skill.attackDown}`);
   if (skill.silence) parts.push(`${tgt}의 효과 무효화`);
+  if (skill.maxHpGain > 0) parts.push(`본체 최대 체력 +${skill.maxHpGain}`);
   if (skill.manaGain > 0) parts.push(`마나 +${skill.manaGain}`);
   if (skill.drawCards > 0) parts.push(`카드 ${skill.drawCards}장 드로우`);
   if (skill.doubleCastNext) parts.push('다음 카드 2연속 발동');
@@ -580,6 +901,196 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
 
   if (parts.length === 0) return cardType === 'trap' ? '조건 충족 시 발동합니다.' : '특별한 효과가 없습니다.';
   return parts.join(' · ') + '.';
+}
+
+// ============================================================
+// 🏛️ 건축물 지속 패시브
+// ------------------------------------------------------------
+// 패시브에는 성격이 다른 두 종류가 있다.
+//
+//  1) **매 턴 누적형** (manaPerTurn / endTurnShield / endTurnAoeHeal …)
+//     매 턴 값이 쌓인다. 오래 살수록 기하급수적으로 벌어지므로
+//     `PER_TURN_MIN_RARITY` 이상에서만 허용한다.
+//
+//  2) **오라** (aura) — "이 카드가 전장에 있는 동안"
+//     쌓이지 않는다. 건축물이 부서지면 즉시 사라진다.
+//     조건(같은 카드군만 / 같은 속성만)을 걸면 덱 구성에 방향이 생긴다.
+//     누적이 아니므로 낮은 등급에도 허용된다.
+//
+// ⚠️ 이건 DECISIONS #4가 금지한 "카드군 스탯 시너지"가 아니다.
+//    그건 전개 수만으로 **공짜로** 붙는 오토체스식 종족 버프였다.
+//    오라는 카드 한 장과 마나를 지불하고, 파괴되면 사라지며,
+//    파워 예산에 계상된다. 유희왕의 지속마법/필드마법에 해당한다.
+// ============================================================
+
+/** 매 턴 누적형 패시브를 쓸 수 있는 최소 등급 */
+export const PER_TURN_MIN_RARITY = 'epic';
+
+/** 매 턴 누적되는 패시브 키 (오라와 구분) */
+export const PER_TURN_PASSIVE_KEYS = [
+  'manaPerTurn', 'endTurnShield', 'endTurnAoeShield', 'endTurnAoeHeal'
+];
+
+/** 오라가 적용될 범위 */
+export const AURA_SCOPES = {
+  all:       { label: '모든 아군',   mult: 1.0 },
+  archetype: { label: '같은 카드군', mult: 0.6 },
+  element:   { label: '같은 속성',   mult: 0.7 },
+  cardType:  { label: '같은 종류',   mult: 0.7 }
+};
+
+export function hasPerTurnPassive(passive = {}) {
+  return PER_TURN_PASSIVE_KEYS.some(k => (passive && passive[k]) > 0);
+}
+
+/**
+ * LLM이 뱉은 패시브를 엔진이 아는 모양으로 다듬는다.
+ *
+ * LLM은 없는 필드를 잘 지어낸다("enemyAttackDown", "everyTurnDraw").
+ * 여기서 걸러내지 않으면 카드에 글자만 남고 아무 일도 안 일어난다.
+ */
+export function normalizeStructurePassive(raw, rarity = 'common') {
+  if (!raw || typeof raw !== 'object') return null;
+  const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
+  const out = {};
+
+  // 1) 매 턴 누적형 — 등급 미달이면 통째로 버린다
+  if (rarityRank(rarity) >= rarityRank(PER_TURN_MIN_RARITY)) {
+    if (raw.manaPerTurn > 0)      out.manaPerTurn = Math.min(2, Math.max(1, parseInt(raw.manaPerTurn) || 0));
+    if (raw.endTurnShield > 0)    out.endTurnShield = Math.min(caps.shieldValue[1], Math.max(2, parseInt(raw.endTurnShield) || 0));
+    if (raw.endTurnAoeShield > 0) out.endTurnAoeShield = Math.min(caps.shieldValue[1], Math.max(2, parseInt(raw.endTurnAoeShield) || 0));
+    if (raw.endTurnAoeHeal > 0)   out.endTurnAoeHeal = Math.min(caps.healValue[1], Math.max(2, parseInt(raw.endTurnAoeHeal) || 0));
+  }
+
+  // 2) 오라 — 등급 제한 없음 (쌓이지 않으니까)
+  const a = raw.aura;
+  if (a && typeof a === 'object') {
+    const scope = AURA_SCOPES[a.scope] ? a.scope : 'all';
+    const aura = { scope };
+    if (scope !== 'all') aura.scopeValue = String(a.scopeValue || '');
+    // 범위가 좁을수록 값을 크게 준다 (조건을 만족시키는 값을 치른 것)
+    const room = 1 / AURA_SCOPES[scope].mult;
+    const atkCap = Math.max(1, Math.round(caps.buffValue[1] * room));
+    if (a.attackBonus > 0)     aura.attackBonus = Math.min(atkCap, Math.max(1, parseInt(a.attackBonus) || 0));
+    if (a.defenseBonus > 0)    aura.defenseBonus = Math.min(atkCap, Math.max(1, parseInt(a.defenseBonus) || 0));
+    if (a.damageReduction > 0) aura.damageReduction = Math.min(40, Math.max(5, parseInt(a.damageReduction) || 0));
+    if (aura.attackBonus || aura.defenseBonus || aura.damageReduction) out.aura = aura;
+  }
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * 🏛️ 건축물 패시브 **폴백**. LLM이 아무것도 주지 않았을 때만 쓴다.
+ *
+ * 🐛 이전 버전은 `element`로 분기해 화염이면 마나, 물이면 방어막처럼
+ *    **속성이 패시브를 결정**했다. 하드코딩을 다른 하드코딩으로 바꾼 셈이라
+ *    자유도를 오히려 죽였다. 이제는 **카드군의 플레이스타일**을 따른다 —
+ *    저코스트 전개형 카드군의 건축물이 요새가 되는 일이 없어진다.
+ *
+ * @param playstyle archetype-identity.js의 플레이스타일 키
+ */
+export function buildStructurePassive(playstyle = 'control', rarity = 'common') {
+  const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
+  const canPerTurn = rarityRank(rarity) >= rarityRank(PER_TURN_MIN_RARITY);
+  const S = caps.shieldValue[0];
+  const H = caps.healValue[0];
+  const B = Math.max(1, caps.buffValue[0]);
+
+  // 매 턴 누적을 못 쓰는 등급은 같은 컨셉을 **오라**로 표현한다.
+  switch (playstyle) {
+    case 'turtle':
+      return canPerTurn ? { endTurnAoeShield: S }
+                        : { aura: { scope: 'all', damageReduction: 15 } };
+    case 'swarm':
+      return canPerTurn ? { manaPerTurn: 1 }
+                        : { aura: { scope: 'all', attackBonus: B } };
+    case 'ace':
+      return canPerTurn ? { endTurnShield: S }
+                        : { aura: { scope: 'cardType', scopeValue: 'unit', defenseBonus: B } };
+    case 'burn':
+      return canPerTurn ? { endTurnShield: Math.max(2, Math.floor(S / 2)) }
+                        : { aura: { scope: 'all', attackBonus: B } };
+    case 'toolbox':
+      return canPerTurn ? { endTurnAoeHeal: H }
+                        : { aura: { scope: 'all', defenseBonus: B } };
+    case 'control':
+    default:
+      return canPerTurn ? { manaPerTurn: 1, endTurnShield: Math.max(2, Math.floor(S / 2)) }
+                        : { aura: { scope: 'element', scopeValue: '', attackBonus: B } };
+  }
+}
+
+/**
+ * 건축물 패시브를 문장으로 옮긴다.
+ *
+ * ⚠️ 카드에 적힌 글이 실제 동작과 어긋나면 안 되므로,
+ *    패시브가 확정된 뒤 **데이터에서** 문장을 만든다.
+ */
+export function describeStructurePassive(passive = {}) {
+  if (!passive) return '[건축물] 특별한 지속 효과가 없습니다.';
+  const parts = [];
+  if (passive.manaPerTurn)      parts.push(`매 턴 시작 시 마나 +${passive.manaPerTurn} 공급`);
+  if (passive.endTurnShield)    parts.push(`턴 종료 시 본체 방어막 +${passive.endTurnShield}`);
+  if (passive.endTurnAoeShield) parts.push(`턴 종료 시 본체 방어막 +${passive.endTurnAoeShield} & 자기 내구도 수리`);
+  if (passive.endTurnAoeHeal)   parts.push(`턴 종료 시 본체 체력 +${passive.endTurnAoeHeal} 회복`);
+
+  const a = passive.aura;
+  if (a) {
+    const who = describeAuraScope(a);
+    const eff = [];
+    if (a.attackBonus)     eff.push(`공격력 +${a.attackBonus}`);
+    if (a.defenseBonus)    eff.push(`방어력 +${a.defenseBonus}`);
+    if (a.damageReduction) eff.push(`받는 피해 ${a.damageReduction}% 감소`);
+    if (eff.length) parts.push(`이 건축물이 전장에 있는 동안 ${who} ${eff.join(', ')}`);
+  }
+
+  if (parts.length === 0) return '[건축물] 특별한 지속 효과가 없습니다.';
+  return `[건축물 패시브] ${parts.join(' & ')}.`;
+}
+
+export function describeAuraScope(aura = {}) {
+  const spec = AURA_SCOPES[aura.scope] || AURA_SCOPES.all;
+  if (aura.scope === 'archetype') return `같은 카드군 아군의`;
+  if (aura.scope === 'element')   return `${aura.scopeValue || '같은 속성'} 아군의`;
+  if (aura.scope === 'cardType')  return `아군 ${aura.scopeValue || '카드'}의`;
+  return `${spec.label}의`;
+}
+
+/**
+ * 설명문이 특정 효과를 **언급하고 있는지** 본다.
+ *
+ * 🐛 왜 필요한가: 설명문 교정은 3단계에서 끝나는데 효과 제거는 4단계(예산)에서
+ *    일어난다. 그래서 "매 턴 마나 +1 공급"이라 적힌 커먼 건축물의 패시브가
+ *    조용히 삭제되어도 문장은 그대로 남았다. 카드가 거짓말을 한다.
+ *    제거된 효과가 문장에 남아 있을 때만 설명을 다시 만들기 위한 판별기다.
+ *    (언급이 없으면 LLM이 쓴 플레이버 문장을 굳이 버리지 않는다.)
+ */
+const EFFECT_DESC_PATTERNS = {
+  damage:            /피해|데미지/,
+  shield:            /방어막|실드/,
+  heal:              /회복|치유/,
+  drawCards:         /드로우|뽑/,
+  manaGain:          /마나/,
+  multiHit:          /연타|번\s*공격|회\s*공격/,
+  critChance:        /치명타|크리/,
+  lifestealPercent:  /흡혈|생명력\s*흡수/,
+  executeThreshold:  /처형/,
+  pierceShield:      /관통/,
+  isAoeSpell:        /광역|전체/,
+  doubleCastNext:    /2연속|두 번 발동|더블/,
+  invulnerableTurns: /무적/,
+  damageReduction:   /경감|피해.{0,6}감소/,
+  attackDown:        /공격력\s*(-|감소|약화|하락)/,
+  silence:           /무효화|봉인|침묵/,
+  passiveEffect:     /매\s*턴|턴\s*종료\s*시|턴\s*시작\s*시|패시브|지속/,
+  statusEffect:      /화상|맹독|빙결|기절|출혈|중독|동상/,
+  taunt:             /도발/
+};
+
+function descMentionsEffect(desc = '', key) {
+  const re = EFFECT_DESC_PATTERNS[key];
+  return re ? re.test(desc) : false;
 }
 
 export function sanitizeAndClampCardData(cardData) {
@@ -754,11 +1265,40 @@ export function sanitizeAndClampCardData(cardData) {
   if (budgeted.costRaised > 0) {
     console.log(`[Balance] "${cardData.name || '무명'}" (${rarity}) 효과값 지불로 마나 +${budgeted.costRaised} → ${cost}`);
   }
+  if (budgeted.costLowered > 0) {
+    console.log(`[Balance] "${cardData.name || '무명'}" (${rarity}/${cardType}) 값을 치를 것이 없어 마나 -${budgeted.costLowered} → ${cost}`);
+  }
+
+  // 📏 크기를 깎았으면 **설명문의 숫자를 다시 맞춘다.**
+  //    ⚠️ 이게 없으면 카드에 "28 피해"라고 적혀 있는데 20이 들어간다.
+  //       숫자 동기화(3-E단계)는 예산 적용 **전**에 끝나므로 여기서 한 번 더 돈다.
+  if (budgeted.trimmedValues > 0) {
+    const before = finalSkill.description;
+    finalSkill.description = syncDescriptionNumbers(finalSkill.description, finalSkill);
+    // 건축물 패시브는 문장 전체가 데이터에서 생성되므로 통째로 다시 만든다
+    if (cardType === 'structure' && finalSkill.passiveEffect) {
+      finalSkill.description = describeStructurePassive(finalSkill.passiveEffect);
+    }
+    console.log(`[Balance] "${cardData.name || '무명'}" 크기 ${budgeted.trimmedValues}단계 하향 → 설명문 재동기화: "${before}" → "${finalSkill.description}"`);
+  }
   if (budgeted.removed.length > 0) {
     console.log(
       `[Balance] "${cardData.name || '무명'}" (${rarity}/마나${cost}) 효과 ${budgeted.removed.length}건 제거: ` +
       budgeted.removed.map(r => `${r.label}(${r.reason})`).join(', ')
     );
+
+    // 🐛 수정: 예산에서 잘려나간 효과가 설명문에 그대로 남아 카드가 거짓말을 했다.
+    //    ("매 턴 마나 +1 공급"이라 적힌 커먼 건축물의 패시브가 조용히 삭제됨)
+    //    설명 교정(3단계)이 예산 적용(4단계)보다 **먼저** 일어나기 때문이다.
+    //    잘린 효과가 문장에 실제로 언급된 경우에만 데이터에서 다시 만든다.
+    const ghost = budgeted.removed.find(
+      r => r.key !== 'targetScope' && descMentionsEffect(finalSkill.description, r.key)
+    );
+    if (ghost) {
+      const before = finalSkill.description;
+      finalSkill.description = describeSkillFromData(finalSkill, cardType);
+      console.log(`[Balance] 설명문 재생성 (제거된 "${ghost.label}"이 문장에 남아 있었음): "${before}" → "${finalSkill.description}"`);
+    }
   }
 
   const power = evaluateCardPower({ ...cardData, rarity, cost, attack: atk, hp, defense: def, cardType, skill: finalSkill });

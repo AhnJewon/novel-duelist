@@ -3,13 +3,13 @@
 import { state, saveCardsToStorage, saveActiveDeckToStorage, saveSettingsToStorage, optimizeCardImage, MAX_DECK_SIZE } from './storage.js';
 import { createCardElement } from './card-renderer.js';
 import { audio } from './audio.js';
-import { rollRandomRarity, RARITY_BALANCE_CAPS, RARITY_STYLE, ELEMENT_CONFIG, sanitizeAndClampCardData } from './config.js';
+import { rollRandomRarity, RARITY_BALANCE_CAPS, RARITY_STYLE, ELEMENT_CONFIG, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
 
 import { checkOllamaOnline, callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { escapeHtml } from './dom-utils.js';
-import { coerceCardElement } from './archetype-identity.js';
+import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
 import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
@@ -272,7 +272,8 @@ export async function openBoosterPack(fastMode = false) {
     openedPackCards.push(cardData);
 
     // 4. 카드 뒤집기 (Flip) 및 공개 연출
-    await revealSingleCardSlot(slot, cardData);
+    //    ⚠️ 인덱스를 넘긴다 — 선택 식별을 카드 id로 하면 중복 카드에서 깨진다
+    await revealSingleCardSlot(slot, cardData, i);
     await new Promise(r => setTimeout(r, fastMode ? 100 : 350));
   }
 
@@ -348,6 +349,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let skillTargetSide = 'foe';
   let skillTargetScope = 'single';
   let skillTargetCount = 1;
+  let llmPassiveRaw = null;      // 🏛️ LLM이 설계한 건축물 패시브 (없으면 폴백)
   let skillName = `${baseConcept}의 비기`;
   let skillDesc = cardType === 'spell' 
     ? `[즉발 주문] 적에게 ${spellDmg}의 ${ELEMENT_CONFIG[element].name} 피해를 입힙니다.`
@@ -485,6 +487,7 @@ Return ONLY JSON:
   "themeName": "카드군 테마명 (기존 카드군이면 목록의 이름을 그대로 사용)",
   "themeKeyword": "카드군 핵심 키워드 (2~4글자 한국어)",
   "elementPolicy": "mono|dual|multi (신규 카드군일 때만)",
+  "themePlaystyle": "신규 카드군일 때만: turtle|swarm|control|ace|burn|toolbox",
   "elements": ["허용 속성 배열, 예: fire 또는 fire,lightning"],
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
@@ -497,8 +500,49 @@ Return ONLY JSON:
   "skillDesc": "명확한 고정 정수 효과 설명 문장",
   "targetSide": "foe|ally|self|any",
   "targetScope": "single|multi|all|random",
-  "targetCount": 1-3
+  "targetCount": 1-3,
+  "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
+
+🏛️ STRUCTURE PASSIVE (건축물 지속 효과 — cardType이 "structure"일 때만):
+건축물은 공격하지 않는다. 대신 전장에 남아 매 턴 또는 지속적으로 작동한다.
+두 종류가 있고, **성격이 완전히 다르다.**
+
+(1) 매 턴 누적형 — 턴마다 값이 쌓인다. **epic / legendary 에서만** 쓸 수 있다.
+    "passiveEffect": { "manaPerTurn": 1 }              매 턴 마나 +1 (최대 2)
+    "passiveEffect": { "endTurnShield": 10 }           턴 종료 시 본체 방어막 +N
+    "passiveEffect": { "endTurnAoeShield": 10 }        방어막 +N & 자기 내구도 수리
+    "passiveEffect": { "endTurnAoeHeal": 10 }          턴 종료 시 본체 체력 +N 회복
+
+(2) 오라 — "이 건축물이 전장에 있는 동안". 쌓이지 않고 부서지면 사라진다.
+    **모든 등급에서** 쓸 수 있다. common / rare 건축물은 이쪽을 써라.
+    "passiveEffect": { "aura": { "scope": "all", "attackBonus": 2 } }
+    - "scope": "all"(모든 아군) | "archetype"(같은 카드군만) | "element"(같은 속성만) | "cardType"(같은 종류만)
+    - "scopeValue": scope가 element면 속성명, cardType이면 unit|spell|structure|trap
+    - 효과: "attackBonus"(공격력 +N) / "defenseBonus"(방어력 +N) / "damageReduction"(받는 피해 N% 감소, 5~40)
+    💡 범위를 좁히면(archetype/element) 값을 더 크게 줄 수 있다. 조건을 만족시키는 값을 치른 것이다.
+    💡 카드군 전용 오라는 그 카드군 덱을 짜게 만드는 강력한 동기가 된다.
+
+❌ 위에 없는 필드를 지어내지 마라 ("enemyAttackDown", "everyTurnDraw" 등). 전부 무시된다.
+❌ common / rare 건축물에 매 턴 누적형을 쓰지 마라. 시스템이 삭제한다.
+
+💫 STATUS EFFECT 적용 범위 (중요):
+- **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
+  본체에는 걸리지 않고, 상대 전장이 비어 있으면 **불발**한다.
+  본체는 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없기 때문이다.
+  * ✅ "적 소환수 1체를 2턴간 빙결"    ❌ "상대를 2턴간 기절"
+- **shock(감전) / vulnerable(취약)** 은 본체에도 걸린다 (증폭기라서).
+- "maxHpGain"으로 **본체 최대 체력을 영구히 올리는** 카드도 만들 수 있다.
+
+⚖️ 타입별 효과 예산 (카드 타입마다 넣을 수 있는 효과의 양이 다르다):
+- **소환수**는 스탯(공/체/방)이 예산을 많이 쓴다 → 효과는 **1~2개**로 절제하라.
+  낮은 등급 소환수는 효과가 아예 없는 것도 정상이다 (바닐라 카드).
+- **건축물**은 공격하지 않으므로 체력이 싸다 → 지속 패시브 + 효과 1개 정도.
+- **마법**은 스탯이 없어 예산 전부가 효과로 가지만, 일회용이라 총량이 낮다 → **1~2개**.
+- **함정**은 조건부라 총량 보상을 받는다 → 같은 마나에서 가장 많은 효과 (**2~3개**).
+⚠️ 효과를 많이 넣으면 시스템이 **마나를 올리거나 효과를 잘라낸다.**
+   반대로 효과가 너무 적으면 **마나를 내린다** — 값을 치를 것이 없는 고코스트 카드는
+   死카드이기 때문이다. 마나와 효과량을 애초에 맞춰서 내라.
 
 🎯 대상 규칙: 범위가 넓을수록 카드가 강해지고 마나도 비싸진다.
    single(1배) < 2체(1.5배) < 3체(2배) < 전체(2.2배), random은 0.8배.
@@ -529,6 +573,7 @@ Return ONLY JSON:
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;
       if (cardJson.targetScope) skillTargetScope = cardJson.targetScope;
       if (cardJson.targetCount) skillTargetCount = parseInt(cardJson.targetCount) || 1;
+      if (cardJson.passiveEffect) llmPassiveRaw = cardJson.passiveEffect;
 
       if (cardJson.themeName) {
         themeObj = await registerNewArchetype({
@@ -536,6 +581,7 @@ Return ONLY JSON:
           name: cardJson.themeName,
           keyword: cardJson.themeKeyword,
           element: element,
+          playstyle: cardJson.themePlaystyle,   // 🎭 LLM이 고른 플레이스타일
           comboAction: cardJson.themeComboAction,
           comboTrigger: cardJson.comboTrigger,
           comboScaling: cardJson.comboScaling,
@@ -608,6 +654,23 @@ Return ONLY JSON:
 
   const optimizedImg = await optimizeCardImage(imageUrl);
 
+  // 🏛️ 건축물 패시브는 **속성별로** 만든다.
+  //    🐛 수정: 예전에는 { manaPerTurn:1, endTurnShield:N }을 하드코딩해서
+  //       화염 첨탑이든 세계수든 전부 똑같이 동작했다.
+  //    패시브 내용을 엔진이 정하므로 설명문도 여기서 덮어쓴다 —
+  //    LLM 플레이버를 남기면 실제로 안 일어나는 일이 카드에 적힌다.
+  //    LLM이 설계한 패시브가 우선이고, 없으면 **카드군 플레이스타일**을 따른다.
+  //    (속성으로 정하던 예전 방식은 자유도를 죽였다 — DECISIONS #67)
+  let structPassive = null;
+  if (cardType === 'structure') {
+    structPassive = normalizeStructurePassive(llmPassiveRaw, rarity)
+      || buildStructurePassive(inferPlaystyle(themeObj || {}), rarity);
+    if (structPassive.aura && structPassive.aura.scope === 'element' && !structPassive.aura.scopeValue) {
+      structPassive.aura.scopeValue = element;
+    }
+    skillDesc = describeStructurePassive(structPassive);
+  }
+
   const skill = {
     name: skillName,
     description: skillDesc,
@@ -618,7 +681,7 @@ Return ONLY JSON:
     targetSide: skillTargetSide,
     targetScope: skillTargetScope,
     targetCount: skillTargetCount,
-    passiveEffect: cardType === 'structure' ? { manaPerTurn: 1, endTurnShield: caps.shieldValue[0] } : null,
+    passiveEffect: structPassive,
     statusEffect: { type: 'none', duration: 0, value: 0 }
   };
   // 🏷️ 타입에 안 맞는 이름 교정 — LLM이 규칙을 어겨도 여기서 막는다.
@@ -660,7 +723,7 @@ Return ONLY JSON:
   return clampedCard;
 }
 
-async function revealSingleCardSlot(slot, cardData) {
+async function revealSingleCardSlot(slot, cardData, packIdx = 0) {
   audio.playDraw();
 
   // 등급에 따른 효과음 및 연출
@@ -681,12 +744,18 @@ async function revealSingleCardSlot(slot, cardData) {
   slot.appendChild(cardEl);
 
   // ☑️ 카드별 선택 — 원하는 것만 보관함에 넣을 수 있게 한다.
-  //    기본은 전부 선택. 빼고 싶은 것만 끄면 된다.
+  //    기본은 **전부 해제**. "5장 모두 저장" 버튼이 따로 있으므로
+  //    미리 다 켜둘 이유가 없다 (켜두면 빼는 작업부터 해야 한다).
+  //    🐛 수정: 식별자를 카드 id → **슬롯 인덱스**로 바꿨다.
+  //       같은 카드가 2장 나오면 id가 같아서 querySelector가 첫 버튼만 찾았고,
+  //       두 번째 카드를 눌러도 첫 번째가 토글됐다. 저장 대상 필터도
+  //       id 기준이라 1장만 골라도 2장이 저장됐다.
   const pick = document.createElement('button');
   pick.className = 'pack-pick-btn w-full';
-  pick.dataset.cardId = cardData.id;
-  pick.dataset.picked = '1';
-  pick.onclick = () => togglePackPick(cardData.id);
+  pick.dataset.packIdx = String(packIdx);
+  pick.dataset.cardId = cardData.id;     // 표시/디버그용 (식별에는 쓰지 않는다)
+  pick.dataset.picked = '0';
+  pick.onclick = () => togglePackPick(packIdx);
   slot.appendChild(pick);
   paintPickButton(pick);
   updatePickCount();          // 공개될 때마다 "선택한 N장" 표시를 맞춘다
@@ -703,29 +772,40 @@ function paintPickButton(btn) {
   btn.className = `pack-pick-btn w-full px-2 py-1 rounded-lg text-[11px] font-black border transition ${
     on ? 'bg-emerald-600/90 border-emerald-400 text-white'
        : 'bg-[#191d33] border-slate-600 text-slate-400 hover:text-white'}`;
-  btn.innerHTML = on ? '☑️ 보관함에 넣기' : '⬜ 제외됨';
+  btn.innerHTML = on ? '☑️ 보관함에 넣기' : '⬜ 선택 안 함';
 }
 
-export function togglePackPick(cardId) {
-  const btn = document.querySelector(`.pack-pick-btn[data-card-id="${CSS.escape(String(cardId))}"]`);
-  if (!btn) return;
-  btn.dataset.picked = btn.dataset.picked === '1' ? '0' : '1';
-  if (btn.dataset.picked === '1') packPicked.add(cardId); else packPicked.delete(cardId);
+/**
+ * @param packIdx 개봉 순서(0~4). **카드 id가 아니다** —
+ *   같은 카드가 두 장 나오면 id가 겹쳐 서로를 덮어썼다.
+ */
+export function togglePackPick(packIdx) {
+  const btn = document.querySelector(`.pack-pick-btn[data-pack-idx="${Number(packIdx)}"]`);
+  if (!btn || btn.disabled) return;
+  const on = btn.dataset.picked !== '1';
+  btn.dataset.picked = on ? '1' : '0';
+  if (on) packPicked.add(Number(packIdx)); else packPicked.delete(Number(packIdx));
   paintPickButton(btn);
   updatePickCount();
 }
 
-/** 지금 선택된 카드들 */
+/** 지금 선택된 카드들 (개봉 순서 기준 — 중복 카드도 각각 따로 센다) */
 function pickedPackCards() {
-  const btns = [...document.querySelectorAll('.pack-pick-btn')];
-  if (btns.length === 0) return openedPackCards.slice();
-  const ids = new Set(btns.filter(b => b.dataset.picked === '1').map(b => b.dataset.cardId));
-  return openedPackCards.filter(c => ids.has(String(c.id)));
+  return openedPackCards.filter((_, i) => packPicked.has(i));
 }
 
 function updatePickCount() {
+  const n = pickedPackCards().length;
   const el = document.getElementById('pack-pick-count');
-  if (el) el.innerText = String(pickedPackCards().length);
+  if (el) el.innerText = String(n);
+  // 0장이면 누를 이유가 없다 — 눌러서 경고를 받는 것보다 비활성이 낫다
+  ['btn-pack-save-picked', 'btn-pack-to-deck'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b || b.dataset.locked === '1') return;
+    b.disabled = n === 0;
+    b.classList.toggle('opacity-40', n === 0);
+    b.classList.toggle('cursor-not-allowed', n === 0);
+  });
 }
 
 function renderPackSummary() {
@@ -822,6 +902,8 @@ function lockPackSaveButtons(label) {
     const b = document.getElementById(id);
     if (!b) return;
     b.disabled = true;
+    // ⚠️ locked 표시가 없으면 updatePickCount가 다시 켜버린다
+    b.dataset.locked = '1';
     b.classList.add('opacity-40', 'cursor-not-allowed');
   });
   const note = document.getElementById('pack-saved-note');
@@ -895,7 +977,9 @@ export function packModeDirective(packMode) {
 - 나머지 30%는 **범용 카드**로 만들어라 ("themeId": null).
 - ❌ 다른 카드군을 새로 만들지 말 것.
 - 이 카드군의 속성은 ${(t.elements || [t.element]).join('/')} 이다. 소속 카드는 이 안에서 고를 것.
-- 이 카드군의 연계는 "${t.comboAction}" 이다. 카드 효과가 이 연계와 어울리게 하라.\n`;
+- 이 카드군의 연계는 "${t.comboAction}" 이다. 카드 효과가 이 연계와 어울리게 하라.
+
+${playstyleGuide(t)}\n`;
   }
   return '';
 }
@@ -906,10 +990,11 @@ function resetPackActionButtons() {
     const b = document.getElementById(id);
     if (!b) return;
     b.disabled = false;
+    delete b.dataset.locked;
     b.classList.remove('opacity-40', 'cursor-not-allowed');
   });
   const note = document.getElementById('pack-saved-note');
   if (note) note.classList.add('hidden');
   packPicked.clear();
-  updatePickCount();
+  updatePickCount();   // 0장이므로 "선택 저장"/"덱 편성"은 여기서 비활성으로 떨어진다
 }

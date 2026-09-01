@@ -7,7 +7,8 @@ import { evaluateCardPower, sanitizeAndClampCardData } from './config.js';
 import { nameMatchesType, fixCardName, forceTypeHead } from './card-naming.js';
 import { sanitizeElementPolicy, normalizeTrigger, normalizeScaling,
          coerceCardElement, describeCombo, isElementAllowed,
-         normalizeComboScope, describeScope } from './archetype-identity.js';
+         normalizeComboScope, describeScope,
+         normalizePlaystyle, inferPlaystyle, playstyleTag } from './archetype-identity.js';
 import { findSimilarArchetypes, compareArchetypeSemantics, ensureArchetypeEmbeddings,
          refreshArchetypeEmbedding, clearAllEmbeddings, resetEmbeddingCache,
          EMBED_SIM_MERGE, EMBED_SIM_GRAY } from './embedding-service.js';
@@ -362,6 +363,10 @@ export async function registerNewArchetype(themeData) {
     const incomingAction = normalizeComboAction(themeData.comboAction || themeData.themeComboAction);
     if (incomingAction && !existing.comboAction) existing.comboAction = incomingAction;
     if (themeData.themeComboDesc && !existing.description) existing.description = themeData.themeComboDesc;
+    // 🎭 플레이스타일이 비어 있으면 이 기회에 채운다.
+    //    ⚠️ 이미 있으면 덮어쓰지 않는다 — 카드군의 성격은 한 번 정해지면 유지되어야
+    //       그 카드군 카드들이 일관된 방향으로 쌓인다.
+    if (!existing.playstyle) existing.playstyle = inferPlaystyle(existing);
 
     // 흡수한 표기 변형을 별칭으로 남겨두면 다음 판정이 더 정확해진다
     if (trimmedName && trimmedName !== existing.name) {
@@ -402,6 +407,11 @@ export async function registerNewArchetype(themeData) {
     element: elementSpec.element,           // 대표 속성 (기존 필드 호환)
     elements: elementSpec.elements,         // 허용 속성 목록
     elementPolicy: elementSpec.elementPolicy, // mono | dual | multi
+
+    // 🎭 플레이스타일 — 카드군 전체의 덱 설계도 (유저 비노출, LLM 가이드 전용)
+    //    LLM이 지정하지 않으면 연계·이름·설명에서 추론한다.
+    playstyle: normalizePlaystyle(themeData.playstyle || themeData.themePlaystyle)
+      || inferPlaystyle({ ...themeData, comboAction }),
 
     // ⚡ 고유 연계 = 액션 × 발동조건 × 증가방식
     comboAction: comboAction,
@@ -517,7 +527,9 @@ export function triggerBossArchetypeCombo(card, gameState, helpers) {
 function formatArchetypeLine(a, extra = '') {
   // 설명은 앞 60자만. 전체를 싣던 것이 토큰 낭비의 주범이었다.
   const desc = String(a.description || '').slice(0, 60);
-  return `- id:"${a.id}" | 이름:[${a.name}] | 키워드:"${a.keyword}" | 속성:${a.element} | 연계:${a.comboAction || 'search'}${extra} → ${desc}`;
+  // 🎭 플레이스타일을 함께 싣는다 — LLM이 기존 카드군에 카드를 보탤 때
+  //    그 카드군의 방향을 알아야 어울리는 카드를 만든다.
+  return `- id:"${a.id}" | 이름:[${a.name}] | 키워드:"${a.keyword}" | 속성:${a.element} | 연계:${a.comboAction || 'search'} | 스타일:${playstyleTag(a)}${extra} → ${desc}`;
 }
 
 /** 폴백: 보유 카드 수 상위 N개 (임베딩 없을 때) */
@@ -1024,25 +1036,43 @@ export async function rebalanceExistingCards({ dryRun = false, silent = false } 
 
   for (const card of cards) {
     const before = evaluateCardPower(card);
-    if (!before.overBudget && before.illegal.length === 0) continue;
 
+    // 🐛 예전에는 여기서 `if (!overBudget && !illegal) continue`로 걸렀다.
+    //    그래서 **예산 초과만** 고쳤고, 반대 방향 — 값에 비해 마나를 과하게
+    //    내는 카드 — 는 손대지 않았다. 코스트 하향(enforcePowerBudget 2-a)이
+    //    생긴 뒤로는 그쪽도 고칠 수 있다.
+    //    ("6마나 커먼 소환수, 효과 없음" 같은 카드가 보관함에 쌓여 있었다)
+    //
+    //    ⚠️ 모든 카드를 무조건 통과시키지는 않는다. 실제로 **달라지는 것이
+    //       있을 때만** 기록한다. 안 그러면 멀쩡한 카드까지 설명문이
+    //       다시 쓰이는 등 불필요한 변경이 생긴다.
     const fixed = sanitizeAndClampCardData(card);
     const after = evaluateCardPower(fixed);
+
+    const costChanged = before.cost !== after.cost;
+    const effectsChanged = before.effects.length !== after.effects.length;
+    const statsChanged = (card.attack || 0) !== (fixed.attack || 0)
+      || (card.hp || 0) !== (fixed.hp || 0)
+      || (card.defense || 0) !== (fixed.defense || 0);
+    if (!before.overBudget && before.illegal.length === 0
+        && !costChanged && !effectsChanged && !statsChanged) continue;
 
     log.push({
       카드: card.name,
       등급: card.rarity,
+      타입: card.cardType || 'unit',
       '전(사용)': before.used,
       '후(사용)': after.used,
-      '지불가능': before.affordable,
+      '지불가능': after.affordable,
       '마나': `${before.cost} → ${after.cost}`,
+      사유: before.overBudget ? '예산 초과' : (costChanged ? '마나 과다' : '효과/스탯 교정'),
       제거됨: before.effects.filter(e => !after.effects.some(a => a.key === e.key)).map(e => e.label).join(', ')
     });
     touched.push({ card, fixed });
   }
 
   if (!silent) {
-    if (log.length === 0) console.log('[Balance] ✅ 예산을 넘는 카드 없음.');
+    if (log.length === 0) console.log('[Balance] ✅ 재조정이 필요한 카드 없음 (예산 초과·마나 과다·효과 위반 모두 없음).');
     else {
       console.group(`[Balance] ⚖️ 카드 ${log.length}장 재조정${dryRun ? ' (미리보기)' : ''}`);
       console.table(log);

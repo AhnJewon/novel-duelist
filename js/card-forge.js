@@ -2,11 +2,11 @@ import { state, saveCardsToStorage, saveActiveDeckToStorage, optimizeCardImage, 
 import { createCardElement } from './card-renderer.js';
 import { audio } from './audio.js';
 import { openSettingsModal } from './ui.js';
-import { rollRandomRarity, RARITY_BALANCE_CAPS, sanitizeAndClampCardData } from './config.js';
+import { rollRandomRarity, RARITY_BALANCE_CAPS, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
 import { callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
-import { coerceCardElement } from './archetype-identity.js';
+import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { validateCardPlan, buildRetryDirective } from './card-validator.js';
 import { proposeArchetype } from './archetype-proposal.js';
@@ -66,6 +66,13 @@ export async function generatePromptWithLLM(isRandom = false) {
 
   const custom = readCustomOverrides();
   const customDirective = customOverridesToPrompt(custom);
+
+  // 🎭 유저가 기존 카드군을 골랐으면 그 카드군의 플레이스타일 가이드를 싣는다.
+  //    ⚠️ currentCardTheme을 쓰면 안 된다 — 그건 **생성이 끝난 뒤에** 대입되므로
+  //       프롬프트를 만드는 지금은 직전 카드의 카드군이 들어 있다.
+  const forgeSelectedTheme = custom.themeId
+    ? (state.archetypesList || []).find(a => a.id === custom.themeId) || null
+    : null;
 
   const userDirective = concept
     ? `Design a unique fantasy TCG card based on this user Concept: "${concept}".`
@@ -159,6 +166,17 @@ ${knownThemes}
    "홍련 기사단"이라면 archetypePair + perAlly 같은 식이다.
    always + flat은 개성이 없으니 꼭 필요할 때만 쓸 것.
 
+🎭 ARCHETYPE PLAYSTYLE (카드군 플레이스타일 — 덱 전체의 설계도):
+카드군은 "어떻게 이기는가"가 있어야 한다. 그게 없으면 같은 카드군 안에서
+1마나 잡졸과 6마나 거신이 뒤섞이고, 건축물·함정·마법이 제각각 놀게 된다.
+${playstyleOptionsForPrompt()}
+- **기존 카드군**에 카드를 보탤 때는 위 목록의 "스타일:" 표시를 보고 그 방향에 맞춰라.
+- **신규 카드군**을 만들 때만 "themePlaystyle"에 위 키 중 하나를 골라 넣어라.
+- 이 스타일은 소환수뿐 아니라 **건축물·함정·마법에도 똑같이 적용**된다.
+  예: 저코스트 전개형 카드군의 건축물은 마나나 카드를 공급해야지,
+      매 턴 방어막을 쌓는 요새가 되면 카드군 컨셉과 어긋난다.
+- ⚠️ 스타일 이름을 카드 이름이나 설명문에 적지 마라. 효과로만 드러내라.
+${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '\n' : ''}
 🌐 GENERIC CARD RATIO (범용 카드 비율 — 중요):
 모든 카드가 카드군에 속할 필요는 없다. 실제 TCG는 **범용 카드가 덱의 절반 가까이** 차지한다.
 - 약 **35~40%는 범용 카드**로 만들라. 범용은 "themeId": null, "themeName": null 로 둔다.
@@ -166,6 +184,38 @@ ${knownThemes}
   (드로우, 제거, 방어막, 도발, 마나 수급 같은 만능 도구).
 - ✅ 좋은 범용 예: "결계 분쇄의 일격", "욕망의 항아리", "방랑 용병"
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
+
+🏛️ STRUCTURE PASSIVE (건축물 지속 효과 — "cardType": "structure"일 때만):
+건축물은 공격하지 않는다. 대신 전장에 남아 매 턴 또는 지속적으로 작동한다.
+skill 안에 "passiveEffect"를 넣어라. 두 종류가 있고 **성격이 완전히 다르다.**
+
+(1) 매 턴 누적형 — 턴마다 값이 쌓인다. **epic / legendary 에서만** 쓸 수 있다.
+    "passiveEffect": { "manaPerTurn": 1 }         매 턴 마나 +1 (최대 2)
+    "passiveEffect": { "endTurnShield": 10 }      턴 종료 시 본체 방어막 +N
+    "passiveEffect": { "endTurnAoeShield": 10 }   방어막 +N & 자기 내구도 수리
+    "passiveEffect": { "endTurnAoeHeal": 10 }     턴 종료 시 본체 체력 +N 회복
+
+(2) 오라 — "이 건축물이 전장에 있는 동안". 쌓이지 않고 부서지면 사라진다.
+    **모든 등급에서** 쓸 수 있다. common / rare 건축물은 이쪽을 써라.
+    "passiveEffect": { "aura": { "scope": "archetype", "attackBonus": 3 } }
+    - "scope": "all"(모든 아군) | "archetype"(같은 카드군만) | "element"(같은 속성만) | "cardType"(같은 종류만)
+    - "scopeValue": scope가 element면 속성명, cardType이면 unit|spell|structure|trap
+    - 효과: "attackBonus"(공격력 +N) / "defenseBonus"(방어력 +N) / "damageReduction"(받는 피해 N% 감소, 5~40)
+    💡 범위를 좁히면(archetype/element) 값을 더 크게 줄 수 있다. 조건을 만족시키는 값을 치른 것이다.
+    💡 카드군 전용 오라는 그 카드군 덱을 짜게 만드는 강력한 동기가 된다.
+
+❌ 위에 없는 필드를 지어내지 마라 ("enemyAttackDown", "everyTurnDraw" 등). 전부 무시된다.
+❌ common / rare 건축물에 매 턴 누적형을 쓰지 마라. 시스템이 삭제한다.
+
+⚖️ 타입별 효과 예산 (카드 타입마다 넣을 수 있는 효과의 양이 다르다):
+- **소환수**는 스탯(공/체/방)이 예산을 많이 쓴다 → 효과는 **1~2개**로 절제하라.
+  낮은 등급 소환수는 효과가 아예 없는 것도 정상이다 (바닐라 카드).
+- **건축물**은 공격하지 않으므로 체력이 싸다 → 지속 패시브 + 효과 1개 정도.
+- **마법**은 스탯이 없어 예산 전부가 효과로 가지만, 일회용이라 총량이 낮다 → **1~2개**.
+- **함정**은 조건부라 총량 보상을 받는다 → 같은 마나에서 가장 많은 효과 (**2~3개**).
+⚠️ 효과를 많이 넣으면 시스템이 **마나를 올리거나 효과를 잘라낸다.**
+   반대로 효과가 너무 적으면 **마나를 내린다** — 값을 치를 것이 없는 고코스트 카드는
+   死카드이기 때문이다. 마나와 효과량을 애초에 맞춰서 내라.
 
 🪤 TRAP CARD (함정 카드 — 조건부 발동):
 "cardType": "trap"으로 만들면 뒷면으로 세트되고, **상대가 조건을 만족할 때 자동 발동**한다.
@@ -213,7 +263,20 @@ ${buildNamingRule(targetType)}
   multiHit(연타) · pierceShield(실드 관통) · lifestealPercent(흡혈)
   executeThreshold(처형) · doubleCastNext(더블캐스트) · invulnerableTurns(무적)
   damageReduction(피해 경감 %) · attackDown(공격력 약화) · silence(효과 무효화)
+  maxHpGain(본체 최대 체력 증가 — 영구)
   statusEffect(stun/freeze/burn/shock/poison/vulnerable)
+
+💫 STATUS EFFECT 적용 범위 (중요):
+- **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
+  본체(플레이어/보스)에는 걸리지 않는다. 상대 전장이 비어 있으면 **불발**한다.
+  * 이유: 본체는 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없다.
+    이 계열은 **보드 컨트롤 수단**이다.
+  * ✅ "적 소환수 1체를 2턴간 빙결시킨다"
+  * ❌ "상대를 2턴간 기절시킨다"   — 본체 지정은 걸리지 않는다
+- **shock(감전) / vulnerable(취약)** 은 본체에도 걸린다. 둘은 증폭기라서
+  상대가 실제로 때려야 의미가 생긴다.
+- 꼭 본체에 걸어야 하는 컨셉이면 "bodyStatus": true 를 함께 넣어라.
+  다만 **파워 비용이 2.5배**로 붙으므로 마나가 크게 올라간다. 남용하지 마라.
 
 OUTPUT SCHEMA (Return ONLY valid raw JSON):
 {
@@ -228,6 +291,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "themeName": "카드군 테마명 (기존 카드군이면 목록의 이름을 한 글자도 바꾸지 말 것)",
   "themeKeyword": "카드군 핵심 키워드 (2~4글자 한국어)",
   "elementPolicy": "mono|dual|multi (신규 카드군일 때만)",
+  "themePlaystyle": "신규 카드군일 때만: turtle|swarm|control|ace|burn|toolbox",
   "elements": ["허용 속성 배열, 예: fire 또는 fire,lightning"],
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
@@ -433,6 +497,13 @@ export function generatePromptSmartRandom(concept) {
       nature: '세계수의 고대 성소'
     };
     const name = structNames[matchedElement] || '마력 수호의 첨탑';
+    // 🏛️ 카드군 플레이스타일을 따르는 패시브. 설명문은 패시브 데이터에서 만든다 —
+    //    🐛 수정: 예전 문구는 "아군에 방어막 부여"였는데 엔진은 **본체 방어막**을
+    //       올린다. 하드코딩된 문장이 실제 동작과 달랐다.
+    const structPassive = buildStructurePassive(inferPlaystyle(currentCardTheme || {}), rarity);
+    if (structPassive.aura && structPassive.aura.scope === 'element' && !structPassive.aura.scopeValue) {
+      structPassive.aura.scopeValue = matchedElement;
+    }
     applyGeneratedCardData({
       name: name,
       title: `Sanctuary of ${matchedElement.toUpperCase()}`,
@@ -446,10 +517,10 @@ export function generatePromptSmartRandom(concept) {
       visualPrompt: 'crystal ancient tower sanctuary, glowing runes, floating magical stones, majestic fantasy fortress, masterpiece',
       skill: {
         name: `${name} 공명`,
-        description: `[건축물 패시브] 매 턴 시작 시 마나 +1 공급 & 턴 종료 시 아군에 방어막 +${caps.shieldValue[0]} 부여.`,
+        description: describeStructurePassive(structPassive),
         cost: cost,
         taunt: rarity === 'legendary' || rarity === 'epic',
-        passiveEffect: { manaPerTurn: 1, endTurnShield: caps.shieldValue[0] }
+        passiveEffect: structPassive
       }
     });
   } else {
@@ -564,6 +635,7 @@ export async function applyGeneratedCardData(rawData) {
       name: proposal.themeData.name,
       keyword: proposal.themeData.keyword,
       element: targetElem,
+      playstyle: data.themePlaystyle,        // 🎭 LLM이 고른 플레이스타일
       comboAction: data.themeComboAction || data.comboAction,
       comboTrigger: data.comboTrigger,
       comboScaling: data.comboScaling,
@@ -753,6 +825,28 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   if (elementFix.changed) {
     console.log(`[Element] ${elementFix.reason} → ${finalElement}로 교정`);
   }
+
+  // 🏛️ 건축물에 지속 패시브를 보장한다.
+  //    🐛 수정: 이 AI 경로는 passiveEffect를 **한 번도 넣지 않았다.** 프롬프트에
+  //       패시브 필드가 없으니 LLM도 안 만들었고, 결과적으로 AI로 만든 건축물은
+  //       공격 0 + 매 턴 아무 일도 없는 순수한 벽이었다.
+  //       (폴백 경로에만 패시브가 있어서 "가끔 되는" 것처럼 보였다.)
+  //    ⚠️ 속성 교정 **뒤에** 둔다 — 어둠 카드군에 화염 패시브가 붙지 않도록.
+  if (cardType === 'structure') {
+    // LLM이 설계한 패시브가 우선. 다듬어서 못 쓸 것만 걸러낸다.
+    // 아무것도 없으면 **카드군 플레이스타일**을 따라 폴백을 만든다.
+    // (속성으로 정하던 예전 방식은 자유도를 죽였다 — DECISIONS #67)
+    const llmPassive = normalizeStructurePassive(skillObj.passiveEffect, rarity);
+    skillObj.passiveEffect = llmPassive
+      || buildStructurePassive(inferPlaystyle(finalTheme || {}), rarity);
+    // 오라의 속성 범위가 비어 있으면 이 카드의 속성으로 채운다
+    if (skillObj.passiveEffect.aura && skillObj.passiveEffect.aura.scope === 'element'
+        && !skillObj.passiveEffect.aura.scopeValue) {
+      skillObj.passiveEffect.aura.scopeValue = finalElement;
+    }
+    skillObj.description = describeStructurePassive(skillObj.passiveEffect);
+  }
+
   // 🏷️ 타입에 안 맞는 이름 교정 (건축물에 소환수 이름이 붙는 문제)
   let typedName = name;
   if (!nameMatchesType(typedName, cardType)) {

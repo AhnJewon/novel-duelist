@@ -228,11 +228,18 @@ export function growMana(side, turnCount, cap = 10) {
   side.mana = side.maxMana;
 }
 
-/** 전장의 모든 소환수를 행동 가능 상태로 (빙결 해제 포함) */
+/**
+ * 전장의 모든 소환수를 행동 가능 상태로.
+ *
+ * ⚠️ 상태이상 소모·감쇠는 여기서 하지 않는다. battle-engine의
+ *    `tickMinionStatuses()`가 지속 피해까지 한 번에 처리하고
+ *    `m.blockedBy`를 세워둔다. 여기서는 그 결과만 존중한다.
+ *    (두 곳에서 소모하면 기절이 절반 턴만 유지되는 이중 차감이 된다)
+ */
 export function refreshMinions(side) {
   side.minions.forEach(m => {
-    m.canAttack = true;
-    m.frozen = false;
+    m.frozen = !!m.blockedBy && m.blockedBy === 'freeze';
+    m.canAttack = !m.blockedBy;
   });
 }
 

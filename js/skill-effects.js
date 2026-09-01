@@ -33,12 +33,16 @@ export function selectFrontTarget(minions = [], { pierceShield = false } = {}) {
  * 이제 수비력만큼 피해를 깎는다. 단 **최소 1은 들어간다** —
  *    수비력이 공격력보다 높다고 완전 무적이 되면 판이 멈춘다.
  *
- * @param opts.pierce 수비를 무시할지 (실드 관통 계열)
+ * @param opts.pierce   수비를 무시할지 (실드 관통 계열)
+ * @param opts.defBonus 건축물 오라 등 **외부에서 오는** 방어력 보정.
+ *   ⚠️ entity.defense에 더해 저장하지 말고 여기로 넘기세요. 저장하면
+ *      오라를 주던 건축물이 부서진 뒤에도 보너스가 남습니다.
  */
-export function damageEntity(entity, dmg, { pierce = false } = {}) {
+export function damageEntity(entity, dmg, { pierce = false, defBonus = 0 } = {}) {
   if (!entity) return { died: false, dealt: 0, blocked: 0 };
   const raw = Math.max(0, Math.floor(dmg));
-  const def = pierce ? 0 : Math.max(0, parseInt(entity.defense) || 0);
+  const baseDef = Math.max(0, parseInt(entity.defense) || 0) + Math.max(0, parseInt(defBonus) || 0);
+  const def = pierce ? 0 : baseDef;
   const amount = Math.max(raw > 0 ? 1 : 0, raw - def);
   entity.currentHp -= amount;
   return { died: entity.currentHp <= 0, dealt: amount, blocked: raw - amount };
@@ -179,6 +183,16 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       game.playerHp = Math.min(game.playerMaxHp, game.playerHp + skill.heal);
       addBattleLog(`<span class="text-emerald-400">💖 ${cardName}의 치유로 본체 체력 +${skill.heal} 회복!</span>`);
     }
+  }
+
+  // ❤️ 본체 최대 체력 증가 (영구)
+  //    본체 체력이 낮아서 직격과 상태이상이 위협적인 문제를, 카드로 풀 수 있게 한다.
+  //    ⚠️ 최대치만 올리는 게 아니라 **현재 체력도 같이** 올린다. 안 그러면
+  //       "최대 체력 +10"이 당장 아무 도움이 안 되고 회복 카드를 강요한다.
+  if (skill.maxHpGain > 0) {
+    game.playerMaxHp += skill.maxHpGain;
+    game.playerHp += skill.maxHpGain;
+    addBattleLog(`<span class="text-rose-300 font-bold">❤️ ${cardName}: 본체 최대 체력 +${skill.maxHpGain} (${game.playerHp}/${game.playerMaxHp})</span>`);
   }
 
   // 4. 마나

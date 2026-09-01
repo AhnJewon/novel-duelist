@@ -11,7 +11,7 @@ import {
   triggerArchetypeCombo, triggerBossArchetypeCombo
 } from './archetype-service.js';
 import {
-  STATUS_EFFECTS, createStatusState, applyStatus, consumeBlockingStatus,
+  STATUS_EFFECTS, createStatusState, applyStatus, consumeBlockingStatus, isEntityOnly,
   collectDamageOverTime, decayStatuses,
   getIncomingDamageMultiplier, getOnHitBonusDamage, describeStatuses
 } from './status-effects.js';
@@ -87,8 +87,12 @@ function makeComboHelpers() {
     audio,
     dealDamageToBoss,
     drawCards,
-    setBossStatus: (type, turns, value) => applyStatus(bossStatus, type, turns, value),
-    setPlayerStatus: (type, turns, value) => applyStatus(playerStatus, type, turns, value),
+    // 💫 소환수 전용 상태이상(기절·빙결·화상·맹독)은 본체에 걸리지 않는다.
+    //    관문이 상대 전장의 최전방 소환수로 돌린다.
+    setBossStatus: (type, turns, value, allowBody = false) =>
+      applyStatusRespectingScope(bossStatus, state.bossMinions, '상대', type, turns, value, allowBody),
+    setPlayerStatus: (type, turns, value, allowBody = false) =>
+      applyStatusRespectingScope(playerStatus, state.playerMinions, '내', type, turns, value, allowBody),
     setPlayerBuff: (type, val) => { playerBuffs[type] = val; },
     foeLabel: isPvpActive() ? getFoeName() : '보스',
     onShielded: () => triggerTraps('player', 'shielded', null),
@@ -537,7 +541,9 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   // 카드군은 스탯을 올리지 않는다 (오토체스식 종족 버프 없음).
   // 같은 카드군이 전개돼 있으면 테두리로만 표시해 연계 가능 상태임을 알린다.
   const inArchetypePlay = !!findSynergyForEntity(synergyInfo, entity);
-  const displayAtk = entity.attack;
+  // 🏛️ 표시값도 오라를 반영한다. 안 하면 카드에 12라 적혀 있는데 15가 나간다.
+  const auraAtk = auraAttackBonus(entity);
+  const displayAtk = entity.attack + auraAtk;
 
   div.className = `relative h-36 rounded-xl p-2 bg-gradient-to-b ${isStructure ? 'from-amber-950/90 via-stone-900 to-black border-amber-600/70' : elCfg.bg + ' ' + elCfg.border} border-2 ${inArchetypePlay ? 'ring-1 ring-amber-500/60' : ''} ${canAtk ? 'border-amber-400 shadow-lg shadow-amber-500/40 cursor-pointer animate-pulse' : ''} flex flex-col justify-between overflow-hidden select-none transition hover:scale-105`;
 
@@ -882,7 +888,8 @@ export function resolveMinionAttack(slotIdx, targetKey) {
   // 🪤 공격에 반응하는 함정
   triggerTraps('player', 'attack', entity);
 
-  const finalAtk = entity.attack;
+  // 🏛️ 전장 오라 보정 — 읽는 시점에 계산한다 (저장하면 건축물이 죽어도 남는다)
+  const finalAtk = entity.attack + auraAttackBonus(entity);
 
   if (targetKey === 'face') {
     dealDamageToBoss(finalAtk, entity.name);
@@ -921,6 +928,16 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   if (!bm) return;
   if (state.playerHp <= 0) return;
 
+  // 💫 기절/빙결이면 이번 턴 공격하지 못한다.
+  //    🐛 수정: 예전에는 상대 소환수에 기절을 걸어도 그대로 공격해 왔다.
+  //    ⚠️ 소모는 tickMinionStatuses가 턴 시작에 한 번만 한다. 여기서 또
+  //       소모하면 기절이 절반 턴만 유지된다 — **플래그만 읽는다.**
+  if (bm.blockedBy) {
+    const spec = STATUS_EFFECTS[bm.blockedBy];
+    addBattleLog(`<span class="${spec ? spec.color : 'text-slate-400'} font-bold">${spec ? spec.icon : '💫'} [${escapeHtml(bm.name)}]이(가) ${spec ? spec.name : '행동 불가'} 상태로 공격하지 못합니다!</span>`);
+    return;
+  }
+
   // 🐛 상대 공격이 내 함정을 발동시키지 않고 있었다.
   //    `attack` 이벤트를 플레이어 공격에서만 쏘고 있어서
   //    "상대가 공격할 때" 함정이 PvE에서 영영 터지지 않았다.
@@ -940,25 +957,14 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
     const i = parseInt(targetKey.split(':')[1], 10);
     const t = state.playerMinions[i];
     if (t) {
-      t.currentHp -= bm.attack;
-      addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(bm.name)}] ➔ [${escapeHtml(t.name)}] 공격! (-${bm.attack} HP)</span>`);
-      if (t.currentHp <= 0) {
-        addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(t.name)}] 파괴!</span>`);
-        state.playerMinions.splice(i, 1);
-      }
+      hitPlayerMinion(t, bm, i);
       return;
     }
   }
 
   // 아군 소환수/건축물이 있으면 최전방 타겟 타격 (PvE 기본 동작)
   if (state.playerMinions.length > 0) {
-    const target = state.playerMinions[0];
-    target.currentHp -= bm.attack;
-    addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(bm.name)}] ➔ [${escapeHtml(target.name)}] 공격! (-${bm.attack} HP)</span>`);
-    if (target.currentHp <= 0) {
-      addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
-      state.playerMinions.shift();
-    }
+    hitPlayerMinion(state.playerMinions[0], bm, 0);
   } else {
     // 🐛 여기도 마찬가지로 직접 차감이었다. 무적만 보고 방어막·경감은 무시했다.
     addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
@@ -1050,6 +1056,175 @@ export function playerEndTurn() {
   setTimeout(() => executeBossTurn(), 250);
 }
 
+// ============================================================
+// 🏛️ 전장 오라 — "이 건축물이 전장에 있는 동안"
+// ------------------------------------------------------------
+// 매 턴 누적형과 달리 **쌓이지 않는다.** 매번 살아 있는 건축물을 훑어
+// 그때그때 계산하므로, 건축물이 부서지면 보너스도 즉시 사라진다.
+//
+// ⚠️ 절대 entity.attack에 값을 더해 저장하지 마세요.
+//    저장하면 건축물이 죽어도 보너스가 남고, 오라 두 장을 깔았다 하나가
+//    부서지면 어느 쪽 몫인지 알 수 없게 됩니다. 항상 읽는 시점에 계산합니다.
+// ============================================================
+
+/** 지금 살아 있는 아군 건축물의 오라 목록 */
+function collectPlayerAuras() {
+  const out = [];
+  (state.playerMinions || []).forEach(e => {
+    if (!e || e.cardType !== 'structure' || e.currentHp <= 0) return;
+    const p = e.skills && e.skills[0] && e.skills[0].passiveEffect;
+    if (p && p.aura) out.push({ src: e, ...p.aura });
+  });
+  return out;
+}
+
+/** 이 오라가 대상 엔티티에게 적용되는가 */
+function auraApplies(aura, entity) {
+  if (!entity) return false;
+  switch (aura.scope) {
+    case 'archetype':
+      // 발동원 건축물과 **같은 카드군**일 때만
+      return !!(entity.themeId && aura.src && entity.themeId === aura.src.themeId);
+    case 'element':
+      // scopeValue가 비어 있으면 발동원 건축물의 속성을 기준으로 삼는다
+      return entity.element === (aura.scopeValue || (aura.src && aura.src.element));
+    case 'cardType':
+      return entity.cardType === (aura.scopeValue || 'unit');
+    default:
+      return true;   // 'all'
+  }
+}
+
+/** 아군 소환수가 오라로 얻는 공격력 보정 */
+export function auraAttackBonus(entity) {
+  return collectPlayerAuras()
+    .filter(a => a.attackBonus > 0 && auraApplies(a, entity))
+    .reduce((s, a) => s + a.attackBonus, 0);
+}
+
+/** 아군 소환수가 오라로 얻는 방어력 보정 */
+export function auraDefenseBonus(entity) {
+  return collectPlayerAuras()
+    .filter(a => a.defenseBonus > 0 && auraApplies(a, entity))
+    .reduce((s, a) => s + a.defenseBonus, 0);
+}
+
+/**
+ * 본체가 오라로 얻는 피해 경감 (%).
+ * 여러 장이 겹치면 합산하되 **75%를 넘지 않는다** — 무적이 되면 게임이 끝난다.
+ */
+export function auraDamageReduction() {
+  const sum = collectPlayerAuras()
+    .filter(a => a.damageReduction > 0)
+    .reduce((s, a) => s + a.damageReduction, 0);
+  return Math.min(75, sum);
+}
+
+/** 오라 정보를 UI/카드 상세에 보여주기 위한 요약 */
+export function describeActiveAuras() {
+  return collectPlayerAuras().map(a => ({
+    from: a.src.name,
+    scope: a.scope,
+    attackBonus: a.attackBonus || 0,
+    defenseBonus: a.defenseBonus || 0,
+    damageReduction: a.damageReduction || 0
+  }));
+}
+
+/**
+ * 상대 소환수가 **내 소환수를** 때린다.
+ *
+ * 🐛 수정: 예전에는 `t.currentHp -= bm.attack`로 직접 깎았다. 그래서
+ *    내 소환수가 방어할 때는 **수비력이 아무 일도 하지 않았다.**
+ *    (내가 공격할 때는 damageEntity가 수비력을 적용했으니 비대칭이었다)
+ *    이제 양방향 모두 damageEntity를 지나고, 건축물 오라 방어력도 함께 붙는다.
+ */
+function hitPlayerMinion(target, attacker, idx) {
+  if (!target) return;
+  const defBonus = auraDefenseBonus(target);
+  const { died, dealt, blocked } = damageEntity(target, attacker.attack, { defBonus });
+  const blockNote = blocked > 0 ? ` <span class="text-cyan-400">(방어 ${blocked} 흡수)</span>` : '';
+  addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(attacker.name)}] ➔ [${escapeHtml(target.name)}] 공격! (-${dealt} HP)${blockNote}</span>`);
+  if (died) {
+    addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
+    state.playerMinions.splice(idx, 1);
+  }
+}
+
+// ============================================================
+// 💫 소환수 상태이상 처리 — 한 진영의 턴이 시작될 때 한 번
+// ------------------------------------------------------------
+// 🐛 예전에는 소환수 상태이상이 **등록만 되고 아무 일도 하지 않았다.**
+//    - 기절(stun): entity.statuses에 들어가는데 읽는 쪽이 `entity.frozen`뿐이라
+//      빙결만 동작하고 기절은 완전 무효과였다
+//    - 화상/맹독: 소환수에 걸어도 지속 피해를 틱하는 곳이 없었다
+//    - 감쇠도 없어 한 번 걸리면 영구히 남았다
+//
+// ⚠️ 소모(consume)는 **여기 한 곳에서만** 한다. combat-side의 refreshMinions는
+//    `m.blockedBy` 결과만 읽는다. 두 곳에서 소모하면 이중 차감이 된다.
+// ============================================================
+export function tickMinionStatuses(minions, label = '아군') {
+  if (!Array.isArray(minions)) return;
+  // 역순 순회 — 지속 피해로 죽은 소환수를 제거하면서 인덱스가 밀리지 않는다
+  for (let i = minions.length - 1; i >= 0; i--) {
+    const m = minions[i];
+    if (!m) continue;
+    m.blockedBy = null;
+    if (!m.statuses) continue;
+
+    // 1) 지속 피해 (화상·맹독). 화상은 방어막을 무시하지만 소환수에는 방어막이 없으므로
+    //    수비력만 적용 대상이다 — 지속 피해는 수비력도 무시한다 (독은 갑옷을 뚫는다).
+    for (const tick of collectDamageOverTime(m.statuses)) {
+      m.currentHp -= tick.damage;
+      addBattleLog(`<span class="${tick.spec.color}">${tick.spec.icon} [${escapeHtml(m.name)}] ${tick.spec.name} 피해 -${tick.damage}</span>`);
+    }
+    if (m.currentHp <= 0) {
+      addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(m.name)}] 상태이상으로 파괴!</span>`);
+      minions.splice(i, 1);
+      continue;
+    }
+
+    // 2) 행동 봉쇄 (기절·빙결) — 걸려 있으면 1턴 소모하고 이번 턴 행동 불가
+    const blocked = consumeBlockingStatus(m.statuses);
+    if (blocked) {
+      m.blockedBy = blocked.type;
+      addBattleLog(`<span class="${blocked.spec.color} font-bold">${blocked.spec.icon} [${escapeHtml(m.name)}]이(가) ${blocked.spec.name} 상태로 이번 턴 행동하지 못합니다!</span>`);
+    } else {
+      // ⚠️ 봉쇄를 소모한 턴에는 감쇠를 **또** 하지 않는다
+      decayStatuses(m.statuses);
+    }
+  }
+}
+
+/**
+ * 상태이상을 **본체에 걸려고 할 때** 통과시키는 관문.
+ *
+ * `entityOnly` 상태이상(기절·빙결·화상·맹독)은 본체에 걸리지 않는다.
+ * 대신 그 진영의 **최전방 소환수**로 돌린다. 소환수가 없으면 불발한다.
+ *
+ * 왜: 본체 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없다.
+ *     이 계열은 보드 컨트롤 수단으로 못박는다. → status-effects.js 주석
+ *
+ * @param allowBody 카드가 **더 큰 파워 비용을 내고** 본체 지정을 산 경우 true.
+ *                  (config.js의 bodyStatus / BODY_STATUS_COST_MULT)
+ */
+function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, value, allowBody = false) {
+  if (!isEntityOnly(type) || allowBody) {
+    return applyStatus(statuses, type, turns, value);
+  }
+  const spec = STATUS_EFFECTS[type];
+  const target = (minions || []).find(m => m && m.currentHp > 0);
+  if (!target) {
+    addBattleLog(`<span class="text-slate-500">${spec.icon} ${spec.name}은(는) 소환수 전용입니다 — ${sideLabel} 전장이 비어 불발.</span>`);
+    return null;
+  }
+  if (!target.statuses) target.statuses = {};
+  const applied = applyStatus(target.statuses, type, turns, value);
+  if (type === 'freeze') target.frozen = true;
+  addBattleLog(`<span class="${spec.color}">${spec.icon} [${escapeHtml(target.name)}]에게 ${spec.name} ${turns}턴 부여!</span>`);
+  return applied;
+}
+
 export function triggerStructureEndTurnPassives() {
   state.playerMinions.forEach(entity => {
     if (entity.cardType === 'structure' && entity.skills && entity.skills[0] && entity.skills[0].passiveEffect) {
@@ -1087,6 +1262,10 @@ export function triggerStructureStartTurnPassives() {
 export async function executeBossTurn() {
   state.isAnimating = true;
   addBattleLog(`<span class="text-red-400 font-bold">👹 [${state.currentBoss.name}] 의 다단계 콤보 턴!</span>`);
+
+  // 💫 상대 소환수 상태이상 처리. 보스 진영은 refreshMinions를 쓰지 않으므로
+  //    여기서 봉쇄를 소모하고 `blockedBy`를 세운다 — foeMinionAttack이 그걸 읽는다.
+  tickMinionStatuses(state.bossMinions, '상대');
 
   // 1. 보스 지속 피해(화상/맹독) 적용
   // 🐛 수정: 예전에는 burn/poison을 보스에게 걸어도 읽는 쪽이 없어 완전히 무효과였다.
@@ -1280,16 +1459,14 @@ export async function playBossCard(card) {
     }
     if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
       const st = skill.statusEffect;
-      if (st.type === 'freeze' && state.playerMinions.length > 0) {
-        state.playerMinions[0].frozen = true;
-        state.playerMinions[0].canAttack = false;
-        addBattleLog(`<span class="text-cyan-400">❄️ [${escapeHtml(card.name)}] 효과로 [${escapeHtml(state.playerMinions[0].name)}] 이(가) 1턴간 결빙되었습니다!</span>`);
-      } else {
-        const applied = applyStatus(playerStatus, st.type, st.duration || 2, st.value || 0);
-        if (applied) {
-          const spec = STATUS_EFFECTS[st.type];
-          addBattleLog(`<span class="${spec.color}">${spec.icon} [${escapeHtml(card.name)}] 효과로 플레이어에게 ${spec.name} 부여! (${applied.turns}턴 / 턴당 ${applied.value})</span>`);
-        }
+      // 💫 기절·빙결·화상·맹독은 **소환수 전용**이다. 관문이 최전방 소환수로
+      //    돌리거나, 전장이 비었으면 불발시킨다.
+      //    (예전에는 빙결만 소환수로 가고 나머지는 전부 플레이어 본체에 꽂혔다)
+      const applied = applyStatusRespectingScope(
+        playerStatus, state.playerMinions, '내', st.type, st.duration || 2, st.value || 0, !!skill.bodyStatus);
+      if (applied && !isEntityOnly(st.type)) {
+        const spec = STATUS_EFFECTS[st.type];
+        addBattleLog(`<span class="${spec.color}">${spec.icon} [${escapeHtml(card.name)}] 효과로 플레이어에게 ${spec.name} 부여! (${applied.turns}턴 / 턴당 ${applied.value})</span>`);
       }
     }
   }
@@ -1317,18 +1494,15 @@ async function executeSingleBossStep(step) {
     //          이제 상태이상으로 등록되어 매 턴 시작 시 지속 피해가 들어간다.
     if (step.status && step.status.type) {
       const st = step.status;
-      if (st.type === 'freeze' && state.playerMinions.length > 0) {
-        state.playerMinions[0].frozen = true;
-        state.playerMinions[0].canAttack = false;
-        addBattleLog(`<span class="text-cyan-400">❄️ [스텝/방해] [${escapeHtml(state.playerMinions[0].name)}] 이(가) 1턴간 결빙되었습니다!</span>`);
-      } else {
-        const applied = applyStatus(playerStatus, st.type, st.duration || 2, st.value || 0);
-        if (applied) {
-          const spec = STATUS_EFFECTS[st.type];
-          addBattleLog(`<span class="text-purple-400">${spec.icon} [스텝/${spec.name}] 플레이어가 ${spec.name} 상태가 되었습니다! (${applied.turns}턴${applied.value ? ` / 턴당 ${applied.value}` : ''})</span>`);
-          // 감전은 즉발로 마나도 1 방전시킨다
-          if (st.type === 'shock') state.playerMana = Math.max(0, state.playerMana - 1);
-        }
+      // 💫 소환수 전용 상태이상은 관문이 최전방 소환수로 돌린다.
+      //    보스 콤보가 플레이어 본체를 맹독·화상으로 녹이던 것을 막는다.
+      const applied = applyStatusRespectingScope(
+        playerStatus, state.playerMinions, '내', st.type, st.duration || 2, st.value || 0);
+      if (applied && !isEntityOnly(st.type)) {
+        const spec = STATUS_EFFECTS[st.type];
+        addBattleLog(`<span class="text-purple-400">${spec.icon} [스텝/${spec.name}] 플레이어가 ${spec.name} 상태가 되었습니다! (${applied.turns}턴${applied.value ? ` / 턴당 ${applied.value}` : ''})</span>`);
+        // 감전은 즉발로 마나도 1 방전시킨다
+        if (st.type === 'shock') state.playerMana = Math.max(0, state.playerMana - 1);
       }
     }
   } else if (step.type === 'heal') {
@@ -1413,11 +1587,18 @@ function applyDirectDamageToPlayer(dmg, pierceShield = false) {
 
   // 🛡️ 피해 경감 — 취약 배율보다 **먼저** 적용한다.
   //    (경감 후 취약이 곱해지는 편이 "방어를 뚫고 약점을 노린다"는 감각에 맞다)
-  if (playerBuffs.damageReduction > 0 && playerBuffs.damageReductionTurns > 0) {
-    const cut = Math.floor(finalDmg * (playerBuffs.damageReduction / 100));
+  //    ⚠️ 주문으로 건 일시적 경감(playerBuffs)과 건축물 오라를 **합산**한다.
+  //       한쪽만 보면 오라를 깔아둔 게 무시된다.
+  const auraCut = auraDamageReduction();
+  const buffCut = (playerBuffs.damageReduction > 0 && playerBuffs.damageReductionTurns > 0)
+    ? playerBuffs.damageReduction : 0;
+  const totalCutPct = Math.min(75, buffCut + auraCut);
+  if (totalCutPct > 0) {
+    const cut = Math.floor(finalDmg * (totalCutPct / 100));
     if (cut > 0) {
       finalDmg -= cut;
-      addBattleLog(`<span class="text-cyan-300">🛡️ [피해 경감 ${playerBuffs.damageReduction}%] ${cut} 피해를 막아냈습니다. (${finalDmg} 관통)</span>`);
+      const src = auraCut > 0 && buffCut > 0 ? '주문+건축물' : (auraCut > 0 ? '건축물 오라' : '피해 경감');
+      addBattleLog(`<span class="text-cyan-300">🛡️ [${src} ${totalCutPct}%] ${cut} 피해를 막아냈습니다. (${finalDmg} 관통)</span>`);
     }
   }
 
@@ -1496,6 +1677,10 @@ export function startPlayerTurn() {
   growMana(sides.player, state.turnCount);
 
   // 모든 아군 소환수 공격 가능 상태 해제 (빙결 해제)
+  // 💫 내 소환수 상태이상 처리 (지속 피해 → 봉쇄 소모 → 감쇠)
+  //    ⚠️ refreshMinions **앞에** 와야 한다. refreshMinions는 여기서 세운
+  //       `m.blockedBy`를 읽어 canAttack을 결정한다.
+  tickMinionStatuses(state.playerMinions, '내');
   refreshMinions(sides.player);
 
   // 턴 시작 시 건축물 패시브 (마나 공급 등)
@@ -1690,8 +1875,11 @@ function makeMirroredHelpers() {
         state.bossHand.push(state.bossDeck.shift());
       }
     },
-    setBossStatus: (type, turns, value) => applyStatus(playerStatus, type, turns, value),
-    setPlayerStatus: (type, turns, value) => applyStatus(bossStatus, type, turns, value),
+    // 🪞 거울: 상대 기준 "보스"는 내 진영이다. 관문도 진영을 맞바꿔 넘긴다.
+    setBossStatus: (type, turns, value, allowBody = false) =>
+      applyStatusRespectingScope(playerStatus, state.playerMinions, '내', type, turns, value, allowBody),
+    setPlayerStatus: (type, turns, value, allowBody = false) =>
+      applyStatusRespectingScope(bossStatus, state.bossMinions, '상대', type, turns, value, allowBody),
     setPlayerBuff: (type, val) => { bossBuffs[type] = val; },
     foeLabel: '나',
     onShielded: () => triggerTraps('boss', 'shielded', null),

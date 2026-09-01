@@ -5,22 +5,33 @@
 // vulnerable은 차감 로직이 없어 한 번 걸리면 전투 끝까지 유지됐다.
 // 여기서 정의/적용/틱/감쇠를 한곳에 모아 양쪽 진영이 같은 규칙을 쓰게 한다.
 
+// ⚠️ `entityOnly: true`인 상태이상은 **본체(플레이어/보스)에 걸리지 않는다.**
+//    소환수·건축물에만 적용되고, 대상 소환수가 없으면 불발한다.
+//
+//    왜: 본체는 체력이 낮은데(플레이어 기준) 행동 봉쇄와 지속 피해는
+//    너무 큰 제약이다. 한 턴을 통째로 빼앗기는 건 게임이 아니라 벌칙이고,
+//    화상·맹독이 본체에 꽂히면 방어막·회복으로 대응할 여지 없이 녹는다.
+//    그래서 이 계열은 **보드 컨트롤 수단**으로 못박는다.
+//
+//    반대로 취약(vulnerable)·감전(shock)은 본체에도 허용한다. 둘은
+//    **증폭기**라서 상대가 실제로 때려야 의미가 생기고, 그 자체로는
+//    체력을 깎지 않는다. 보스의 주요 색깔이기도 하다.
 export const STATUS_EFFECTS = {
   stun: {
     name: '기절', icon: '💫', color: 'text-yellow-300',
-    blocksTurn: true
+    blocksTurn: true, entityOnly: true
   },
   freeze: {
     name: '빙결', icon: '❄️', color: 'text-cyan-300',
-    blocksTurn: true
+    blocksTurn: true, entityOnly: true
   },
   burn: {
     name: '화상', icon: '🔥', color: 'text-orange-300',
-    defaultValue: 6, dot: true, ignoresShield: true
+    defaultValue: 6, dot: true, ignoresShield: true, entityOnly: true
   },
   poison: {
     name: '맹독', icon: '☣️', color: 'text-emerald-300',
-    defaultValue: 8, dot: true, ignoresShield: false
+    defaultValue: 8, dot: true, ignoresShield: false, entityOnly: true
   },
   shock: {
     name: '감전', icon: '⚡', color: 'text-amber-300',
@@ -31,6 +42,12 @@ export const STATUS_EFFECTS = {
     damageTakenMultiplier: 1.5
   }
 };
+
+/** 이 상태이상은 소환수·건축물 전용인가 (본체에 걸 수 없는가) */
+export function isEntityOnly(type) {
+  const spec = STATUS_EFFECTS[type];
+  return !!(spec && spec.entityOnly);
+}
 
 export function createStatusState() {
   return {};
@@ -60,6 +77,30 @@ export function getStatusValue(statuses, type) {
 
 export function clearStatus(statuses, type) {
   if (statuses) delete statuses[type];
+}
+
+/**
+ * 행동 봉쇄 상태인지 **조회만** 한다 (턴을 소모하지 않는다).
+ *
+ * 🐛 왜 필요한가: 예전에는 `consumeBlockingStatus`만 있었고 그마저도
+ *    **보스 본체에게만** 호출됐다. 그래서 기절(stun)은 절반만 동작했다 —
+ *    소환수가 기절해도 아무 일도 일어나지 않았다. 소환수는
+ *    `entity.frozen` 플래그만 봤고 그건 빙결 전용이었다.
+ *
+ * ⚠️ **플레이어 본체 기절은 일부러 구현하지 않는다.** 한 턴을 통째로
+ *    빼앗기는 건 게임이 아니라 벌칙이다. 기절은 **소환수에만** 적용된다.
+ *    (보스 본체 기절은 기존 동작이라 유지한다 — 플레이어가 템포를 사는 수단)
+ *
+ *    렌더링처럼 **여러 번 불리는 곳**에서 consume을 쓰면 턴이 멋대로
+ *    소모된다. 그런 곳은 이 함수를 쓰세요.
+ */
+export function isBlocked(statuses) {
+  if (!statuses) return null;
+  for (const type of Object.keys(STATUS_EFFECTS)) {
+    const spec = STATUS_EFFECTS[type];
+    if (spec.blocksTurn && statuses[type] && statuses[type].turns > 0) return { type, spec };
+  }
+  return null;
 }
 
 // 턴 시작 행동 봉쇄 판정 (기절/빙결). 봉쇄되면 해당 상태를 1턴 소모하고 정보를 돌려준다.
