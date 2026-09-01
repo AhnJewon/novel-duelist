@@ -42,10 +42,21 @@ export const RARITY_RATES = {
   legendary: 3  // 3%
 };
 
-// 등급별 엄격한 스탯/코스트/정수 효과 상한선 (스펙 인플레 방지)
+// 등급별 엄격한 스탯/정수 효과 상한선 (스펙 인플레 방지)
+//
+// ⚠️ **등급은 코스트를 가두지 않는다.**
+//    🐛 예전에는 등급마다 좁은 costRange를 줬다 (커먼 1~2, 레어 2~3, 에픽 3~4,
+//       레전더리 3~5). 그래서 레어 이상 카드는 **1마나가 될 수 없었고**,
+//       레어+ 위주로 짠 덱에는 저코스트 카드가 아예 없었다.
+//       (측정: 활성 덱 13장 커브가 2코1·3코6·4코1·5코2·6코3 — 1코 0장,
+//        첫 손패에 1코가 올 확률 0%. 1턴에 낼 카드가 없어 그냥 죽었다.)
+//
+//    등급이 정하는 것은 **코스트당 파워 밀도**(RARITY_POWER.perMana)이지
+//    코스트 자체가 아니다. 1마나 레전더리는 "아주 효율 좋은 작은 카드"로
+//    성립한다 — 실제 TCG도 그렇다.
 export const RARITY_BALANCE_CAPS = {
   common: {
-    costRange: [1, 2],
+    costRange: [1, 5],   // ⚠️ 등급은 코스트를 가두지 않는다 — 아래 주석 참고
     atkRange: [6, 10],
     defRange: [2, 6],
     hpRange: [14, 22],
@@ -55,7 +66,7 @@ export const RARITY_BALANCE_CAPS = {
     buffValue: [1, 2]
   },
   rare: {
-    costRange: [2, 3],
+    costRange: [1, 5],
     atkRange: [10, 15],
     defRange: [4, 8],
     hpRange: [20, 28],
@@ -65,7 +76,7 @@ export const RARITY_BALANCE_CAPS = {
     buffValue: [2, 3]
   },
   epic: {
-    costRange: [3, 4],
+    costRange: [1, 6],
     atkRange: [14, 20],
     defRange: [6, 12],
     hpRange: [26, 34],
@@ -75,7 +86,7 @@ export const RARITY_BALANCE_CAPS = {
     buffValue: [3, 4]
   },
   legendary: {
-    costRange: [3, 5],
+    costRange: [1, 6],
     atkRange: [18, 26],
     defRange: [8, 14],
     hpRange: [30, 40],
@@ -599,12 +610,21 @@ export function enforcePowerBudget(cardData, skill) {
     }, 0) + statPower({ ...cardData, attack: atk, hp, defense: def });
   };
 
+  // 💎 코스트가 **미리 정해진** 카드인가 (덱 커브에서 굴려 LLM에 넘긴 값).
+  //    잠겨 있으면 코스트를 움직이지 않고 **내용을 깎아서** 맞춘다.
+  //    🐛 이게 없으면 등급별 스탯 하한(레전더리 공18/체30) 때문에 1마나 카드가
+  //       전부 2마나로 밀려 올라가, 덱에 1코가 사라진다.
+  //       (측정: 잠금 전 최종 커브가 2코 64% / 1코 0%)
+  const costLocked = !!cardData.costLocked;
+
   // 2. 효과를 지우기 전에 마나 코스트를 올려 값을 치른다
   //    "낮은 등급이 여러 효과를 갖되 마나를 많이 쓴다"는 규칙이 여기서 나온다
   let costRaised = 0;
-  while (usedPower() > affordablePower(rarity, cost, cardType) && cost < spec.maxCost) {
-    cost++;
-    costRaised++;
+  if (!costLocked) {
+    while (usedPower() > affordablePower(rarity, cost, cardType) && cost < spec.maxCost) {
+      cost++;
+      costRaised++;
+    }
   }
 
   // 2-a. 🐛 반대로 **너무 싸게 먹히면 코스트를 내린다.**
@@ -616,11 +636,15 @@ export function enforcePowerBudget(cardData, skill) {
   //   ⚠️ 저등급 고코스트 카드 자체를 없애는 게 아니다. **효과가 좋아서**
   //      값을 치르는 카드는 usedPower가 높으므로 여기서 내려가지 않는다.
   //      값을 치를 것이 없는 카드만 내려간다.
-  const costFloor = Math.max(1, (RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common).costRange[0]);
+  //   ⚠️ 바닥은 **1**이다. 예전에는 등급별 costRange[0]이었는데, 그것 때문에
+  //      레어+ 카드가 1~2마나로 내려가지 못해 덱에 저코스트가 사라졌다.
+  const costFloor = 1;
   let costLowered = 0;
-  while (cost > costFloor && usedPower() <= affordablePower(rarity, cost - 1, cardType)) {
-    cost--;
-    costLowered++;
+  if (!costLocked) {
+    while (cost > costFloor && usedPower() <= affordablePower(rarity, cost - 1, cardType)) {
+      cost--;
+      costLowered++;
+    }
   }
 
   // 2-b. 🎯 그래도 넘치면 **대상 범위를 좁힌다.**
@@ -708,6 +732,18 @@ export function enforcePowerBudget(cardData, skill) {
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
 
+  // 3-b. 효과가 전부 사라졌으면 기본 피해 하나는 남긴다.
+  //
+  //   🐛 수정: 이 블록이 **맨 마지막**에 있었다. 3단계가 예산을 맞추려고 효과를
+  //      지워 놓으면 여기서 다시 넣어버려, 예산 검사를 통과한 뒤에 카드가
+  //      조용히 예산을 넘겼다. (측정: 생성 카드의 25%가 예산 초과)
+  //      이제 스탯 깎기(4)와 안전밸브(5) **앞에** 둬서 되돌린 몫까지 정산한다.
+  //   ⚠️ 되돌리는 피해는 등급 하한으로 낮춘다. 원래 값을 그대로 되살리면
+  //      3단계가 지운 이유가 사라진다.
+  if (listActiveEffects(out).length === 0) {
+    out.damage = Math.max(1, Math.min(caps.spellDamage[0], parseInt(skill.damage) || caps.spellDamage[0]));
+  }
+
   // 4. 그래도 넘치면 스탯을 깎는다
   let guard = 0;
   while (usedPower() > affordablePower(rarity, cost, cardType) && guard++ < 40) {
@@ -717,9 +753,11 @@ export function enforcePowerBudget(cardData, skill) {
     else break;
   }
 
-  // 효과가 전부 사라졌으면 기본 피해 하나는 남긴다
-  if (listActiveEffects(out).length === 0) {
-    out.damage = Math.max(1, skill.damage || 0) || 8;
+  // 5. 🔒 마지막 안전밸브 — 여기까지 다 깎았는데도 넘치면 코스트를 올린다.
+  //    잠긴 코스트라도 "무슨 일이 있어도 고정"은 아니다. 망가진 카드보다 낫다.
+  while (usedPower() > affordablePower(rarity, cost, cardType) && cost < spec.maxCost) {
+    cost++;
+    costRaised++;
   }
 
   return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised, costLowered, trimmedValues };
@@ -1362,6 +1400,44 @@ export function sanitizeAndClampCardData(cardData) {
     powerUsed: power.used,
     powerAffordable: power.affordable
   };
+}
+
+// ============================================================
+// 💎 마나 커브 — 코스트를 **먼저** 정한다
+// ------------------------------------------------------------
+// 예전에는 등급이 코스트를 정했다(커먼=1~2, 레전더리=3~5). 그 결과
+// 덱 커브가 카드 등급 분포에 끌려다녔고, 레어+ 덱에는 1코가 없었다.
+//
+// 이제 코스트를 **독립적으로** 굴리고, 등급은 그 코스트에서
+// 얼마나 강할 수 있는지(파워 밀도)만 정한다.
+//
+// 분포는 실제 TCG 덱 커브를 닮게 저코스트로 기울였다.
+// ⚠️ 이 표를 고코스트 쪽으로 밀면 **1턴에 낼 카드가 없는 문제가 돌아온다.**
+//    바꾸기 전에 "첫 손패 4장에 저코스트가 들어올 확률"을 확인하세요.
+export const COST_CURVE_WEIGHTS = [
+  { cost: 1, w: 18 },
+  { cost: 2, w: 22 },
+  { cost: 3, w: 20 },
+  { cost: 4, w: 15 },
+  { cost: 5, w: 12 },
+  { cost: 6, w: 8 },
+  { cost: 7, w: 5 }
+];
+
+/**
+ * 덱 커브를 닮은 분포로 코스트를 고른다.
+ * @param maxCost 등급이 허용하는 상한 (RARITY_POWER.maxCost)
+ * @param rand    0~1 난수 생성기. 전투 중이면 battleRng().next()를 넘기세요.
+ */
+export function rollCardCost(maxCost = 6, rand = Math.random) {
+  const pool = COST_CURVE_WEIGHTS.filter(e => e.cost <= maxCost);
+  const total = pool.reduce((s, e) => s + e.w, 0);
+  let roll = rand() * total;
+  for (const e of pool) {
+    roll -= e.w;
+    if (roll <= 0) return e.cost;
+  }
+  return pool[pool.length - 1].cost;
 }
 
 export function rollRandomRarity(minRarity = null) {

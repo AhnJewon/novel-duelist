@@ -3,7 +3,7 @@
 import { state, saveCardsToStorage, saveActiveDeckToStorage, saveSettingsToStorage, optimizeCardImage, MAX_DECK_SIZE } from './storage.js';
 import { createCardElement } from './card-renderer.js';
 import { audio } from './audio.js';
-import { rollRandomRarity, RARITY_BALANCE_CAPS, RARITY_STYLE, ELEMENT_CONFIG, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
+import { rollRandomRarity, rollCardCost, RARITY_BALANCE_CAPS, RARITY_STYLE, ELEMENT_CONFIG, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
 
 import { checkOllamaOnline, callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
@@ -328,7 +328,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
     }
   }
   const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
-  const cost = caps.costRange[0] + Math.floor(Math.random() * (caps.costRange[1] - caps.costRange[0] + 1));
+  const cost = rollCardCost(caps.costRange[1]);   // 💎 덱 커브 분포 (등급이 아니라 커브가 정한다)
   let atk = caps.atkRange[0] + Math.floor(Math.random() * (caps.atkRange[1] - caps.atkRange[0] + 1));
   let def = caps.defRange[0] + Math.floor(Math.random() * (caps.defRange[1] - caps.defRange[0] + 1));
   let hp = caps.hpRange[0] + Math.floor(Math.random() * (caps.hpRange[1] - caps.hpRange[0] + 1));
@@ -376,7 +376,14 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
       const seedText = packSeeds[Math.floor(Math.random() * packSeeds.length)];
       const nonce = `pack-${cardIndex}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-      const promptMsg = `Create 1 authentic anime TCG card for Pack Theme: "${packThemeName || 'Fantasy Card Pack'}", Element: "${element}", Type: "${cardType}", Rarity: "${rarity}".
+      const promptMsg = `Create 1 authentic anime TCG card for Pack Theme: "${packThemeName || 'Fantasy Card Pack'}", Element: "${element}", Type: "${cardType}", Rarity: "${rarity}", Mana Cost: ${cost} (고정).
+
+💎 이 카드의 마나 코스트는 **${cost}**로 이미 정해져 있다. 바꾸지 마라.
+- **등급은 코스트를 정하지 않는다.** 등급이 정하는 건 그 코스트에서의 파워 밀도다.
+  1마나 레전더리는 "아주 효율 좋은 작은 카드", 6마나 커먼은 "느리지만 효과가 많은 카드"다.
+- ${cost}마나에 어울리는 규모로 설계하라:
+  1~2마나 → 효과 1개, 작은 스탯 / 3~4마나 → 효과 1~2개 / 5마나 이상 → 효과 2~3개.
+- ⚠️ 넘치면 시스템이 효과를 잘라내거나 수치를 깎고, 너무 빈약하면 마나를 내린다.
 Seed Nonce: ${nonce}
 Existing Archetypes list:
 ${knownThemes}
@@ -705,6 +712,9 @@ Return ONLY JSON:
   cardName = enforceKeywordInName(cardName, themeObj, cardType);
 
   const rawCard = {
+    // 💎 코스트는 덱 커브에서 미리 굴려 LLM에 넘긴 값이다.
+    //    예산이 이걸 올리거나 내리지 않고 **내용을 깎아서** 맞춘다.
+    costLocked: true,
     id: `pack-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
     cardType: cardType,
     name: cardName,

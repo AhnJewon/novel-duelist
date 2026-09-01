@@ -229,7 +229,14 @@ export function growMana(side, turnCount, cap = 10) {
 }
 
 /**
- * 전장의 모든 소환수를 행동 가능 상태로.
+ * 전장의 소환수를 행동 가능 상태로 되돌린다.
+ *
+ * ⚠️ **이번 턴에 소환된 소환수는 풀어주지 않는다** (소환 후유증).
+ *    🐛 예전에는 무조건 `canAttack = true`로 밀었다. 그래서 보스 턴 시작에
+ *       이 함수가 돌면 **방금 배치된 소환수까지 풀려서** 소환 후유증이
+ *       무효가 됐다 (전투 시작 소환수 2기가 1턴부터 본체를 직격).
+ *    판정 기준은 `summonedTurn` — 소환된 턴 번호다. 없으면(구 세이브)
+ *    후유증이 이미 끝난 것으로 본다.
  *
  * ⚠️ 상태이상 소모·감쇠는 여기서 하지 않는다. battle-engine의
  *    `tickMinionStatuses()`가 지속 피해까지 한 번에 처리하고
@@ -239,7 +246,8 @@ export function growMana(side, turnCount, cap = 10) {
 export function refreshMinions(side) {
   side.minions.forEach(m => {
     m.frozen = !!m.blockedBy && m.blockedBy === 'freeze';
-    m.canAttack = !m.blockedBy;
+    const summonSick = Number.isFinite(m.summonedTurn) && m.summonedTurn >= state.turnCount;
+    m.canAttack = !m.blockedBy && !summonSick;
   });
 }
 

@@ -2,7 +2,7 @@ import { state, saveCardsToStorage, saveActiveDeckToStorage, optimizeCardImage, 
 import { createCardElement } from './card-renderer.js';
 import { audio } from './audio.js';
 import { openSettingsModal } from './ui.js';
-import { rollRandomRarity, RARITY_BALANCE_CAPS, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
+import { rollRandomRarity, rollCardCost, RARITY_BALANCE_CAPS, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
 import { callOllamaChat, generateNovelAIImage } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
@@ -80,6 +80,14 @@ export async function generatePromptWithLLM(isRandom = false) {
 
   const nonceId = `session-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
+  // 💎 코스트를 **먼저** 정해 LLM에 넘긴다.
+  //    예전에는 LLM이 등급을 고르고 등급이 코스트를 가뒀다(레어+ 는 2마나 이상).
+  //    그래서 덱에 저코스트 카드가 사라져 1턴에 낼 것이 없었다.
+  //    유저가 코스트를 직접 지정했으면 그 값을 존중한다.
+  const plannedCost = Number.isFinite(custom.cost) && custom.cost > 0
+    ? Math.max(1, Math.min(7, custom.cost))
+    : rollCardCost(6);
+
   const systemPrompt = `You are a creative, imaginative Anime TCG Card Designer (inspired by Yu-Gi-Oh!, Hearthstone, Shadowverse, Magic: The Gathering).
 Design an authentic, natural, original fantasy TCG card of type: "${targetType}".
 
@@ -95,10 +103,22 @@ CRITICAL NUMERICAL RULES & STAT CAPS (스펙 인플레 방지 및 고정 정수 
    - ❌ WRONG: "공격력이 20% 증가", "체력 30% 회복", "피해량 50% 증폭"
    - ✅ CORRECT: "공격력 +2 증가", "체력 10 회복", "16의 화염 피해"
 2. Strict integer stat & damage ranges by rarity:
-   - common: cost 1-2, attack 6-10, defense 2-6, hp 14-22, damage 8-12, shield 6-10, heal 6-10, buff +1~2
-   - rare: cost 2-3, attack 10-15, defense 4-8, hp 20-28, damage 12-18, shield 10-16, heal 10-16, buff +2~3
-   - epic: cost 3-4, attack 14-20, defense 6-12, hp 26-34, damage 16-24, shield 14-20, heal 14-22, buff +3~4
-   - legendary: cost 3-5, attack 18-26, defense 8-14, hp 30-40, damage 20-28, shield 18-26, heal 18-26, buff +4~5
+   - common: attack 6-10, defense 2-6, hp 14-22, damage 8-12, shield 6-10, heal 6-10, buff +1~2
+   - rare: attack 10-15, defense 4-8, hp 20-28, damage 12-18, shield 10-16, heal 10-16, buff +2~3
+   - epic: attack 14-20, defense 6-12, hp 26-34, damage 16-24, shield 14-20, heal 14-22, buff +3~4
+   - legendary: attack 18-26, defense 8-14, hp 30-40, damage 20-28, shield 18-26, heal 18-26, buff +4~5
+
+💎 MANA COST (이미 정해져 있다 — 이 카드의 코스트는 **${plannedCost}**):
+- "cost"에 반드시 ${plannedCost}를 넣어라. 네가 바꾸지 마라.
+- **등급은 코스트를 정하지 않는다.** 등급이 정하는 건 "그 코스트에서 얼마나
+  강할 수 있는가"(파워 밀도)다. 1마나 레전더리는 "아주 효율 좋은 작은 카드"로
+  성립하고, 6마나 커먼은 "느리지만 효과가 많은 카드"로 성립한다.
+- ${plannedCost}마나에 어울리는 규모로 설계하라:
+  * 1~2마나 → 효과 1개, 스탯도 작게. 초반에 낼 수 있는 것이 가치다.
+  * 3~4마나 → 효과 1~2개, 준수한 스탯.
+  * 5마나 이상 → 효과 2~3개 또는 판을 뒤집는 큰 한 방.
+- ⚠️ 예산을 넘으면 시스템이 **효과를 잘라내거나 수치를 깎는다.** 반대로 너무
+  빈약하면 **마나를 내려버린다.** 처음부터 ${plannedCost}마나에 맞춰 설계하라.
 
 TCG ARCHETYPE DECK COMBO (유희왕/TCG식 상호 연계 테마 덱):
 Cards belong to a Theme Archetype (카드군) and trigger interlocking combos when played or when theme allies exist!
@@ -299,7 +319,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeSynergyDesc": "카드군 테마 상호 연계 효과 설명",
   "rarity": "common|rare|epic|legendary",
-  "cost": 1-4,
+  "cost": ${plannedCost},
   "attack": 6-24,
   "defense": 2-14,
   "hp": 14-38,
@@ -443,7 +463,7 @@ export function generatePromptSmartRandom(concept) {
   const rarity = rollRandomRarity();
   const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
 
-  const cost = caps.costRange[0] + Math.floor(Math.random() * (caps.costRange[1] - caps.costRange[0] + 1));
+  const cost = rollCardCost(caps.costRange[1]);   // 💎 덱 커브 분포 (등급이 아니라 커브가 정한다)
   const atk = caps.atkRange[0] + Math.floor(Math.random() * (caps.atkRange[1] - caps.atkRange[0] + 1));
   const def = caps.defRange[0] + Math.floor(Math.random() * (caps.defRange[1] - caps.defRange[0] + 1));
   const hp = caps.hpRange[0] + Math.floor(Math.random() * (caps.hpRange[1] - caps.hpRange[0] + 1));
@@ -790,7 +810,7 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const cardType = currentForgeCardType || 'unit';
   const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
 
-  const cost = caps.costRange[0] + Math.floor(Math.random() * (caps.costRange[1] - caps.costRange[0] + 1));
+  const cost = rollCardCost(caps.costRange[1]);   // 💎 덱 커브 분포 (등급이 아니라 커브가 정한다)
   let atk = caps.atkRange[0] + Math.floor(Math.random() * (caps.atkRange[1] - caps.atkRange[0] + 1));
   let def = caps.defRange[0] + Math.floor(Math.random() * (caps.defRange[1] - caps.defRange[0] + 1));
   let hp = caps.hpRange[0] + Math.floor(Math.random() * (caps.hpRange[1] - caps.hpRange[0] + 1));
@@ -867,6 +887,9 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const finalName = enforceKeywordInName(typedName, finalTheme, cardType);
 
   const rawCard = {
+    // 💎 코스트는 미리 정해 LLM에 넘긴 값이다.
+    //    예산이 이걸 올리거나 내리지 않고 **내용을 깎아서** 맞춘다.
+    costLocked: true,
     id: `custom-${Date.now()}`,
     cardType: cardType,
     name: finalName,

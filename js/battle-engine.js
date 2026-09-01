@@ -37,6 +37,31 @@ import {
 export const BATTLE_SLOTS = 4;
 export const BOSS_SLOTS = 3;
 
+// ============================================================
+// 🐌 보스 공세 램프 — 초반 턴에는 보스도 천천히 전개한다
+// ------------------------------------------------------------
+// 🐛 왜 필요한가: 보스는 마나를 쓰지 않는다(foeVirtualMana 99). 그래서
+//    플레이어가 1마나뿐인 1턴에 소환수를 3기까지 채우고 카드도 2~3장 냈다.
+//    측정 결과 턴1 보스 딜이 34~59였고 플레이어 체력은 50이라,
+//    **첫 손패에 싼 카드가 없으면 아무것도 못 하고 2턴에 죽었다.**
+//
+//    플레이어의 마나 커브(1→2→3…)에 맞춰 보스도 초반을 늦춘다.
+//    후반 난이도는 그대로다 — 압박을 없애는 게 아니라 **뒤로 미루는 것**이다.
+//
+// ⚠️ 여기 수치를 올리면 초반 난이도가 그대로 돌아온다. 바꾸기 전에
+//    "패스만 하며 몇 턴 버티는가"를 반드시 측정하세요 → DECISIONS #75
+const BOSS_RAMP = {
+  1: { minions: 1, cards: 1 },
+  2: { minions: 2, cards: 1 }
+  // 3턴 이후는 제한 없음 (BOSS_SLOTS / 기본 카드 수)
+};
+
+/** 이번 턴 보스가 채울 수 있는 최대 소환수 수 */
+function bossMinionCapThisTurn() {
+  const ramp = BOSS_RAMP[state.turnCount];
+  return ramp ? Math.min(BOSS_SLOTS, ramp.minions) : BOSS_SLOTS;
+}
+
 let isPlayerTurn = true;
 let bossPhase = 1;
 
@@ -220,14 +245,14 @@ export function initBattle({ seed = null } = {}) {
   state.bossHand = [state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift()].filter(Boolean);
   state.bossLastCastCard = null;
 
-  // 속성에 맞는 보스 시작 호위병 2마리 배치
-  const el = state.currentBoss.element || 'fire';
-  const minionPool = (ELEMENT_BOSS_MINIONS && ELEMENT_BOSS_MINIONS[el]) ? ELEMENT_BOSS_MINIONS[el] : BOSS_ADD_POOL;
-  
-  state.bossMinions = [
-    { ...minionPool[0], currentHp: minionPool[0].maxHp },
-    { ...(minionPool[1] || minionPool[0]), currentHp: (minionPool[1] || minionPool[0]).maxHp }
-  ];
+  // 👾 보스 전장은 **비어서 시작한다.**
+  //    🐛 예전에는 소환수 2기를 깔고 시작했다. 플레이어는 1마나뿐인 1턴에
+  //       막을 것을 낼 수 없는데 그 2기가 곧바로 본체를 때려,
+  //       아무것도 못 한 채 2턴에 죽었다.
+  //       (측정: 턴1 보스 딜 59 = 콤보 16 + 소환수 3기 43 vs 플레이어 체력 50)
+  //    보스는 콤보 스텝으로 매 턴 소환하므로 전장은 금방 채워진다 —
+  //    시작 보드를 없애는 것은 **압박을 없애는 게 아니라 뒤로 미루는 것**이다.
+  state.bossMinions = [];
 
   bossStatus = createStatusState();
   playerStatus = createStatusState();
@@ -796,6 +821,8 @@ export function playCard(handIdx) {
     currentHp: card.hp || 30,
     defense: card.defense || 0,
     canAttack: false, // 소환 후유증
+    // ⚠️ 이게 없으면 refreshMinions가 다음 턴에도 풀어주지 않는다 (영구 마비)
+    summonedTurn: state.turnCount,
     frozen: false
   };
 
@@ -1278,9 +1305,13 @@ export async function executeBossTurn() {
   state.isAnimating = true;
   addBattleLog(`<span class="text-red-400 font-bold">👹 [${state.currentBoss.name}] 의 다단계 콤보 턴!</span>`);
 
-  // 💫 상대 소환수 상태이상 처리. 보스 진영은 refreshMinions를 쓰지 않으므로
-  //    여기서 봉쇄를 소모하고 `blockedBy`를 세운다 — foeMinionAttack이 그걸 읽는다.
+  // 💫 상대 소환수 상태이상 처리. 봉쇄를 소모하고 `blockedBy`를 세운다.
   tickMinionStatuses(state.bossMinions, '상대');
+
+  // 👾 지난 턴에 소환된 소환수를 행동 가능으로 풀어준다 (소환 후유증 해제).
+  //    ⚠️ **콤보 실행보다 앞에** 와야 한다. 뒤에 두면 이번 턴에 소환된
+  //       소환수까지 풀려서 소환 후유증이 무효가 된다.
+  refreshMinions(sides[SIDE_BOSS]);
 
   // 1. 보스 지속 피해(화상/맹독) 적용
   // 🐛 수정: 예전에는 burn/poison을 보스에게 걸어도 읽는 쪽이 없어 완전히 무효과였다.
@@ -1309,7 +1340,10 @@ export async function executeBossTurn() {
     return;
   }
   // 2. 🎴 보스 전술 카드 플레이 단계 (적극적 2~3연속 카드 체인 시전!)
-  const cardsToPlayLimit = (bossPhase === 2 || state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5) ? 3 : 2;
+  const baseCardLimit = (bossPhase === 2 || state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5) ? 3 : 2;
+  // 🐌 초반 램프 — 플레이어가 1~2마나일 때 보스가 카드를 몰아 내지 않게 한다
+  const rampNow = BOSS_RAMP[state.turnCount];
+  const cardsToPlayLimit = rampNow ? Math.min(baseCardLimit, rampNow.cards) : baseCardLimit;
   
   for (let playCount = 0; playCount < cardsToPlayLimit; playCount++) {
     if (!state.bossHand || state.bossHand.length === 0 || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
@@ -1321,7 +1355,7 @@ export async function executeBossTurn() {
       if (defIdx !== -1) cardIdxToPlay = defIdx;
     } 
     // 2) 필드 소환수 슬롯이 비었을 때 유닛/건축물 소환
-    else if (state.bossMinions.length < BOSS_SLOTS) {
+    else if (state.bossMinions.length < bossMinionCapThisTurn()) {
       const minionIdx = state.bossHand.findIndex(c => c.cardType === 'unit' || c.cardType === 'structure');
       if (minionIdx !== -1) cardIdxToPlay = minionIdx;
     }
@@ -1372,8 +1406,17 @@ export async function executeBossTurn() {
   }
 
   // 4. 보스 부하들의 연계 합동 공격
+  //    ⚠️ canAttack을 반드시 본다. 예전에는 검사가 없어서 **이번 턴에 소환된
+  //       소환수까지 같은 턴에 공격**했다 (스텝1 소환 → 스텝4 공격).
+  //       플레이어 소환수는 소환 후유증이 있으므로 그쪽만 불리한 비대칭이었다.
   if (state.playerHp > 0 && state.currentBoss.currentHp > 0) {
-    state.bossMinions.forEach((bm, idx) => foeMinionAttack(idx, bm));
+    state.bossMinions.forEach((bm, idx) => {
+      if (bm && bm.canAttack === false) {
+        addBattleLog(`<span class="text-slate-500">💤 [${escapeHtml(bm.name)}]은(는) 소환된 턴이라 공격하지 못합니다.</span>`);
+        return;
+      }
+      foeMinionAttack(idx, bm);
+    });
   }
 
 
@@ -1418,7 +1461,7 @@ export async function playBossCard(card) {
 
   if (card.cardType === 'unit' || card.cardType === 'structure') {
     audio.playSummon();
-    if (state.bossMinions.length < BOSS_SLOTS) {
+    if (state.bossMinions.length < bossMinionCapThisTurn()) {
       const minion = {
         name: card.name,
         icon: elCfg.icon || '⚔️',
@@ -1429,6 +1472,8 @@ export async function playBossCard(card) {
         taunt: card.cardType === 'structure' || !!card.taunt,
         desc: card.skills && card.skills[0] ? card.skills[0].name : '소환수'
       };
+      minion.canAttack = false;                  // 소환 후유증 — 플레이어 소환수와 같은 규칙
+      minion.summonedTurn = state.turnCount;
       state.bossMinions.push(minion);
       addBattleLog(`<span class="text-purple-300 font-bold">👾 [보스 전장 소환] [${minion.name}] (공격력 ${minion.attack} / 체력 ${minion.maxHp}) 이(가) 전장에 배치되었습니다!</span>`);
     } else {
@@ -1494,9 +1539,10 @@ async function executeSingleBossStep(step) {
   if (step.type === 'summon_or_buff') {
     const el = state.currentBoss.element || 'fire';
     const minionPool = (ELEMENT_BOSS_MINIONS && ELEMENT_BOSS_MINIONS[el]) ? ELEMENT_BOSS_MINIONS[el] : BOSS_ADD_POOL;
-    if (state.bossMinions.length < BOSS_SLOTS) {
+    if (state.bossMinions.length < bossMinionCapThisTurn()) {
       const randomAdd = battleRng().pick(minionPool);
-      state.bossMinions.push({ ...randomAdd, currentHp: randomAdd.maxHp });
+      // 소환 후유증 — 이게 없어서 스텝1에 소환된 소환수가 같은 턴 스텝4에 때렸다
+      state.bossMinions.push({ ...randomAdd, currentHp: randomAdd.maxHp, canAttack: false, summonedTurn: state.turnCount });
       audio.playSummon();
       addBattleLog(`<span class="text-purple-400 font-bold">👾 [스텝 1/소환] 보스가 [${randomAdd.name}] 을(를) 소환했습니다!</span>`);
     } else {
@@ -1977,6 +2023,7 @@ export async function playFoeCardPvp(card, slot = null) {
       defense: card.defense || 0,
       taunt: cardType === 'structure' || !!card.taunt,
       canAttack: false,
+      summonedTurn: state.turnCount,
       frozen: false
     });
     addBattleLog(`<span class="text-cyan-300 font-bold">${cardType === 'structure' ? '🏛️ 상대가 건축물을 구축' : '✨ 상대가 소환수를 출진'}했습니다: [${escapeHtml(card.name)}]</span>`);
