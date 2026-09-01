@@ -548,9 +548,9 @@ export function updateForgePromptPreview() {
     element: element,
     rarity: rarity,
     cost: cardType === 'spell' ? 2 : (rarity === 'legendary' ? 4 : (rarity === 'epic' ? 3 : 2)),
-    attack: cardType === 'spell' || cardType === 'structure' ? 0 : (rarity === 'legendary' ? 28 : (rarity === 'epic' ? 20 : 14)),
-    defense: cardType === 'spell' ? 0 : (rarity === 'legendary' ? 12 : 8),
-    hp: cardType === 'spell' ? 0 : (cardType === 'structure' ? 45 : (rarity === 'legendary' ? 40 : 30)),
+    attack: cardType === 'spell' || cardType === 'structure' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 28 : (rarity === 'epic' ? 20 : 14)),
+    defense: cardType === 'spell' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 12 : 8),
+    hp: cardType === 'spell' || cardType === 'trap' ? 0 : (cardType === 'structure' ? 45 : (rarity === 'legendary' ? 40 : 30)),
     imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
     skills: [currentLLMSkillData || { name: `${name} 효과`, description: '효과를 발동합니다.' }]
   };

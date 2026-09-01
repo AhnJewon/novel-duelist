@@ -417,7 +417,12 @@ export function sanitizeAndClampCardData(cardData) {
   let hp = parseInt(cardData.hp) || caps.hpRange[0];
   hp = Math.min(caps.hpRange[1], Math.max(caps.hpRange[0], hp));
 
-  if (cardType === 'spell') {
+  // 🐛 수정: 예전에는 spell만 스탯을 0으로 만들었다. **함정도 스탯이 없다** —
+  //    필드에 나오지 않고 조건이 맞을 때 효과만 터지기 때문이다.
+  //    그런데 굴린 공/방/체가 그대로 남아 카드에 표시됐다.
+  //    statPower()는 함정을 0으로 치므로 예산 계산에도 안 들어갔다 —
+  //    즉 **화면에만 보이는 허수**였다.
+  if (cardType === 'spell' || cardType === 'trap') {
     atk = 0; def = 0; hp = 0;
   } else if (cardType === 'structure') {
     atk = 0;

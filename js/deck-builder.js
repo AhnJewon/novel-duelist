@@ -117,6 +117,10 @@ function renderCollectionSection() {
   const countText = document.getElementById('collection-count-text');
   if (!grid) return;
 
+  // 💎 가루 — 보관함에서만 보인다. 전투 중에는 볼 이유가 없다.
+  const dustEl = document.getElementById('dust-amount');
+  if (dustEl) dustEl.innerText = getDust().toLocaleString('ko-KR');
+
   grid.innerHTML = '';
 
   if (countText) {

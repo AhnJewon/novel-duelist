@@ -331,7 +331,8 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let hp = caps.hpRange[0] + Math.floor(Math.random() * (caps.hpRange[1] - caps.hpRange[0] + 1));
   const spellDmg = caps.spellDamage[0] + Math.floor(Math.random() * (caps.spellDamage[1] - caps.spellDamage[0] + 1));
 
-  if (cardType === 'spell') {
+  // 함정도 스탯이 없다 (필드에 나오지 않고 효과만 터진다)
+  if (cardType === 'spell' || cardType === 'trap') {
     atk = 0; def = 0; hp = 0;
   } else if (cardType === 'structure') {
     atk = 0;

@@ -148,6 +148,15 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
         <span class="text-amber-300">✨ 비전 마법</span>
       </div>
     `;
+  } else if (cardType === 'trap') {
+    // 🪤 함정은 스탯이 없다 — 필드에 나오지 않고 조건이 맞을 때 효과만 터진다.
+    //    예전에는 소환수와 같은 공/방/체 막대를 그려서 있지도 않은 수치를 보여줬다.
+    statBarHtml = `
+      <div class="mt-1 flex items-center justify-between px-2 py-0.5 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-[10px] font-black relative z-10 text-indigo-200 shrink-0">
+        <span class="flex items-center gap-1">🪤 함정</span>
+        <span class="text-amber-300">⏳ 조건 발동</span>
+      </div>
+    `;
   } else if (cardType === 'structure') {
     statBarHtml = `
       <div class="mt-1 flex items-center justify-between px-2 py-0.5 rounded-lg bg-black/90 border border-amber-700/60 text-[11px] font-black relative z-10 shrink-0">
