@@ -108,6 +108,7 @@
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
 | 밸런스 수치 조정 | `js/config.js`의 `RARITY_BALANCE_CAPS` **+ 프롬프트 텍스트도 함께** |
 | 카드 생성 프롬프트 | `js/card-forge.js`(1장) / `js/card-pack.js`(5장) |
+| 설명문 2단계 생성 · 검증 | `js/card-describe.js` **한 곳** |
 | LLM 파라미터 | `js/ai-service.js`의 `callOllamaChat()` |
 | 이미지 태그 규칙 (규칙 기반) | `js/dan-tag-gen.js` |
 | 태그 SLM · 작가/화풍 · 판권 정책 | `js/tag-slm.js` **한 곳** |
@@ -226,3 +227,19 @@
 36. **보스 소환수에도 소환 후유증을 적용하세요.** `summonedTurn`을 기록하고
     `refreshMinions`를 콤보 실행 **앞에** 부르세요. 뒤에 두면 이번 턴에 소환된
     소환수까지 풀려 후유증이 무효가 됩니다. → [DECISIONS #75](docs/DECISIONS.md)
+
+37. **바닐라는 소환수 전용입니다.** 마법·함정·건축물은 효과가 전부라, 효과를 다
+    지우면 발동해도 아무 일이 없는 백지 카드가 됩니다. 효과 제거 루프는
+    비소환수의 **마지막 효과를 남깁니다.** → [DECISIONS #76](docs/DECISIONS.md)
+
+38. **`describeSkillFromData`에 새 효과를 추가하면 `describeStructurePassive`에도
+    넣으세요 (반대도).** 오라를 한쪽에만 넣어서 건축물이 빈 설명으로 나갔습니다.
+    → [DECISIONS #76](docs/DECISIONS.md)
+
+39. **`callOllamaChat`은 응답을 JSON으로 파싱합니다.** 평문을 요구하면 파싱에서
+    통째로 실패합니다. 그리고 카드 정보는 **user 메시지**에 넣으세요 — system에만
+    넣으면 4B 모델이 무시합니다. → [DECISIONS #76](docs/DECISIONS.md)
+
+40. **설명문 검증은 스킬 필드가 아니라 `describeSkillFromData`의 결과(facts)를
+    기준으로 하세요.** 필드로 대조하면 패시브·오라에서 오탐이 납니다.
+    → [DECISIONS #76](docs/DECISIONS.md)

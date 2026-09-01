@@ -13,6 +13,7 @@ import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlay
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
 import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
+import { applyLlmDescription } from './card-describe.js';
 
 export const PACK_THEMES = {
   fire_dark: {
@@ -353,11 +354,15 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let llmVanilla = false;        // 🃏 LLM이 바닐라로 만들겠다고 했는가
   let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
   let skillName = `${baseConcept}의 비기`;
-  let skillDesc = cardType === 'spell' 
+  // 🐛 수정: 예전에는 함정에도 소환수 문구를 붙여 **"0 공격을 가합니다"**가 나왔다
+  //    (함정은 공격력이 0이다). 건축물 문구도 실제 패시브와 무관한 고정 문장이었다.
+  //    이제 소환수·주문만 문구를 주고, 나머지는 **비워서** sanitize가
+  //    확정된 수치로 만들게 한다 (describeSkillFromData).
+  let skillDesc = cardType === 'spell'
     ? `[즉발 주문] 적에게 ${spellDmg}의 ${ELEMENT_CONFIG[element].name} 피해를 입힙니다.`
-    : (cardType === 'structure' 
-      ? `[건축물 패시브] 매 턴 방어막 +${caps.shieldValue[0]} 및 마나 공급.`
-      : `${ELEMENT_CONFIG[element].name} 마력을 실어 ${atk} 공격을 가합니다.`);
+    : (cardType === 'unit'
+      ? `${ELEMENT_CONFIG[element].name} 마력을 실어 ${atk} 공격을 가합니다.`
+      : '');
 
   // 1단계: 로컬 LLM (Ollama)으로 개별 카드의 고유 이름, 스킬 및 핵심 단부루 시드 추출
   let themeObj = null;
@@ -387,8 +392,9 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   1~2마나 → 효과 1개, 작은 스탯 / 3~4마나 → 효과 1~2개 / 5마나 이상 → 효과 2~3개.
 - ⚠️ 넘치면 시스템이 효과를 잘라내거나 수치를 깎고, 너무 빈약하면 마나를 내린다.
 
-🃏 VANILLA CARD (효과 없는 카드 — 정상적인 카드 종류다):
-1~2마나는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다. 그럴 때는
+🃏 VANILLA CARD (효과 없는 카드 — **소환수(unit)만** 가능):
+⚠️ 마법·함정·건축물은 효과가 전부다 — 바닐라로 만들지 마라.
+1~2마나 소환수는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다. 그럴 때는
 억지로 효과를 만들지 말고 "isVanilla": true 로 두고 효과 수치를 비워라.
 대신 "flavorText"에 세계관 한 줄(25자 이내)을 쓴다. **효과처럼 읽히면 안 된다.**
   ✅ "이름 없는 자들이 전장을 채운다."   ❌ "적에게 큰 피해를 준다."
@@ -703,7 +709,9 @@ Return ONLY JSON:
 
   // 🃏 바닐라 — LLM이 그렇게 만들겠다고 했으면 효과 수치를 넣지 않는다.
   //    (건축물은 패시브가 정체성이라 바닐라로 두지 않는다)
-  const makeVanilla = llmVanilla && cardType !== 'structure';
+  // ⚠️ 바닐라는 **소환수 전용**이다. 마법·함정·건축물은 효과가 전부라
+  //    효과 없이 내면 발동해도 아무 일이 없는 백지 카드가 된다.
+  const makeVanilla = llmVanilla && cardType === 'unit';
 
   const skill = {
     name: skillName,
@@ -759,6 +767,18 @@ Return ONLY JSON:
   if (clampedCard.skill) {
     clampedCard.skills = [clampedCard.skill];
   }
+
+  // ✍️ 2단계 — **확정된 수치**로 설명문을 다시 쓴다.
+  //    1단계에서 받은 설명문은 예산 정산 전 수치를 기준으로 쓰인 것이라
+  //    깎이거나 잘려나간 뒤에는 어긋난다. 이제 수치가 고정됐으므로
+  //    그것만 보고 문장을 만든다.
+  //    ⚠️ 실패하면 아무것도 안 한다 — sanitize가 맞춰둔 문장이 이미 정확하다.
+  //    ⚠️ fastMode(오프라인 폴백)에서는 건너뛴다. 카드당 호출이 2배가 된다.
+  if (!fastMode && ollamaOnline) {
+    if (loadingLabel) loadingLabel.innerText = `✍️ [${cardIndex + 1}/5] 카드 텍스트 다듬는 중...`;
+    await applyLlmDescription(clampedCard, { timeoutMs: 45000 });
+  }
+
   return clampedCard;
 }
 

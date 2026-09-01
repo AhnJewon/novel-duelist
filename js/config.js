@@ -722,40 +722,79 @@ export function enforcePowerBudget(cardData, skill) {
     trimmedValues++;
   }
 
-  // 3. 그래도 넘치면 비싼 효과부터 제거
+  // ── 스탯 깎기 헬퍼 ─────────────────────────────────────────
+  //    바닥을 인자로 받는다. 3단계는 **등급 하한**까지만, 5단계는 **절대 하한**까지.
+  const shaveStats = (floorAtk, floorHp, floorDef) => {
+    let guard = 0;
+    while (usedPower() > affordablePower(rarity, cost, cardType) && guard++ < 80) {
+      if (atk > floorAtk && atk >= hp / 2) atk -= 1;
+      else if (hp > floorHp) hp -= 2;
+      else if (def > floorDef) def -= 1;
+      else if (atk > floorAtk) atk -= 1;      // hp/def가 바닥이면 공격력으로 마저 메운다
+      else break;
+    }
+  };
+
+  // 3. 🐛 **스탯을 먼저 깎는다** (등급 하한까지).
+  //
+  //    예전에는 효과 제거가 먼저였다. 그래서 스탯 상한 근처의 카드는 효과를
+  //    통째로 잃고 바닐라가 됐다 (합성 최악 조건에서 23%).
+  //    효과는 카드의 **정체성**이고 스탯은 상대적으로 대체 가능하다 —
+  //    "12 피해를 주는 8/18"이 "아무것도 안 하는 10/22"보다 카드답다.
+  //
+  //    ⚠️ 등급 하한 아래로는 여기서 내려가지 않는다. 그 아래까지 깎으면
+  //       등급 표기와 실제 성능이 어긋난다. 그건 5단계의 일이다.
+  const isBodyless = (cardType === 'spell' || cardType === 'trap');
+  if (!isBodyless) {
+    shaveStats(caps.atkRange[0], caps.hpRange[0], caps.defRange[0]);
+  }
+
+  // 4. 그래도 넘치면 비싼 효과부터 제거
   //    🏛️ 여기에도 건축물 예외가 있었지만 없앴다 (위 1단계 주석 참고).
   //       타입별 예산이 생긴 뒤로는 건축물 패시브가 예산에 정상적으로 들어간다.
+  //
+  //    ⚠️ **소환수가 아니면 마지막 효과는 남긴다.**
+  //    소환수는 효과가 없어도 스탯으로 싸우지만, 마법·함정·건축물은 효과가
+  //    **전부**다. 효과를 다 지우면 발동해도 아무 일이 없는 백지 카드가 된다.
+  //    (실측: 효과 없는 함정 "운명을 뒤집는 계략"이 실제로 생성됐다)
+  //    남은 초과분은 5단계 스탯 깎기와 7단계 코스트 인상이 감당한다.
+  const mustKeepEffect = (cardType !== 'unit');
   let effects = listActiveEffects(out).sort((a, b) => b.cost - a.cost);
   for (const e of effects) {
     if (usedPower() <= affordablePower(rarity, cost, cardType)) break;
+    if (mustKeepEffect && listActiveEffects(out).length <= 1) break;
     clearEffect(e.key);
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
 
-  // 3-b. 🃏 효과가 하나도 안 남았으면 **바닐라 카드**가 된다.
+  // 5. 그래도 넘치면 등급 하한 **아래로도** 깎는다 (절대 하한: 공1 / 체4 / 방0)
+  shaveStats(1, 4, 0);
+
+  // 6. 🃏 효과가 하나도 안 남았으면 **바닐라 카드**가 된다.
   //
   //   🐛 예전에는 여기서 억지로 피해 효과를 되살렸다. 두 가지가 잘못됐다:
-  //      ① 이 블록이 맨 마지막이라, 3단계가 예산을 맞추려고 지운 효과를
-  //         되살려 검사를 통과한 뒤 카드가 조용히 예산을 넘겼다 (25% 초과)
+  //      ① 이 블록이 맨 마지막이라, 예산을 맞추려고 지운 효과를 되살려
+  //         검사를 통과한 뒤 카드가 조용히 예산을 넘겼다 (25% 초과)
   //      ② 애초에 **모든 카드가 효과를 가져야 한다는 전제가 틀렸다.**
-  //         저코스트 카드는 스탯만으로 예산이 차서 효과를 넣을 자리가 없다.
-  //         실제 TCG에서 그건 정상적인 카드 종류다 — 바닐라.
-  //
-  //   바닐라는 효과 대신 **스탯 효율**과 플레이버 텍스트를 갖는다.
-  //   효과가 없으니 남는 예산이 전부 스탯으로 가고, 4단계가 덜 깎는다.
-  const isVanilla = listActiveEffects(out).length === 0;
-  if (isVanilla) out.isVanilla = true;
-
-  // 4. 그래도 넘치면 스탯을 깎는다
-  let guard = 0;
-  while (usedPower() > affordablePower(rarity, cost, cardType) && guard++ < 40) {
-    if (atk >= hp / 2 && atk > 1) atk -= 1;
-    else if (hp > 4) hp -= 2;
-    else if (def > 0) def -= 1;
-    else break;
+  //         실제 TCG에서 효과 없는 카드는 정상적인 종류다 — 바닐라.
+  //   ⚠️ **바닐라는 소환수 전용이다.** 마법·함정·건축물은 위 4단계가 마지막
+  //      효과를 남기므로 여기 걸리지 않지만, LLM이 애초에 효과를 하나도 안 준
+  //      경우가 있다. 그때는 백지 카드가 되므로 최소 효과를 넣어준다.
+  if (listActiveEffects(out).length === 0) {
+    if (cardType === 'unit') {
+      out.isVanilla = true;
+    } else if (cardType === 'structure') {
+      // ⚠️ `||`로는 부족하다. 예산이 오라만 지우고 **빈 객체 `{}`**를 남기면
+      //    truthy라서 폴백이 안 걸리고, 설명문이 통째로 비어 버린다 (실측).
+      const p = out.passiveEffect;
+      const hasContent = p && Object.keys(p).some(k => p[k] && (typeof p[k] !== 'object' || Object.keys(p[k]).length));
+      if (!hasContent) out.passiveEffect = buildStructurePassive('control', rarity);
+    } else {
+      out.damage = Math.max(1, caps.spellDamage[0]);
+    }
   }
 
-  // 5. 🔒 마지막 안전밸브 — 여기까지 다 깎았는데도 넘치면 코스트를 올린다.
+  // 7. 🔒 마지막 안전밸브 — 여기까지 다 깎았는데도 넘치면 코스트를 올린다.
   //    잠긴 코스트라도 "무슨 일이 있어도 고정"은 아니다. 망가진 카드보다 낫다.
   while (usedPower() > affordablePower(rarity, cost, cardType) && cost < spec.maxCost) {
     cost++;
@@ -775,7 +814,13 @@ export function enforcePowerBudget(cardData, skill) {
  * ⚠️ 피해·방어막·회복 **단어에 바로 붙은 숫자만** 바꾼다.
  *    "체력 35 이하일 때" 같은 조건문의 숫자까지 건드리면 효과 설명이 망가진다.
  */
-function syncDescriptionNumbers(desc, skill) {
+/**
+ * @param cardData 있으면 설명문의 "N 공격" 같은 **스탯 수치**도 맞춘다.
+ *   🐛 예전에는 스킬 수치만 맞췄다. 그래서 폴백 생성기가 쓴
+ *      "암흑 마력을 실어 15 공격을 가합니다"가 예산이 공격력을 11로 깎은 뒤에도
+ *      15로 남았다 (실측으로 발견). 카드에 적힌 수치와 실제가 달랐다.
+ */
+export function syncDescriptionNumbers(desc, skill, cardData = null) {
   let out = String(desc || '');
 
   // ⚠️ `%`가 붙은 숫자는 건드리지 않는다.
@@ -784,8 +829,13 @@ function syncDescriptionNumbers(desc, skill) {
   // ⚠️ 숫자와 명사 사이에 **조사가 낀다**: "15를 회복", "20의 피해", "10만큼 회복"
   //    이걸 허용하지 않으면 조사가 붙은 순간 동기화가 통째로 실패한다.
   const JOSA = '(?:\\s*(?:을|를|이|가|의|만큼|정도)?)';
+  // 🐛 연타(multiHit)는 **총량**을 써야 한다. 여기만 개별 타격값(skill.damage)을
+  //    쓰고 있어서, "12씩 3연타로 총 36 피해"를 "총 12 피해"로 고쳐 썼다.
+  //    describeSkillFromData와 card-validator는 둘 다 총량을 쓴다 — 여기가 어긋났다.
+  const totalDamage = skill.multiHit > 1 ? skill.damage * skill.multiHit : skill.damage;
+
   const rules = [
-    [skill.damage, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
+    [totalDamage, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
     [skill.shield, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:방어막|실드|보호막|shield))`, 'gi')],
     [skill.heal,   new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')],
     // 🐛 드로우·마나 수급이 빠져 있었다. 예산이 값을 깎아 drawCards가 3→1이
@@ -803,7 +853,7 @@ function syncDescriptionNumbers(desc, skill) {
   // 어순이 뒤집힌 표기도 있다: "방어막 99를 얻는다", "체력 15 회복"
   // 위 규칙은 `숫자 + 명사`만 잡으므로 `명사 + 숫자`도 따로 본다.
   const reverse = [
-    [skill.damage, /((?:피해|데미지)\s*)(\d+)(?!\s*%)/gi],
+    [totalDamage, /((?:피해|데미지)\s*)(\d+)(?!\s*%)/gi],
     [skill.shield, /((?:방어막|실드|보호막)\s*)(\d+)(?!\s*%)/gi],
     [skill.heal,   /((?:체력)\s*)(\d+)(?!\s*%)/gi],
     [skill.drawCards, /((?:카드)\s*)(\d+)(?=\s*장)/gi],
@@ -812,6 +862,19 @@ function syncDescriptionNumbers(desc, skill) {
   for (const [value, re] of reverse) {
     if (!Number.isFinite(value) || value <= 0) continue;
     out = out.replace(re, (_m, head) => `${head}${value}`);
+  }
+
+  // 🗡️ 스탯 수치 동기화 — "15 공격을 가합니다" 같은 문장.
+  //    예산이 공격력을 깎으면 이 숫자도 따라가야 한다.
+  if (cardData) {
+    const statRules = [
+      [parseInt(cardData.attack) || 0, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*공격)`, 'gi')],
+      [parseInt(cardData.attack) || 0, /((?:공격력)\s*)(\d+)(?!\s*%)/gi]
+    ];
+    for (const [value, re] of statRules) {
+      if (!(value > 0)) continue;
+      out = out.replace(re, (m, a, b) => (/^\d+$/.test(a) ? `${value}${b}` : `${a}${value}`));
+    }
   }
 
   // 위 규칙에 안 걸린 비상식적인 큰 수는 남겨두면 오해를 부른다.
@@ -942,6 +1005,17 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
     if (p.endTurnShield) parts.push(`턴 종료 시 본체 방어막 +${p.endTurnShield}`);
     if (p.endTurnAoeShield) parts.push(`턴 종료 시 본체 방어막 +${p.endTurnAoeShield} & 자기 내구도 수리`);
     if (p.endTurnAoeHeal) parts.push(`턴 종료 시 본체 체력 +${p.endTurnAoeHeal}`);
+    // 🐛 오라 분기가 **없었다.** describeStructurePassive에만 넣고 여기를 빠뜨려서,
+    //    오라만 가진 패시브(저등급 건축물은 전부 오라다)가 빈 문장을 냈다.
+    //    그 결과 건축물이 플레이버 텍스트를 달고 나왔다 — 패시브가 있는데도.
+    if (p.aura) {
+      const a = p.aura;
+      const eff = [];
+      if (a.attackBonus) eff.push(`공격력 +${a.attackBonus}`);
+      if (a.defenseBonus) eff.push(`방어력 +${a.defenseBonus}`);
+      if (a.damageReduction) eff.push(`받는 피해 ${a.damageReduction}% 감소`);
+      if (eff.length) parts.push(`이 카드가 전장에 있는 동안 ${describeAuraScope(a)} ${eff.join(', ')}`);
+    }
   }
   if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
 
@@ -1104,8 +1178,16 @@ export function describeStructurePassive(passive = {}) {
 export function describeAuraScope(aura = {}) {
   const spec = AURA_SCOPES[aura.scope] || AURA_SCOPES.all;
   if (aura.scope === 'archetype') return `같은 카드군 아군의`;
-  if (aura.scope === 'element')   return `${aura.scopeValue || '같은 속성'} 아군의`;
-  if (aura.scope === 'cardType')  return `아군 ${aura.scopeValue || '카드'}의`;
+  // 🐛 수정: scopeValue를 그대로 써서 "dark 아군의 공격력"처럼 **영어 키**가 노출됐다.
+  //    카드 텍스트는 전부 한국어여야 한다.
+  if (aura.scope === 'element') {
+    const ko = ELEMENT_CONFIG[aura.scopeValue] && ELEMENT_CONFIG[aura.scopeValue].name;
+    return `${ko || '같은 속성'} 아군의`;
+  }
+  if (aura.scope === 'cardType') {
+    const KO_TYPE = { unit: '소환수', spell: '마법', structure: '건축물', trap: '함정' };
+    return `아군 ${KO_TYPE[aura.scopeValue] || '카드'}의`;
+  }
   return `${spec.label}의`;
 }
 
@@ -1432,6 +1514,33 @@ export function sanitizeAndClampCardData(cardData) {
   if (finalSkill.isVanilla) {
     finalSkill.description = String(finalSkill.flavorText || cardData.flavorText || '').trim()
       || defaultFlavorText(cardData.name, cardType);
+  }
+
+  // ✍️ 설명문이 비어 있으면 **확정된 수치로 만든다.**
+  //
+  //   🐛 예전에는 `if (skill.description)`일 때만 문장을 손봤다. 그래서 빈 설명이
+  //      그대로 나갔다 (검사: 60장 중 55장이 설명문 없음).
+  //   ⚠️ 2단계 생성에서는 **1단계가 설명문을 안 쓰는 게 정상**이다.
+  //      (수치를 먼저 정하고 확정된 뒤에 문장을 쓴다 → card-describe.js)
+  //      그러니 여기서 만드는 문장이 **기준선**이다. 2단계가 실패해도
+  //      최소한 정확한 문장은 남는다.
+  if (!String(finalSkill.description || '').trim()) {
+    finalSkill.description = describeSkillFromData(finalSkill, cardType);
+  }
+  // ⚠️ 그래도 비면 카드가 **글자 없이** 나간다. 최후의 안전망.
+  //    (실측: 오라가 예산에 잘린 건축물이 빈 설명으로 나왔다)
+  if (!String(finalSkill.description || '').trim()) {
+    finalSkill.description = cardType === 'trap'
+      ? '조건 충족 시 발동합니다.'
+      : defaultFlavorText(cardData.name, cardType);
+  }
+
+  // 🗡️ 마지막으로 **확정된 스탯**까지 설명문에 반영한다.
+  //    3-E단계의 동기화는 예산 적용 **전**이라 깎인 공격력을 모른다.
+  //    (실측: "15 공격을 가합니다"인데 실제 공격력은 11이었다)
+  if (!finalSkill.isVanilla) {
+    finalSkill.description = syncDescriptionNumbers(
+      finalSkill.description, finalSkill, { attack: atk, hp, defense: def });
   }
 
   const power = evaluateCardPower({ ...cardData, rarity, cost, attack: atk, hp, defense: def, cardType, skill: finalSkill });

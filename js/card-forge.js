@@ -9,6 +9,7 @@ import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPromp
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { validateCardPlan, buildRetryDirective } from './card-validator.js';
+import { applyLlmDescription } from './card-describe.js';
 import { proposeArchetype } from './archetype-proposal.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 
@@ -120,8 +121,10 @@ CRITICAL NUMERICAL RULES & STAT CAPS (스펙 인플레 방지 및 고정 정수 
 - ⚠️ 예산을 넘으면 시스템이 **효과를 잘라내거나 수치를 깎는다.** 반대로 너무
   빈약하면 **마나를 내려버린다.** 처음부터 ${plannedCost}마나에 맞춰 설계하라.
 
-🃏 VANILLA CARD (효과 없는 카드 — 정상적인 카드 종류다):
-1~2마나 카드는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다.
+🃏 VANILLA CARD (효과 없는 카드 — **소환수(unit)만** 가능):
+⚠️ 마법·함정·건축물은 효과가 **전부**다. 효과 없이 만들면 발동해도 아무 일이
+없는 백지 카드가 된다. 바닐라는 소환수에만 쓴다.
+1~2마나 소환수는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다.
 그럴 때는 **억지로 효과를 만들지 말고 바닐라로 만들어라.**
 - skill에 "isVanilla": true 를 넣고, 효과 수치는 전부 0/생략한다.
 - 대신 "flavorText"에 **세계관 한 줄**을 쓴다 (25자 이내, 한국어).
@@ -928,6 +931,14 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const newCard = sanitizeAndClampCardData(rawCard);
   if (newCard.skill) {
     newCard.skills = [newCard.skill];
+  }
+
+  // ✍️ 2단계 — **확정된 수치**로 설명문을 다시 쓴다.
+  //    1단계 설명문은 예산 정산 전 수치 기준이라 깎인 뒤에는 어긋난다.
+  //    ⚠️ 실패하면 아무것도 안 한다 — sanitize가 맞춰둔 문장이 이미 정확하다.
+  //    LLM이 만든 카드일 때만 시도한다 (오프라인 폴백은 이미 데이터 생성 문장).
+  if (currentLLMSkillData) {
+    await applyLlmDescription(newCard, { timeoutMs: 45000 });
   }
 
   state.cardsCollection.unshift(newCard);
