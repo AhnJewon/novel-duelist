@@ -1,0 +1,32 @@
+# 에디터/도구가 남기는 사이드카 파일
+*.metadata.json
+
+# 백업·임시본
+*.bak
+*.tmp
+*.orig
+*.pre-*
+run_game.pre-signal.ps1
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 파이썬 (server.py 실행 흔적)
+__pycache__/
+*.pyc
+
+# 에디터 설정
+.vscode/
+.idea/
+
+# 로컬 실행 설정 — 사람마다 경로가 다르다
+.claude/launch.json
+
+# ⚠️ NovelAI API 키는 브라우저 localStorage에만 저장된다.
+#    저장소에 키가 들어갈 경로는 없지만, 혹시 메모해 둔 파일이 있다면 여기서 막는다.
+secrets.*
+*.key
+.env
+.env.*

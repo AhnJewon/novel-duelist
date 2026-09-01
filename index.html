@@ -1,0 +1,1715 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Novel Duelist - AI 카드 배틀 (NovelAI V4.5)</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🃏</text></svg>">
+  
+  <!-- Tailwind CSS & Lucide Icons & JSZip & Canvas Confetti -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+  <!-- Tailwind Custom Config -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          // 기본 Tailwind는 sm(640px)이 가장 작다. 그보다 좁은 폰에서
+          // 버튼 라벨을 줄이는 등의 처리가 필요해 xs를 추가한다.
+          screens: {
+            xs: '400px'
+          },
+          colors: {
+            brand: {
+              dark: '#0a0c14',
+              card: '#121624',
+              border: '#232a42',
+              primary: '#f59e0b',
+              accent: '#8b5cf6'
+            }
+          },
+          animation: {
+            'glow-pulse': 'glowPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'card-draw': 'cardDraw 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            'shake': 'shake 0.5s ease-in-out',
+            'damage-pop': 'damagePop 0.6s ease-out forwards'
+          },
+          keyframes: {
+            glowPulse: {
+              '0%, 100%': { opacity: '1', filter: 'drop-shadow(0 0 15px rgba(245, 158, 11, 0.6))' },
+              '50%': { opacity: '0.6', filter: 'drop-shadow(0 0 5px rgba(245, 158, 11, 0.2))' }
+            },
+            cardDraw: {
+              '0%': { transform: 'translateY(100px) scale(0.5)', opacity: '0' },
+              '100%': { transform: 'translateY(0) scale(1)', opacity: '1' }
+            },
+            shake: {
+              '0%, 100%': { transform: 'translateX(0)' },
+              '20%, 60%': { transform: 'translateX(-8px)' },
+              '40%, 80%': { transform: 'translateX(8px)' }
+            },
+            damagePop: {
+              '0%': { transform: 'translateY(0) scale(0.8)', opacity: '1' },
+              '100%': { transform: 'translateY(-40px) scale(1.4)', opacity: '0' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-screen flex flex-col justify-between bg-gradient-to-b from-[#0b0d18] via-[#090b14] to-[#05060a]">
+
+  <!-- 상단 네비게이션 & 상태바 -->
+  <header class="border-b border-brand-border/60 bg-[#0d101d]/90 backdrop-blur-md sticky top-0 z-50 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- 로고 -->
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-purple-600 to-cyan-400 p-[2px] shadow-lg shadow-purple-500/20 flex items-center justify-center">
+          <div class="w-full h-full bg-[#0d101d] rounded-[10px] flex items-center justify-center">
+            <i data-lucide="sparkles" class="w-5 h-5 text-amber-400 animate-pulse"></i>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-fantasy font-black tracking-wider text-xl bg-gradient-to-r from-amber-300 via-yellow-100 to-amber-500 bg-clip-text text-transparent">
+              NOVEL DUELIST
+            </h1>
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-900/60 text-purple-300 border border-purple-500/40">
+              V4.5 AI
+            </span>
+          </div>
+          <p class="text-xs text-slate-400">NovelAI Diffusion V4.5 연동 AI 덱빌딩 카드 게임</p>
+        </div>
+      </div>
+
+      <!-- 탭 메뉴
+           좁은 화면에서 "배틀 아 / 레나"처럼 글자가 쪼개지던 문제:
+           줄바꿈을 막고(whitespace-nowrap) 넘치면 **가로 스크롤**시킨다.
+           탭은 개수가 정해져 있어 세로로 쌓는 것보다 옆으로 미는 편이 쓰기 좋다. -->
+      <nav class="order-3 lg:order-none w-full lg:w-auto flex items-center bg-[#15192a] p-1 rounded-xl border border-brand-border
+                  overflow-x-auto no-scrollbar overscroll-x-contain">
+        <button id="nav-battle" onclick="switchTab('battle')" class="tab-btn shrink-0 whitespace-nowrap px-3 sm:px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 text-black shadow-md">
+          <i data-lucide="swords" class="w-4 h-4 shrink-0"></i> 배틀 아레나
+        </button>
+        <button id="nav-versus" onclick="switchTab('versus')" class="tab-btn shrink-0 whitespace-nowrap px-3 sm:px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+          <i data-lucide="wifi" class="w-4 h-4 text-cyan-400 shrink-0"></i> 온라인 대전
+        </button>
+        <button id="nav-forge" onclick="switchTab('forge')" class="tab-btn shrink-0 whitespace-nowrap px-3 sm:px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+          <i data-lucide="sparkles" class="w-4 h-4 text-purple-400 shrink-0"></i> AI 카드 연성소
+        </button>
+        <button id="nav-pack" onclick="switchTab('pack')" class="tab-btn shrink-0 whitespace-nowrap px-3 sm:px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+          <i data-lucide="package-open" class="w-4 h-4 text-amber-400 shrink-0"></i> 🎁 부스터 팩
+        </button>
+        <button id="nav-deck" onclick="switchTab('deck')" class="tab-btn shrink-0 whitespace-nowrap px-3 sm:px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 text-slate-300 hover:text-white">
+          <i data-lucide="book-open" class="w-4 h-4 text-cyan-400 shrink-0"></i> 마도서 / 덱 (<span id="nav-deck-count">8/12</span>)
+        </button>
+      </nav>
+
+      <!-- 우측 유틸 & 0 Anlas 안전 모드 배지 -->
+      <div class="flex items-center gap-3">
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs font-medium" title="NovelAI 무료 생성 규격 준수 (512x768 / 832x1216, Steps 28)">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+          <span>🛡️ 0 Anlas 안전 모드</span>
+        </div>
+
+        <button onclick="toggleMute()" id="sound-btn" class="p-2 rounded-lg bg-[#181c2e] hover:bg-[#222840] border border-brand-border text-slate-300 transition" title="효과음 켜기/끄기">
+          <i data-lucide="volume-2" id="sound-icon" class="w-4 h-4"></i>
+        </button>
+
+        <button onclick="openSettingsModal()" class="px-3 py-2 rounded-lg bg-[#181c2e] hover:bg-[#222840] border border-brand-border text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5">
+          <i data-lucide="settings" class="w-4 h-4 text-amber-400"></i> 설정
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 컨텐츠 영역 -->
+  <main class="max-w-7xl mx-auto w-full p-4 flex-1">
+    
+    <!-- ==================== TAB 1: ⚔️ 배틀 아레나 ==================== -->
+    <section id="tab-battle" class="tab-content block space-y-4">
+
+      <!-- 보스 선택 바 & 전투 정보 -->
+      <div class="bg-[#121526]/90 border border-brand-border rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+        <!-- 좁은 화면에서 "도전할 보스:" 라벨이 한 글자씩 세로로 눌리던 문제:
+             라벨에 shrink-0 + whitespace-nowrap, select는 남는 폭을 쓰게 min-w-0 -->
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0 w-full sm:w-auto">
+          <span class="shrink-0 whitespace-nowrap text-xs font-bold text-slate-400">도전할 보스:</span>
+          <select id="boss-select" onchange="changeBoss()" class="flex-1 min-w-0 sm:flex-none sm:min-w-[16rem] bg-[#1a1f36] border border-brand-border text-amber-300 text-xs font-bold rounded-lg px-3 py-2 outline-none cursor-pointer">
+            <option value="0">🔥 [1단계] 흑염룡의 사도 바알</option>
+            <option value="1">💧 [2단계] 서리 마녀 엘리시아</option>
+            <option value="2">🌑 [3단계] 심연의 마왕 벨제부브</option>
+          </select>
+
+          <!-- 👾 AI 보스 연성 버튼 -->
+          <button onclick="openBossForgeModal()" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-purple-600/30 transition flex items-center gap-1.5 active:scale-95">
+            <i data-lucide="skull" class="w-3.5 h-3.5 text-amber-300 shrink-0"></i>
+            <span class="hidden xs:inline">👾 새 AI 보스 연성하기</span>
+            <span class="xs:hidden">👾 보스 연성</span>
+          </button>
+        </div>
+
+        <div class="flex items-center gap-4 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-400">턴:</span>
+            <span id="turn-display" class="font-bold text-amber-400 text-sm">1</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-slate-400">덱 남은 카드:</span>
+            <span id="draw-pile-count" class="font-bold text-cyan-400 text-sm">0</span>
+          </div>
+          <button onclick="restartBattle()" class="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900 border border-red-500/40 text-red-300 text-xs font-bold transition flex items-center gap-1">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> 전투 리셋
+          </button>
+        </div>
+      </div>
+
+      <!-- PvE 전장이 놓이는 자리. PvP가 시작되면 아레나가 온라인 대전 탭으로 옮겨간다. -->
+      <div id="battle-arena-slot"></div>
+
+      <!-- 배틀 필드
+           ⚠️ 이 블록은 PvE/PvP가 **공유**한다. 마크업을 복제하지 말 것 —
+              id가 중복되면 renderBattleUI()가 어느 쪽을 갱신할지 알 수 없게 된다.
+              대신 DOM 노드째로 탭 사이를 옮긴다 (battle-arena.js). -->
+      <div id="battle-arena" class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- 중앙: 보스 & 플레이어 아레나 (8 cols) -->
+        <div class="lg:col-span-8 space-y-6">
+          
+          <!-- 보스 영역 -->
+          <div id="boss-container" data-target-key="face" class="relative rounded-2xl bg-gradient-to-b from-[#181d34] to-[#101322] border border-red-500/30 p-5 shadow-2xl overflow-hidden transition-all duration-300">
+            <!-- 배경 효과 -->
+            <div class="absolute -right-20 -top-20 w-64 h-64 bg-red-500/10 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <div class="flex flex-col md:flex-row items-center gap-5 relative z-10">
+              
+              <!-- 보스 초상화 -->
+              <div class="relative group shrink-0">
+                <div id="boss-glow" class="absolute -inset-1 bg-gradient-to-r from-red-600 to-amber-600 rounded-2xl blur opacity-70 group-hover:opacity-100 transition duration-500"></div>
+                <div class="relative w-32 h-44 md:w-36 md:h-48 rounded-xl overflow-hidden border-2 border-red-500/80 bg-black">
+                  <img id="boss-img" src="" alt="Boss" class="w-full h-full object-cover">
+                  <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
+                  <div id="boss-element-badge" class="absolute top-2 left-2 px-2 py-0.5 rounded text-[10px] font-bold bg-red-950/90 text-red-200 border border-red-500">
+                    🔥 FIRE
+                  </div>
+                  <div id="boss-phase-badge" class="hidden absolute bottom-2 right-2 px-2 py-0.5 rounded text-[9px] font-black bg-red-600 text-white animate-bounce">
+                    🔥 PHASE 2 광폭화
+                  </div>
+                </div>
+              </div>
+
+              <!-- 보스 상태 및 행동 의도 -->
+              <div class="flex-1 w-full space-y-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 id="boss-name" class="text-lg md:text-xl font-black text-slate-100 tracking-wide">흑염룡의 사도 바알</h3>
+                    <p id="boss-title" class="text-xs text-red-400 font-medium">Apostle of Black Flame</p>
+                  </div>
+                  
+                  <!-- 보스 다음 행동 Intent 배지 -->
+                  <div id="boss-intent" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-950/80 border border-red-500 text-red-200 text-xs font-bold shadow-lg animate-pulse">
+                    <span id="intent-icon">🗡️</span>
+                    <span id="intent-text">14 피해 예고</span>
+                  </div>
+                </div>
+
+                <!-- 보스 HP Bar -->
+                <div class="space-y-1">
+                  <div class="flex justify-between text-xs font-bold">
+                    <span class="text-red-300 flex items-center gap-1"><i data-lucide="heart" class="w-3.5 h-3.5 text-red-500 fill-red-500"></i> <span class="foe-word">보스</span> HP</span>
+                    <span id="boss-hp-text" class="text-slate-200">120 / 120</span>
+                  </div>
+                  <div class="w-full h-3.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700 p-0.5 relative">
+                    <div id="boss-hp-bar" class="h-full bg-gradient-to-r from-red-600 via-orange-500 to-yellow-400 rounded-full transition-all duration-300 w-full"></div>
+                  </div>
+                </div>
+
+                <!-- 보스 실드 Bar & 상태이상 뱃지 -->
+                <div class="flex items-center justify-between text-xs font-bold">
+                  <div class="flex items-center gap-1.5 text-blue-300">
+                    <i data-lucide="shield" class="w-3.5 h-3.5 text-blue-400"></i>
+                    <span><span class="foe-word">보스</span> 방어막: </span>
+                    <span id="boss-shield-text" class="text-blue-400 font-black">0</span>
+                  </div>
+                  <div id="boss-status-badges" class="flex items-center gap-1">
+                    <!-- 보스 상태이상 뱃지 동적 렌더링 -->
+                  </div>
+                </div>
+
+                <!-- 대사 말풍선 -->
+                <div id="boss-dialogue-box" class="p-2.5 rounded-xl bg-black/60 border border-red-500/40 text-xs text-slate-200 shadow-md flex items-start gap-2 transition-all duration-300">
+                  <div class="p-1 rounded-lg bg-red-950 text-amber-400 shrink-0 mt-0.5">
+                    <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <span class="text-[10px] font-black text-red-400 block mb-0.5" id="boss-dialogue-speaker">👾 BOSS VOICE</span>
+                    <span id="boss-dialogue" class="italic font-medium leading-relaxed text-amber-200 text-[11px]">"하찮은 도전자여, 내 불꽃 앞에서는 재가 될 뿐이다!"</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 상대 손패 / 덱 — **장수만** 공개한다.
+                 ⚠️ 카드 내용을 보여주면 안 된다. TCG에서 상대 손패는 숨은 정보다.
+                    예전에는 미니 카드로 이름·타입까지 다 노출했다. -->
+            <div class="mt-2.5 pt-2 border-t border-red-500/20 text-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 text-amber-300 font-bold">
+                  <i data-lucide="layers" class="w-3.5 h-3.5 text-red-400"></i>
+                  <span>상대 손패 <span id="boss-hand-count" class="font-black text-white">4</span>장</span>
+                  <span class="text-[10px] text-slate-400 font-normal">· 덱 <span id="boss-deck-count">6</span>장</span>
+                  <span id="boss-hand-backs" class="flex items-center gap-0.5 ml-1"></span>
+                </div>
+                <div id="boss-last-cast" class="text-[10.5px] text-purple-300 font-medium flex items-center gap-1"></div>
+              </div>
+            </div>
+
+            <!-- 보스 쫄몹 / 토템 슬롯 -->
+            <div id="boss-minions-container" class="mt-2.5 pt-2 border-t border-red-500/20 hidden">
+              <div class="text-[11px] font-bold text-red-400 mb-1.5 flex items-center gap-1">
+                <i data-lucide="skull" class="w-3.5 h-3.5"></i> <span><span class="foe-word">보스</span>의 전장</span>
+              </div>
+              <div id="boss-minions-field" class="flex flex-wrap items-center gap-2">
+                <!-- 보스 쫄몹 동적 렌더링 -->
+              </div>
+            </div>
+          </div>
+
+          <!-- ⚔️ 아군 소환수 전장 (Player Minions Battlefield - 최대 4슬롯) -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs font-bold px-1">
+              <span class="text-amber-300 flex items-center gap-1.5">
+                <i data-lucide="swords" class="w-4 h-4 text-amber-400 animate-bounce"></i>
+                <span>아군 전장 (소환수 배치 슬롯)</span>
+                <span class="text-[10px] text-slate-400 font-normal ml-1">※ 클릭하여 직접 공격 | <span class="foe-word">보스</span> 공격 시 대신 방어(탱킹)</span>
+              </span>
+              <span class="text-slate-400 text-xs">배치: <span id="minion-count" class="font-black text-amber-400">0</span> / 4</span>
+            </div>
+
+            <!-- ⚜️ 활성화된 카드군(Archetype) 테마 시너지 배너 -->
+            <div id="player-synergy-banner" class="hidden p-2 rounded-xl bg-gradient-to-r from-amber-950/90 via-yellow-950/70 to-black border border-amber-500/70 text-xs text-amber-200 flex flex-wrap items-center gap-2 shadow-md">
+              <!-- JS 동적 렌더링 -->
+            </div>
+            <div id="player-trap-zone" class="hidden flex flex-wrap items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/40 border border-indigo-500/40 mt-1"></div>
+
+            <div id="player-minions-field" class="min-h-[160px] p-3 rounded-2xl bg-gradient-to-b from-[#0e1224] to-[#090b14] border-2 border-dashed border-amber-500/30 flex flex-wrap items-center justify-center gap-3 transition-all shadow-inner">
+              <!-- 아군 소환수가 JS에 의해 동적 렌더링됩니다 -->
+            </div>
+          </div>
+
+          <!-- 플레이어 상태 및 조작 바 -->
+          <div class="bg-[#121526] border border-brand-border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-lg">
+            
+            <!-- 플레이어 HP & 실드 -->
+            <div class="flex items-center gap-5">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2 text-xs font-bold">
+                  <span class="text-emerald-400 flex items-center gap-1"><i data-lucide="heart" class="w-4 h-4 fill-emerald-500"></i> 플레이어 본체 HP</span>
+                  <span id="player-hp-text" class="text-slate-200">50 / 50</span>
+                </div>
+                <div class="w-36 sm:w-44 h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-700 p-0.5">
+                  <div id="player-hp-bar" class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-300 w-full"></div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-1.5 text-xs font-bold bg-blue-950/60 px-3 py-1.5 rounded-lg border border-blue-500/40 text-blue-300">
+                <i data-lucide="shield" class="w-3.5 h-3.5 text-blue-400"></i>
+                <span>본체 실드: <span id="player-shield-text" class="text-cyan-300 font-black">0</span></span>
+                <span id="player-status-badges" class="flex items-center gap-1 ml-1"></span>
+              </div>
+            </div>
+
+            <!-- 마나 크리스탈 & 턴 종료 버튼 -->
+            <div class="flex items-center gap-3">
+              <!-- 마나 보석 -->
+              <div class="flex items-center gap-2 bg-[#181d33] px-3 py-1.5 rounded-xl border border-cyan-500/40">
+                <i data-lucide="gem" class="w-4 h-4 text-cyan-400 animate-pulse"></i>
+                <span class="text-xs text-slate-400 font-bold">마나:</span>
+                <span id="player-mana-text" class="font-black text-cyan-300 text-sm">3 / 3</span>
+                <div id="mana-gems" class="flex items-center gap-1 ml-1">
+                  <!-- 마나 보석 동적 렌더링 -->
+                </div>
+              </div>
+
+              <!-- 턴 종료 버튼 -->
+              <button id="btn-end-turn" onclick="playerEndTurn()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-500 text-black font-black text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition flex items-center gap-1.5">
+                <span>턴 종료 (총공격)</span>
+                <i data-lucide="arrow-right-circle" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- 플레이어 손패 (Hand) -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+              <span class="flex items-center gap-1 text-slate-300 font-bold"><i data-lucide="layers" class="w-3.5 h-3.5 text-cyan-400"></i> 플레이어 손패 (클릭 시 마나 소모 ➜ 전장 소환 & 함성 발동)</span>
+              <span>손패: <span id="hand-count" class="font-bold text-amber-400">0</span> / 7</span>
+            </div>
+
+            <!-- 손패 카드 컨테이너 -->
+            <div id="player-hand" class="min-h-[220px] p-3 rounded-2xl bg-black/40 border border-brand-border/80 flex flex-wrap items-center justify-center gap-3">
+              <!-- 카드가 JS에 의해 동적 렌더링됩니다 -->
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 우측: 전투 로그 & 속성 상성 가이드 (4 cols) -->
+        <div class="lg:col-span-4 space-y-4">
+          
+          <!-- 속성 상성 가이드 배너 -->
+          <div class="rounded-2xl bg-[#121526] border border-brand-border p-4 space-y-2">
+            <h4 class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <i data-lucide="zap" class="w-4 h-4"></i> 속성 상성 가이드 (+30% 데미지)
+            </h4>
+            <div class="text-[11px] text-slate-300 grid grid-cols-1 gap-1.5 bg-[#0b0e1b] p-2.5 rounded-xl border border-slate-800">
+              <div class="flex items-center justify-between">
+                <span>🔥 불 &gt; 🌿 자연 &gt; ⚡ 번개 &gt; 💧 물 &gt; 🔥 불</span>
+              </div>
+              <div class="flex items-center justify-between text-amber-300">
+                <span>✨ 신성 &lt;==&gt; 🌑 암흑 (상호 30% 추가 피해)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 전투 로그 창 -->
+          <div class="rounded-2xl bg-[#121526] border border-brand-border p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <i data-lucide="scroll" class="w-4 h-4 text-purple-400"></i> 전투 기록
+              </h4>
+              <button onclick="clearBattleLogs()" class="text-[10px] text-slate-500 hover:text-slate-300">지우기</button>
+            </div>
+            
+            <div id="battle-logs" class="h-[360px] overflow-y-auto space-y-1.5 text-xs pr-1 font-mono">
+              <div class="p-2 rounded-lg bg-slate-900/80 text-slate-400 border border-slate-800">
+                전투가 시작되었습니다! 카드를 사용하여 보스를 무찌르세요.
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ==================== TAB: 🌐 온라인 대전 (PvP) ====================
+         PvE(보스전)와 완전히 분리한다. 규칙도 화면도 다르기 때문이다.
+         · PvE — 보스는 마나 없이 스크립트 패턴으로 싸운다
+         · PvP — 양쪽 모두 같은 마나 규칙, 상대는 사람이다
+    -->
+    <section id="tab-versus" class="tab-content hidden space-y-4">
+
+      <div class="rounded-2xl bg-gradient-to-r from-cyan-950/60 via-[#121526] to-indigo-950/60 border border-cyan-500/40 p-4 sm:p-5">
+        <div class="flex flex-wrap items-center gap-2 justify-between">
+          <div class="flex items-center gap-2 min-w-0">
+            <i data-lucide="swords" class="w-5 h-5 text-cyan-300 shrink-0"></i>
+            <h2 class="text-lg font-black text-cyan-100 whitespace-nowrap">1대1 온라인 대전</h2>
+            <span id="pvp-status" class="text-xs font-bold text-slate-400">대기 중</span>
+          </div>
+          <span class="text-[11px] text-slate-400 keep-words">방 코드만 주고받으면 됩니다 · 카드군은 공유하지 않아도 연계가 통합니다</span>
+        </div>
+      </div>
+
+      <!-- 대전 준비 영역 — 대전이 시작되면 통째로 숨긴다.
+           전투 중에 프로필을 편집할 일은 없고, 전장이 위로 올라와야 한다. -->
+      <div id="versus-setup" class="space-y-4">
+        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4">
+
+          <!-- 좌: 방 만들기 / 참가 -->
+          <div class="bg-[#121526]/90 border border-brand-border rounded-2xl p-4 space-y-3">
+            <h3 class="text-sm font-black text-slate-200 flex items-center gap-2">
+              <i data-lucide="wifi" class="w-4 h-4 text-cyan-400"></i> 대전 상대 찾기
+            </h3>
+            <div id="pvp-panel-body"></div>
+          </div>
+
+          <!-- 우: 내 듀얼리스트 프로필 -->
+          <div class="bg-[#121526]/90 border border-purple-500/30 rounded-2xl p-4 space-y-3">
+            <h3 class="text-sm font-black text-purple-200 flex items-center gap-2">
+              <i data-lucide="user" class="w-4 h-4 text-purple-400"></i> 내 듀얼리스트
+            </h3>
+            <div id="profile-panel-body"></div>
+          </div>
+        </div>
+
+        <p class="text-[11px] text-slate-500 keep-words px-1">
+          ⚠️ 락스텝 동기화 방식이라 <b>중간 합류·재접속이 불가능</b>합니다. 연결이 끊기면 방을 새로 만드세요.
+        </p>
+      </div>
+
+      <!-- 대전 중 상단 바 (매칭 UI를 숨긴 자리에 대신 뜬다) -->
+      <div id="versus-live-bar" class="hidden"></div>
+
+      <!-- 🌐 PvP 전장이 놓이는 자리.
+           대전이 시작되면 #battle-arena 노드가 통째로 여기로 들어온다. -->
+      <div id="versus-arena-slot"></div>
+    </section>
+
+    <!-- ==================== TAB 2: 🔮 AI 카드 연성소 ==================== -->
+    <section id="tab-forge" class="tab-content hidden space-y-6">
+      
+      <!-- 상단 헤더 & 0 Anlas 배너 -->
+      <div class="bg-gradient-to-r from-purple-950/60 via-[#13162b] to-indigo-950/60 border border-purple-500/40 rounded-2xl p-6 relative overflow-hidden">
+        <div class="max-w-3xl space-y-2 relative z-10">
+          <div class="flex items-center gap-2">
+            <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-900 text-purple-200 border border-purple-400">
+              NovelAI Diffusion V4.5 Engine
+            </span>
+            <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-500">
+              🛡️ 0 Anlas 무료 생성 최적화 완료
+            </span>
+          </div>
+          <h2 class="text-2xl md:text-3xl font-black text-slate-100 font-fantasy">
+            CARD FORGE & SUMMON
+          </h2>
+          <p class="text-xs md:text-sm text-slate-300 leading-relaxed">
+            원하는 캐릭터의 콘셉트와 속성을 지정하면, **NovelAI V4.5 API**가 최고 품질의 애니/판타지 일러스트를 실시간으로 생성하고 강력한 고유 스킬을 부여합니다.
+          </p>
+        </div>
+      </div>
+
+      <!-- 연성 폼 & 카드 실시간 프리뷰 그리드 -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        
+        <!-- 좌측: 프롬프트 & 옵션 입력기 (7 cols) -->
+        <div class="lg:col-span-7 bg-[#121526] border border-brand-border rounded-2xl p-6 space-y-5">
+          
+          <!-- 🤖 AI 프롬프트 오토라이터 (로컬 LLM / 스마트 생성기) -->
+          <div class="p-4 rounded-xl bg-gradient-to-r from-purple-950/80 via-[#191d38] to-indigo-950/80 border border-purple-500/50 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i data-lucide="bot" class="w-4 h-4 text-purple-400"></i>
+                <span class="text-xs font-black text-purple-200">🤖 LLM 프롬프트 & 카드 자동 작성기</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <label class="text-[11px] font-bold text-slate-300">추론 모드:</label>
+                <select id="forge-reasoning-mode" class="bg-[#0f1222] border border-purple-500/50 text-amber-300 text-[11px] font-bold rounded-lg px-2 py-1 outline-none cursor-pointer">
+                  <option value="fast" selected>⚡ 초고속 모드 (3~6초)</option>
+                  <option value="deep">🧠 심층 추론 모드 (20~40초)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 한 줄 콘셉트 입력 & 버튼 그룹 -->
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="relative flex-1 min-w-[200px]">
+                <input type="text" id="llm-concept-input" placeholder="비워두고 [🎲 LLM 무작위 기획]을 누르면 알아서 멋진 카드를 창작합니다!" class="w-full bg-[#0f1222] border border-purple-500/40 focus:border-purple-400 rounded-xl pl-3.5 pr-8 py-2.5 text-xs text-white outline-none">
+                <button type="button" onclick="shuffleConceptInput()" class="absolute right-2 top-2.5 text-slate-400 hover:text-amber-300 transition" title="아이디어 추천 교체">
+                  <i data-lucide="sparkle" class="w-4 h-4"></i>
+                </button>
+              </div>
+              
+              <!-- 콘셉트 기반 LLM 생성 버튼 -->
+              <button type="button" onclick="generatePromptWithLLM(false)" id="btn-llm-write" class="px-3.5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 active:scale-95 transition flex items-center gap-1.5 shrink-0" title="입력한 콘셉트로 LLM 카드 작성">
+                <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
+                <span>입력한 대로 기획</span>
+              </button>
+
+              <!-- 🎲 100% 무작위 LLM 창작 버튼 -->
+              <button type="button" onclick="generatePromptWithLLM(true)" id="btn-llm-random" class="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-amber-300 font-black text-xs shadow-lg shadow-indigo-600/30 active:scale-95 transition flex items-center gap-1.5 shrink-0" title="아무것도 안 적어도 LLM이 완전히 새로운 캐릭터를 무작위로 창작">
+                <i data-lucide="dices" class="w-4 h-4 text-amber-400 animate-spin-slow"></i>
+                <span>🎲 LLM 무작위 기획</span>
+              </button>
+
+              <!-- 내장 스마트 룰베이스 생성 버튼 -->
+              <button type="button" onclick="generatePromptSmartRandom()" class="px-3 py-2.5 rounded-xl bg-[#232946] hover:bg-[#2d355b] border border-brand-border text-slate-300 font-bold text-xs transition flex items-center gap-1 shrink-0" title="오프라인 즉시 추천">
+                <i data-lucide="shuffle" class="w-3.5 h-3.5"></i>
+                <span>빠른 추천</span>
+              </button>
+            </div>
+
+            <!-- LLM 생성 중 표시 -->
+            <div id="llm-loading" class="hidden text-[11px] text-purple-300 flex items-center gap-2 animate-pulse">
+              <div class="w-3.5 h-3.5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
+              <span id="llm-loading-text">로컬 LLM(qwen3.5:4b)이 독창적인 캐릭터와 스킬을 창작 중입니다...</span>
+            </div>
+          </div>
+
+          <!-- 카드 분류 타입 선택 (소환수 / 주문 / 건축물) -->
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300 flex items-center justify-between">
+              <span class="flex items-center gap-1"><i data-lucide="layers" class="w-3.5 h-3.5 text-amber-400"></i> 카드 분류 (Type)</span>
+              <span class="text-[10px] text-slate-400">타입에 따라 전장/주문/패시브 효과 적용</span>
+            </label>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <label class="cursor-pointer">
+                <input type="radio" name="forge-card-type-radio" value="unit" checked onchange="setForgeType('unit')" class="peer sr-only">
+                <div class="p-2.5 rounded-xl border border-brand-border bg-[#191d33] peer-checked:border-red-500 peer-checked:bg-red-950/60 text-center transition">
+                  <div class="text-xs font-bold text-slate-200 peer-checked:text-red-300 flex items-center justify-center gap-1">⚔️ 소환수</div>
+                  <div class="text-[9.5px] text-slate-400 mt-0.5">전장 배치 & 직접 공격</div>
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="forge-card-type-radio" value="spell" onchange="setForgeType('spell')" class="peer sr-only">
+                <div class="p-2.5 rounded-xl border border-brand-border bg-[#191d33] peer-checked:border-purple-500 peer-checked:bg-purple-950/60 text-center transition">
+                  <div class="text-xs font-bold text-slate-200 peer-checked:text-purple-300 flex items-center justify-center gap-1">🔮 주문/마법</div>
+                  <div class="text-[9.5px] text-slate-400 mt-0.5">즉발 발동 (필드 비점유)</div>
+                </div>
+              </label>
+              <label class="cursor-pointer">
+                <input type="radio" name="forge-card-type-radio" value="structure" onchange="setForgeType('structure')" class="peer sr-only">
+                <div class="p-2.5 rounded-xl border border-brand-border bg-[#191d33] peer-checked:border-amber-500 peer-checked:bg-amber-950/60 text-center transition">
+                  <div class="text-xs font-bold text-slate-200 peer-checked:text-amber-300 flex items-center justify-center gap-1">🏛️ 건축물/성물</div>
+                  <div class="text-[9.5px] text-slate-400 mt-0.5">매 턴 지속 패시브 틱</div>
+                </div>
+              <label class="cursor-pointer">
+                <input type="radio" name="forge-card-type-radio" value="trap" onchange="setForgeType('trap')" class="peer sr-only">
+                <div class="p-2.5 rounded-xl border border-brand-border bg-[#191d33] peer-checked:border-indigo-500 peer-checked:bg-indigo-950/60 text-center transition">
+                  <div class="text-xs font-bold text-slate-200 peer-checked:text-indigo-300 flex items-center justify-center gap-1">🪤 함정</div>
+                  <div class="text-[9.5px] text-slate-400 mt-0.5">세트 후 조건 충족 시 발동</div>
+                </div>
+              </label>
+              </label>
+            </div>
+            <input type="hidden" id="forge-card-type" value="unit">
+          </div>
+
+          <!-- 카드 이름 & 칭호 -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300 flex items-center gap-1">
+                <i data-lucide="tag" class="w-3.5 h-3.5 text-amber-400"></i> 카드 이름
+              </label>
+              <input type="text" id="forge-name" value="홍염의 마도기사 세리아" placeholder="예: 성역의 성녀, 번개의 검성" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none">
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300 flex items-center gap-1">
+                <i data-lucide="sparkle" class="w-3.5 h-3.5 text-purple-400"></i> 영문 타이틀 / 별칭
+              </label>
+              <input type="text" id="forge-title" value="Blazing Spellknight" placeholder="예: Frost Valkyrie" class="w-full bg-[#191d33] border border-brand-border focus:border-purple-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none">
+            </div>
+          </div>
+
+          <!-- 속성 & 등급 & 생성 비율 선택 -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">원소 속성</label>
+              <select id="forge-element" onchange="updateForgePromptPreview()" class="w-full bg-[#191d33] border border-brand-border text-white text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="fire">🔥 불 (Fire)</option>
+                <option value="water">💧 물 (Water)</option>
+                <option value="lightning">⚡ 번개 (Lightning)</option>
+                <option value="holy">✨ 신성 (Holy)</option>
+                <option value="dark">🌑 암흑 (Dark)</option>
+                <option value="nature">🌿 자연 (Nature)</option>
+              </select>
+            </div>
+            <!-- 🎛️ 세부 커스터마이즈 (비워두면 LLM이 알아서 정한다) -->
+            <details class="mt-3 rounded-xl border border-slate-700 bg-[#12162a]">
+              <summary class="cursor-pointer px-3 py-2 text-xs font-bold text-slate-300 hover:text-white select-none">
+                🎛️ 세부 커스터마이즈 <span class="text-slate-500 font-normal">(비워두면 AI가 알아서 정합니다)</span>
+              </summary>
+              <div class="p-3 grid grid-cols-2 gap-2.5 border-t border-slate-800">
+
+                <div class="col-span-2">
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">
+                    ⚜️ 카드군 <span class="font-normal text-slate-500">— 기존에서 고르거나 새로 창작</span>
+                  </label>
+                  <!-- 기존 카드군 선택. 고르면 아래 이름·키워드가 자동으로 채워진다.
+                       '직접 입력'을 고르면 자유 창작 — 둘 다 가능해야 한다. -->
+                  <select id="custom-theme-select" onchange="onCustomThemePick()"
+                          class="w-full mb-1 bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                    <option value="">— AI가 결정 (기본) —</option>
+                    <option value="__new__">✏️ 직접 입력 / 새 카드군 창작</option>
+                  </select>
+                  <input type="text" id="custom-theme-name" placeholder="예: 홍련의 검사단 (비우면 AI가 결정/기존 재사용)"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">🔑 키워드</label>
+                  <input type="text" id="custom-theme-keyword" placeholder="예: 홍련 (2~4글자)"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">⭐ 등급</label>
+                  <select id="custom-rarity" class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                    <option value="">AI 결정 / 가챠</option>
+                    <option value="common">COMMON</option>
+                    <option value="rare">RARE</option>
+                    <option value="epic">EPIC</option>
+                    <option value="legendary">LEGENDARY</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">💎 마나 코스트</label>
+                  <input type="number" id="custom-cost" min="1" max="6" placeholder="1~6"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">⚔️ 공격력</label>
+                  <input type="number" id="custom-attack" min="0" max="30" placeholder="자동"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">❤️ 체력</label>
+                  <input type="number" id="custom-hp" min="0" max="45" placeholder="자동"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+                <div>
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">🛡️ 방어력</label>
+                  <input type="number" id="custom-defense" min="0" max="18" placeholder="자동"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                </div>
+
+                <div class="col-span-2">
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">⚡ 카드군 연계</label>
+                  <div class="grid grid-cols-3 gap-2">
+                    <select id="custom-combo-action" class="bg-[#191d33] border border-brand-border rounded-lg px-2 py-1.5 text-[10.5px] text-white outline-none">
+                      <option value="">액션: AI 결정</option>
+                      <option value="manaCharge">마력 공명 (1)</option>
+                      <option value="chainDamage">연쇄 폭격 (1)</option>
+                      <option value="shieldHeal">수호 결계 (1)</option>
+                      <option value="search">덱 서치 (2)</option>
+                      <option value="draw">영혼 회수 (2)</option>
+                      <option value="archetypeRally">카드군 결집 (2)</option>
+                      <option value="archetypeGuard">카드군 수호 (2)</option>
+                      <option value="freeze">결빙 (3)</option>
+                      <option value="specialSummon">특수 소환 (3)</option>
+                      <option value="archetypeSalvage">카드군 회수 (3)</option>
+                      <option value="shieldBreak">결계 파쇄 (3)</option>
+                      <option value="handDisrupt">패 교란 (3)</option>
+                      <option value="doubleCast">과충전 (4)</option>
+                      <option value="sacrificeStrike">제물 강타 (4)</option>
+                    </select>
+                    <select id="custom-combo-trigger" class="bg-[#191d33] border border-brand-border rounded-lg px-2 py-1.5 text-[10.5px] text-white outline-none">
+                      <option value="">조건: AI 결정</option>
+                      <option value="always">항상</option>
+                      <option value="archetypePair">같은 카드군 2장+</option>
+                      <option value="lowHp">체력 절반 이하</option>
+                      <option value="bossShielded">상대 방어막 보유</option>
+                      <option value="handRich">손패 5장+</option>
+                      <option value="lateGame">5턴 이후</option>
+                      <option value="earlyGame">3턴 이내</option>
+                    </select>
+                    <select id="custom-combo-scaling" class="bg-[#191d33] border border-brand-border rounded-lg px-2 py-1.5 text-[10.5px] text-white outline-none">
+                      <option value="">증가: AI 결정</option>
+                      <option value="flat">고정</option>
+                      <option value="perAlly">카드군 수 비례</option>
+                      <option value="perTurn">턴 수 비례</option>
+                      <option value="perHand">손패 수 비례</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="col-span-2">
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">🪤 함정 발동 조건 <span class="text-slate-600 font-normal">(카드 타입이 함정일 때)</span></label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <select id="custom-trap-trigger" class="bg-[#191d33] border border-brand-border rounded-lg px-2 py-1.5 text-[10.5px] text-white outline-none">
+                      <option value="">AI 결정</option>
+                      <option value="foePlaysUnit">상대가 소환수를 낼 때</option>
+                      <option value="foePlaysSpell">상대가 주문을 쓸 때</option>
+                      <option value="foePlaysElement">상대가 특정 속성 카드를 낼 때</option>
+                      <option value="foePlaysArchetype">상대가 특정 카드군 카드를 낼 때</option>
+                      <option value="foePlaysKeyword">상대 카드가 특정 키워드를 가질 때</option>
+                      <option value="foeAttacks">상대가 공격할 때</option>
+                      <option value="selfLowHp">내 체력 절반 이하</option>
+                    </select>
+                    <input type="text" id="custom-trap-condition" placeholder="조건값 (예: fire / 홍련 / pierceShield)"
+                           class="bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[10.5px] text-white outline-none">
+                  </div>
+                </div>
+
+                <div class="col-span-2">
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">📜 원하는 효과 설명</label>
+                  <input type="text" id="custom-effect-desc" placeholder="예: 덱에서 홍련 카드를 서치하고 화상을 부여"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+                  <p class="text-[9.5px] text-slate-500 mt-1">지정한 값은 밸런스 검증(등급·마나 예산)을 거쳐 조정될 수 있습니다.</p>
+                </div>
+
+              </div>
+            </details>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">희귀도 (Rarity)</label>
+              <select id="forge-rarity" class="w-full bg-[#191d33] border border-brand-border text-amber-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="common">COMMON</option>
+                <option value="rare">RARE</option>
+                <option value="epic">EPIC</option>
+                <option value="legendary" selected>LEGENDARY (홀로그램)</option>
+              </select>
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>이미지 비율</span>
+                <span class="text-[10px] text-emerald-400">🛡️ 0 Anlas</span>
+              </label>
+              <select id="forge-resolution" class="w-full bg-[#191d33] border border-brand-border text-emerald-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="square-normal" selected>⬛ 정사각형 (1:1 / 1024x1024)</option>
+                <option value="portrait-normal">📱 세로형 (2:3 / 832x1216)</option>
+                <option value="portrait-small">📱 소형 세로 (2:3 / 512x768)</option>
+                <option value="square-small">⬛ 소형 정사각 (1:1 / 640x640)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 원클릭 스타일/태그 어시스턴트 -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <i data-lucide="wand-2" class="w-3.5 h-3.5 text-cyan-400"></i> 추천 태그 클릭 추가
+              </label>
+              <span class="text-[10px] text-slate-400">클릭 시 프롬프트에 즉시 추가됩니다</span>
+            </div>
+            
+            <div class="space-y-2 text-xs">
+              <!-- 외모/캐릭터 -->
+              <div class="flex flex-wrap gap-1.5 items-center">
+                <span class="text-[10px] text-slate-500 font-bold mr-1">외형:</span>
+                <button type="button" onclick="addTag('1girl, red hair, twin braids, glowing amber eyes')" class="tag-pill">붉은 땋은머리 소녀</button>
+                <button type="button" onclick="addTag('1girl, silver hair, ponytail, blue eyes')" class="tag-pill">은발 포니테일</button>
+                <button type="button" onclick="addTag('1girl, blonde hair, long hair, golden crown')" class="tag-pill">금발 롱헤어 여왕</button>
+                <button type="button" onclick="addTag('1boy, black hair, handsome, sharp eyes, dark cloak')" class="tag-pill">흑발 미소년 암살자</button>
+                <button type="button" onclick="addTag('1girl, elf, emerald hair, pointy ears')" class="tag-pill">엘프 마법사</button>
+              </div>
+
+              <!-- 의상/무기 -->
+              <div class="flex flex-wrap gap-1.5 items-center">
+                <span class="text-[10px] text-slate-500 font-bold mr-1">무기/의상:</span>
+                <button type="button" onclick="addTag('flaming greatsword, ornate fantasy armor')" class="tag-pill">화염 대검 & 판타지 갑옷</button>
+                <button type="button" onclick="addTag('crystal wizard staff, magical flowing robe')" class="tag-pill">수정 지팡이 & 마법 로브</button>
+                <button type="button" onclick="addTag('lightning spear, golden armor, white wings')" class="tag-pill">뇌창 & 발키리 갑옷</button>
+                <button type="button" onclick="addTag('twin obsidian daggers, dark assassin suit')" class="tag-pill">쌍단검 & 암살 슈트</button>
+              </div>
+
+              <!-- 연출/이펙트 -->
+              <div class="flex flex-wrap gap-1.5 items-center">
+                <span class="text-[10px] text-slate-500 font-bold mr-1">이펙트:</span>
+                <button type="button" onclick="addTag('glowing magic circle, floating particles, dynamic spell cast')" class="tag-pill">빛나는 마법진 & 시전</button>
+                <button type="button" onclick="addTag('raging fire storm, burning embers, heat distortion')" class="tag-pill">작열하는 화염 폭풍</button>
+                <button type="button" onclick="addTag('shattering ice crystals, frost aura, blizzard')" class="tag-pill">얼음 결정 & 눈보라</button>
+                <button type="button" onclick="addTag('holy radiant aura, stardust, glowing feathers')" class="tag-pill">신성한 빛 & 깃털</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 프롬프트 입력창 -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <i data-lucide="tag" class="w-3.5 h-3.5 text-purple-400"></i>
+                <span>NovelAI 상세 프롬프트 (Danbooru 태그)</span>
+              </label>
+              <div class="flex items-center gap-2">
+                <button type="button" onclick="expandCurrentPromptWithDanTagGen()" class="px-2 py-0.5 rounded bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10.5px] font-bold border border-purple-500/50 transition flex items-center gap-1 shadow-sm">
+                  <i data-lucide="sparkles" class="w-3 h-3 text-amber-300"></i>
+                  <span>🏷️ DanTagGen 태그 자동 확장</span>
+                </button>
+                <button onclick="clearForgePrompt()" class="text-[10px] text-slate-500 hover:text-slate-300">지우기</button>
+              </div>
+            </div>
+            <textarea id="forge-prompt" rows="3" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl p-3 text-xs text-white outline-none leading-relaxed" placeholder="프롬프트를 입력하세요... (DanTagGen 버튼을 누르면 단부루 최고 퀄리티 태그로 자동 확장됩니다)"></textarea>
+          </div>
+
+          <!-- 생성 버튼 그룹 -->
+          <div class="pt-2 flex flex-wrap items-center gap-3">
+            <button id="btn-forge-generate" onclick="generateAICard()" class="flex-1 min-w-[220px] py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black text-sm shadow-xl shadow-purple-600/30 active:scale-95 transition flex items-center justify-center gap-2">
+              <i data-lucide="sparkles" class="w-5 h-5 text-amber-300 animate-spin-slow"></i>
+              <span>✨ NovelAI V4.5로 카드 연성하기</span>
+            </button>
+
+            <button onclick="generateMockCard()" class="px-4 py-3.5 rounded-xl bg-[#1d2238] hover:bg-[#282f4d] border border-brand-border text-slate-300 text-xs font-bold transition flex items-center gap-1.5" title="API 토큰 없이 가상 일러스트로 즉시 생성">
+              <i data-lucide="play" class="w-4 h-4 text-emerald-400"></i>
+              <span>🎲 모의 연성 (무료/즉시)</span>
+            </button>
+          </div>
+
+          <!-- 로딩 상태 표시 -->
+          <div id="forge-loading" class="hidden p-4 rounded-xl bg-purple-950/40 border border-purple-500/50 flex items-center gap-3 text-xs text-purple-200 animate-pulse">
+            <div class="w-5 h-5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
+            <span>NovelAI V4.5 고화질 연성 중입니다... (0 Anlas 규격 생성)</span>
+          </div>
+
+        </div>
+
+        <!-- 우측: 생성된 카드 실시간 프리뷰 & 등록 (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col items-center space-y-4">
+          <div class="text-xs font-bold text-slate-400 flex items-center gap-1">
+            <i data-lucide="eye" class="w-3.5 h-3.5 text-amber-400"></i> 생성된 카드 실시간 미리보기 (3D Tilt 반응)
+          </div>
+
+          <!-- 카드 렌더링 컨테이너 -->
+          <div id="forge-preview-card" class="card-3d-wrap w-[280px] sm:w-[300px]">
+            <!-- JS로 동적 렌더링 -->
+          </div>
+
+          <!-- 덱에 저장 완료 알림 / 액션 버튼 -->
+          <div id="forge-success-box" class="hidden w-full max-w-[300px] p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-xs text-center font-bold space-y-2">
+            <div class="flex items-center justify-center gap-1.5">
+              <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+              <span>새 카드가 마도서와 덱에 등록되었습니다!</span>
+            </div>
+            <button onclick="switchTab('battle')" class="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition">
+              ⚔️ 배틀 아레나에서 바로 사용해보기
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ==================== TAB: 🎁 부스터 팩 개봉 ==================== -->
+    <section id="tab-pack" class="tab-content hidden space-y-6">
+      
+      <!-- 상단 헤더 & 확률 정보 배너 -->
+      <div class="bg-gradient-to-r from-purple-950/80 via-[#13162b] to-amber-950/80 border-2 border-amber-500/40 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+        <div class="flex flex-wrap items-center justify-between gap-4 relative z-10">
+          <div class="space-y-1.5 max-w-2xl">
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-full text-xs font-black bg-gradient-to-r from-amber-500 to-yellow-400 text-black">TCG BOOSTER PACK</span>
+              <h2 class="text-xl font-black text-slate-100 flex items-center gap-2">
+                <i data-lucide="package-open" class="w-6 h-6 text-amber-400"></i>
+                <span>카드팩 상점 & 5장 순차 개봉</span>
+              </h2>
+            </div>
+            <p class="text-xs text-slate-300">원하는 테마 팩을 선택하여 5장의 무작위 카드를 개봉하세요! LLM과 AI가 1장씩 실시간으로 연성하여 3D 플립 연출과 함께 공개합니다.</p>
+          </div>
+
+          <!-- 가챠 확률 테이블 뱃지 -->
+          <div class="flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-xl bg-black/70 border border-slate-700 text-xs font-bold">
+            <span class="text-amber-400 font-black">🌟 전설 3%</span>
+            <span class="text-slate-600">|</span>
+            <span class="text-purple-400 font-black">✨ 영웅 12%</span>
+            <span class="text-slate-600">|</span>
+            <span class="text-blue-400 font-black">🔹 희귀 25%</span>
+            <span class="text-slate-600">|</span>
+            <span class="text-slate-400">⚪ 일반 60%</span>
+            <span class="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/40">✨ 5슬롯 희귀+ 확정</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1. 테마 팩 선택 그리드 -->
+      <div class="space-y-3">
+        <h3 class="text-sm font-bold text-slate-300 flex items-center gap-2">
+          <i data-lucide="layers" class="w-4 h-4 text-amber-400"></i>
+          <span>개봉할 테마 팩 선택</span>
+        </h3>
+        <div id="pack-shop-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- JS로 테마 팩 4종 렌더링 -->
+        </div>
+      </div>
+
+      <!-- 2. 개봉 버튼 & 해상도 선택 & 프로그레스 바 -->
+      <div class="flex flex-col items-center justify-center space-y-4 pt-2">
+        <div class="flex flex-wrap items-center justify-center gap-3">
+          <button id="btn-open-pack" onclick="openBoosterPack(false)" class="px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 hover:to-yellow-300 text-black font-black text-sm shadow-xl shadow-amber-500/30 active:scale-95 transition flex items-center gap-2">
+            <i data-lucide="sparkles" class="w-5 h-5 animate-spin-slow"></i>
+            <span>✨ 5장 AI 실시간 연성 개봉 (Ollama LLM + NovelAI)</span>
+          </button>
+          <button id="btn-fast-pack" onclick="openBoosterPack(true)" class="px-5 py-3.5 rounded-2xl bg-[#1d2238] hover:bg-[#282f4d] border border-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5 shadow-md">
+            <i data-lucide="zap" class="w-4 h-4 text-cyan-400"></i>
+            <span>⚡ 초고속 모의 팩 개봉 (1초 완성)</span>
+          </button>
+          
+          <!-- 🖼️ 팩 이미지 비율/해상도 선택기 -->
+          <div class="flex items-center gap-2 bg-[#121629] px-3.5 py-2.5 rounded-2xl border border-slate-700 text-xs shadow-md">
+              <i data-lucide="ratio" class="w-4 h-4 text-amber-400"></i>
+              <span>비율:</span>
+            </span>
+            <select id="pack-resolution-select" onchange="onPackResolutionChange(this.value)" class="bg-black/90 border border-slate-700 text-emerald-300 font-bold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer">
+              <option value="square-normal" selected>정사각형 1:1 (640x640 · 0 Anlas)</option>
+              <option value="portrait-normal">고화질 세로 2:3 (832x1216 · 0 Anlas)</option>
+              <option value="landscape-normal">고화질 가로 3:2 (1216x832 · 0 Anlas)</option>
+              <option value="portrait-small">소형 세로 (512x768 · 0 Anlas)</option>
+              <option value="landscape-small">소형 가로 (768x512 · 0 Anlas)</option>
+            </select>
+          </div>
+
+          <!-- 🧠 팩 LLM 추론 모드 선택기 -->
+          <div class="flex items-center gap-2 bg-[#121629] px-3.5 py-2.5 rounded-2xl border border-slate-700 text-xs shadow-md">
+            <span class="font-bold text-slate-300 flex items-center gap-1">
+              <i data-lucide="bot" class="w-4 h-4 text-purple-400"></i>
+              <span>추론:</span>
+            </span>
+            <select id="pack-reasoning-select" class="bg-black/90 border border-slate-700 text-amber-300 font-bold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer">
+              <option value="fast" selected>⚡ 초고속 (3~6초)</option>
+              <option value="deep">🧠 심층 추론 (20~40초)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 진행도 표시기 -->
+        <div id="pack-progress-box" class="hidden w-full max-w-lg space-y-2 p-4 rounded-xl bg-black/75 border border-purple-500/50 shadow-2xl animate-pulse">
+          <div class="flex items-center justify-between text-xs text-purple-300 font-bold">
+            <span id="pack-progress-text">[1/5] 카드 연성 및 일러스트 생성 중...</span>
+            <span class="text-[10px] text-amber-400 font-bold">순차 공개 중</span>
+          </div>
+          <div class="w-full h-2.5 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
+            <div id="pack-progress-bar" class="h-full bg-gradient-to-r from-purple-500 via-amber-400 to-emerald-400 transition-all duration-300" style="width: 20%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 5장 카드 공개 아레나 그리드 -->
+      <div class="p-6 rounded-2xl bg-black/40 border border-brand-border min-h-[400px] flex flex-col items-center justify-center">
+        <div id="pack-reveal-arena" class="flex flex-wrap items-center justify-center gap-4">
+          <div class="text-center text-slate-500 text-xs py-16">
+            상단에서 팩을 선택하고 [부스터 팩 개봉하기] 버튼을 누르면 5장의 카드가 순차적으로 연성되어 공개됩니다.
+          </div>
+        </div>
+
+        <!-- 4. 개봉 완료 후 액션 박스 -->
+        <div id="pack-action-box" class="hidden mt-6 pt-6 border-t border-slate-800 w-full flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div id="pack-summary-text">
+            <!-- JS로 획득 등급 요약 렌더링 -->
+          </div>
+          <div class="flex items-center gap-3">
+            <button onclick="savePackCardsToCollection()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-lg transition flex items-center gap-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>보관함에 모두 저장</span>
+            </button>
+            <button onclick="addPackCardsToActiveDeck()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-black text-xs shadow-lg transition flex items-center gap-1.5">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span>출전 덱에 바로 투입</span>
+            </button>
+            <button onclick="openBoosterPack()" class="px-4 py-2.5 rounded-xl bg-[#191d33] hover:bg-[#252b47] border border-slate-700 text-slate-300 text-xs font-bold transition flex items-center gap-1.5">
+              <i data-lucide="rotate-cw" class="w-4 h-4 text-amber-400"></i>
+              <span>한 팩 더 개봉</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ==================== TAB 4: 📖 마도서 / 덱 빌더 ==================== -->
+    <section id="tab-deck" class="tab-content hidden space-y-6">
+      
+      <!-- ⚔️ 1. 현재 출전 덱 (Active Battle Deck) 섹션 -->
+      <div class="bg-gradient-to-r from-[#171b30] via-[#121526] to-[#1a142e] border-2 border-amber-500/50 rounded-2xl p-5 space-y-4 shadow-xl relative overflow-hidden">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-700/60 pb-3">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-black">전투 출전 덱</span>
+              <h2 class="text-lg font-black text-slate-100 flex items-center gap-1.5">
+                <i data-lucide="swords" class="w-5 h-5 text-amber-400"></i>
+                <span id="active-deck-title">배틀 덱 편성 현황</span>
+              </h2>
+            </div>
+            <p class="text-xs text-slate-400">보관함에서 원하는 카드를 선택해 <span class="text-amber-300 font-bold">최대 12장</span>의 출전 덱을 구성하세요. (전투 시 이 카드들만 사용됩니다)</p>
+          </div>
+
+          <!-- 덱 통계 & 편의 버튼 -->
+          <div class="flex flex-wrap items-center gap-2">
+            <div id="active-deck-stats" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/60 border border-slate-700 text-xs font-bold text-slate-300">
+              <!-- JS로 통계 (소환수 X, 주문 Y, 건축물 Z, 평균 마나) 렌더링 -->
+            </div>
+            <button onclick="autoFillRecommendedDeck()" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-black font-black text-xs shadow-md transition flex items-center gap-1">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+              <span>🎲 추천 덱 자동 구성</span>
+            </button>
+            <button onclick="clearActiveDeck()" class="px-2.5 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900 border border-red-500/40 text-red-300 text-xs font-bold transition flex items-center gap-1" title="모든 카드를 덱에서 제외">
+              <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+              <span>덱 비우기</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 출전 덱 슬롯 그리드 (12개 슬롯) -->
+        <div id="active-deck-grid" class="flex flex-wrap items-center justify-start gap-3 min-h-[190px] p-3 rounded-xl bg-black/40 border border-slate-800">
+          <!-- JS로 동적 렌더링 -->
+        </div>
+      </div>
+
+      <!-- 📚 2. 전체 보유 카드 보관함 (Collection Binder) 섹션 -->
+      <div class="bg-[#121526] border border-brand-border rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-base font-black text-slate-100 flex items-center gap-2">
+              <i data-lucide="book-open" class="w-5 h-5 text-cyan-400"></i>
+              <span>전체 보유 카드 보관함 (<span id="collection-count-text">0</span>장)</span>
+            </h3>
+            <p class="text-xs text-slate-400">AI 연성소에서 생성한 카드와 스타터 카드가 보관되는 카드 도감입니다.</p>
+          </div>
+
+          <!-- 덱 백업 & 복원 조작 버튼 -->
+          <div class="flex items-center gap-2">
+            <button onclick="resetStarterCardsPrompt()" class="px-3 py-2 rounded-xl bg-purple-950/60 hover:bg-purple-900 border border-purple-500/40 text-purple-300 text-xs font-bold transition flex items-center gap-1.5" title="최신 특수 효과가 적용된 기본 덱으로 복원">
+              <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-purple-400"></i> 기본 스타터 팩 복원
+            </button>
+            <button onclick="exportDeckJson()" class="px-3 py-2 rounded-xl bg-[#191d33] hover:bg-[#252b47] border border-brand-border text-slate-300 text-xs font-bold transition flex items-center gap-1.5">
+              <i data-lucide="download" class="w-3.5 h-3.5 text-cyan-400"></i> 덱 JSON 백업
+            </button>
+            <button onclick="importDeckJsonPrompt()" class="px-3 py-2 rounded-xl bg-[#191d33] hover:bg-[#252b47] border border-brand-border text-slate-300 text-xs font-bold transition flex items-center gap-1.5">
+              <i data-lucide="upload" class="w-3.5 h-3.5 text-amber-400"></i> 덱 불러오기
+            </button>
+          </div>
+        </div>
+
+        <!-- 필터 & 검색 바 -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <!-- 카드 분류 타입 필터 -->
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
+            <span class="text-slate-400 font-bold mr-1">분류:</span>
+            <button onclick="filterType('all')" id="type-filter-all" class="type-filter-btn px-2.5 py-1.5 rounded-lg bg-cyan-600 text-white font-bold">전체</button>
+            <button onclick="filterType('unit')" id="type-filter-unit" class="type-filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-slate-300 hover:text-white border border-slate-700">⚔️ 소환수</button>
+            <button onclick="filterType('spell')" id="type-filter-spell" class="type-filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-slate-300 hover:text-white border border-slate-700">🔮 주문/마법</button>
+            <button onclick="filterType('structure')" id="type-filter-structure" class="type-filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-slate-300 hover:text-white border border-slate-700">🏛️ 건축물/성물</button>
+          </div>
+
+          <!-- 속성 필터 -->
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
+            <span class="text-slate-400 font-bold mr-1">속성:</span>
+            <button onclick="filterCollection('all')" id="element-filter-all" class="filter-btn active px-2.5 py-1.5 rounded-lg bg-amber-500 text-black font-bold">전체</button>
+            <button onclick="filterCollection('fire')" id="element-filter-fire" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-red-300 border border-red-500/40">🔥 불</button>
+            <button onclick="filterCollection('water')" id="element-filter-water" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-cyan-300 border border-cyan-500/40">💧 물</button>
+            <button onclick="filterCollection('lightning')" id="element-filter-lightning" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-yellow-300 border border-yellow-500/40">⚡ 번개</button>
+            <button onclick="filterCollection('holy')" id="element-filter-holy" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-amber-300 border border-amber-500/40">✨ 신성</button>
+            <button onclick="filterCollection('dark')" id="element-filter-dark" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-purple-300 border border-purple-500/40">🌑 암흑</button>
+            <button onclick="filterCollection('nature')" id="element-filter-nature" class="filter-btn px-2.5 py-1.5 rounded-lg bg-[#181d33] text-emerald-300 border border-emerald-500/40">🌿 자연</button>
+          </div>
+        </div>
+
+        <!-- 검색창 및 카드군(Archetype) 테마 필터 드롭다운 -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="relative flex-1 min-w-[240px] max-w-md">
+            <i data-lucide="search" class="absolute left-3 top-2.5 w-4 h-4 text-slate-400"></i>
+            <input type="text" id="grimoire-search" oninput="searchCollection(this.value)" placeholder="카드 이름, 카드군 또는 효과 검색..." class="w-full bg-[#181d33] border border-slate-700 focus:border-amber-400 rounded-xl pl-9 pr-4 py-2 text-xs text-white outline-none">
+          </div>
+
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-amber-400 font-bold flex items-center gap-1">⚜️ 카드군:</span>
+            <select id="theme-filter-select" onchange="filterTheme(this.value)" class="bg-[#181d33] border border-amber-500/40 text-amber-200 text-xs rounded-xl px-3 py-2 outline-none focus:border-amber-400">
+              <option value="all">모든 카드군 (전체 보기)</option>
+              <option value="generic">🌐 범용 카드 (무소속 용병/주문)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 보관함 카드 그리드 -->
+        <div id="grimoire-grid" class="flex flex-wrap justify-center sm:justify-start gap-4 pt-2">
+          <!-- JS로 동적 렌더링 -->
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ==================== 설정 모달 (NovelAI API & 0 Anlas 세팅) ==================== -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-3 sm:p-4">
+    <!-- 설정 항목이 늘어나 화면을 넘어가던 문제:
+         헤더·푸터는 고정하고 **본문만** 스크롤시킨다.
+         max-height는 dvh 우선(모바일 주소창 대응) + vh 폴백. -->
+    <div class="bg-[#121526] border border-brand-border rounded-2xl max-w-lg w-full flex flex-col shadow-2xl overflow-hidden"
+         style="max-height: 90vh; max-height: 90dvh;">
+
+      <div class="shrink-0 flex items-center justify-between border-b border-brand-border/60 px-5 py-3.5">
+        <div class="flex items-center gap-2 min-w-0">
+          <i data-lucide="settings" class="w-5 h-5 text-amber-400 shrink-0"></i>
+          <h3 class="font-bold text-base sm:text-lg text-slate-100 truncate">NovelAI API &amp; 엔진 설정</h3>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white p-1 shrink-0">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- 본문 — 여기만 스크롤된다 -->
+      <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-4 space-y-5">
+
+      <!-- 0 Anlas 안전 모드 배너 -->
+      <div class="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/50 flex items-start gap-3 text-xs text-emerald-200">
+        <i data-lucide="shield-check" class="w-5 h-5 text-emerald-400 shrink-0 mt-0.5"></i>
+        <div>
+          <span class="font-bold block text-emerald-300">0 Anlas(유료 재화) 소모 방지 규격 적용</span>
+          NovelAI Opus 무료 생성 기준(512x768 또는 832x1216, Steps: 28 이하, 1장)을 준수하여 Anlas가 소모되지 않도록 보호합니다.
+        </div>
+      </div>
+
+      <!-- API Key 입력 -->
+      <div class="space-y-1.5">
+        <label class="text-xs font-bold text-slate-300 flex items-center justify-between">
+          <span>NovelAI API Token (Bearer Token)</span>
+          <span class="text-[10px] text-amber-400">브라우저 로컬에만 안전하게 저장됨</span>
+        </label>
+        <input type="password" id="setting-api-key" placeholder="pst-..." class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none">
+        <p class="text-[10px] text-slate-400">NovelAI 웹사이트 &gt; Account Settings &gt; User Settings &gt; API Token에서 복사한 토큰을 입력하세요.</p>
+      </div>
+
+      <!-- 🤖 로컬 LLM (Ollama / LM Studio) 설정 섹션 -->
+      <div class="p-3.5 rounded-xl bg-purple-950/40 border border-purple-500/40 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="cpu" class="w-4 h-4 text-purple-400"></i>
+            <span class="text-xs font-bold text-purple-200">로컬 LLM (프롬프트 & 카드 기획) 설정</span>
+          </div>
+          <span class="text-[10px] text-emerald-300 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">⚡ 추론 최적화 적용됨</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div class="space-y-1">
+            <label class="text-slate-300 font-bold">로컬 LLM 엔드포인트 URL</label>
+            <input type="text" id="setting-llm-url" value="http://localhost:11434" placeholder="http://localhost:11434" class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-300 mb-1">
+              🧠 임베딩 모델 <span class="text-slate-500 font-normal">(카드군 의미 유사도 — 선택)</span>
+            </label>
+            <input type="text" id="setting-embed-model" value="bge-m3" placeholder="bge-m3"
+                   class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white outline-none">
+            <p class="text-[10.5px] text-slate-500 mt-1 leading-relaxed">
+              설치하면 "빙결의 절도"와 "영토 동결령"처럼 <b>표기는 달라도 의미가 같은 카드군</b>을 잡아내고,
+              프롬프트에 실을 카드군을 컨셉과 가까운 것만 골라 컨텍스트를 아낍니다.<br>
+              설치: <code class="text-amber-300">ollama pull bge-m3</code> · 없으면 문자열 유사도로만 동작합니다.
+            </p>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-300 mb-1">
+              🎨 태그 확장 SLM <span class="text-slate-500 font-normal">(그림체 다양성 — 선택)</span>
+            </label>
+            <div class="grid grid-cols-2 gap-2">
+              <select id="setting-tag-slm-preset" class="bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white text-xs outline-none">
+                <option value="tipo">TIPO-500M (권장, ~500M)</option>
+                <option value="dart">Dart v2 (경량, ~166M)</option>
+                <option value="custom">직접 지정</option>
+              </select>
+              <input type="text" id="setting-tag-slm-model" placeholder="모델 이름 (비우면 프리셋 기본값)"
+                     class="bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white text-xs outline-none">
+            </div>
+            <div class="mt-2">
+              <label class="block text-[11px] font-bold text-slate-400 mb-1">🖌️ 작가 태그 <span class="text-slate-500 font-normal">(그림체에 가장 큰 영향)</span></label>
+              <select id="setting-tag-slm-artist" class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white text-xs outline-none">
+                <option value="slm">SLM이 카드마다 선택 (권장)</option>
+                <option value="style">화풍 태그만 사용 (안정적)</option>
+                <option value="custom">내가 지정한 작가만 사용</option>
+                <option value="off">사용 안 함 — 모델 기본 그림체</option>
+              </select>
+              <input type="text" id="setting-tag-slm-artists" placeholder="작가 태그를 쉼표로 구분 (custom일 때만)"
+                     class="w-full mt-1 bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white text-xs outline-none">
+              <p class="text-[10.5px] text-slate-500 mt-1 leading-relaxed">
+                Danbooru 계열 모델은 <b>작가 태그가 그림체를 좌우</b>합니다. 이게 비어 있으면
+                배경·조명을 아무리 흔들어도 모델의 평균 그림체로 수렴합니다.<br>
+                <span class="text-slate-600">카드마다 작가가 달라지므로 덱 전체의 통일감은 떨어집니다.
+                통일감을 원하면 <b>내가 지정</b>으로 2~3명만 넣으세요.</span>
+              </p>
+            </div>
+            <div class="mt-2">
+              <label class="block text-[11px] font-bold text-slate-400 mb-1">판권 캐릭터 태그</label>
+              <select id="setting-tag-slm-ip" class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white text-xs outline-none">
+                <option value="auto">컨셉에 있을 때만 허용 (권장)</option>
+                <option value="always">항상 허용 — 판권 카드군용</option>
+                <option value="never">항상 차단 — 순수 오리지널만</option>
+              </select>
+              <p class="text-[10.5px] text-slate-500 mt-1 leading-relaxed">
+                SLM은 Danbooru로 학습돼 가끔 남의 작품 캐릭터를 끌어옵니다.
+                <b>컨셉에 있을 때만</b>은 카드 컨셉이 그 작품을 실제로 언급했을 때만 통과시켜,
+                판권 카드군은 만들 수 있게 두면서 평범한 카드에 엉뚱한 캐릭터가 섞이는 것만 막습니다.
+              </p>
+            </div>
+            <p class="text-[10.5px] text-slate-500 mt-1 leading-relaxed">
+              규칙 기반 확장기는 속성별 <b>고정 테이블</b>을 써서 같은 속성 카드에 늘 같은 배경·조명이 붙습니다.
+              SLM을 설치하면 카드마다 다른 태그 조합이 나와 그림체가 다양해집니다.<br>
+              설치: <code class="text-amber-300 text-[10px] break-all">ollama pull hf.co/QuantFactory/TIPO-500M-GGUF</code><br>
+              <span class="text-slate-600">Ollama 공식 라이브러리에는 없습니다. HuggingFace GGUF를 <code>hf.co/</code> 접두로 받습니다.</span><br>
+              없으면 규칙 기반으로 자동 폴백하므로 게임은 정상 동작합니다.
+            </p>
+          </div>
+          <div class="space-y-1">
+            <label class="text-slate-300 font-bold flex items-center justify-between">
+              <span>기획용 LLM 모델</span>
+              <span class="text-[10px] text-amber-300">추론 속도 최적화</span>
+            </label>
+            <select id="setting-llm-model-select" onchange="checkCustomLlmInput()" class="w-full bg-[#191d33] border border-brand-border text-white text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer">
+              <option value="hf.co/bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M" selected>🌟 Qwen 3.5 4B (HuggingFace 1위 bartowski Q4_K_M / 설치됨)</option>
+              <option value="qwen3.5:4b">🧠 Qwen 3.5 4B (Ollama 공식 패키지)</option>
+              <option value="hf.co/bartowski/Qwen_Qwen3.5-4B-GGUF:Q5_K_M">💎 HuggingFace Qwen 3.5 4B (Q5_K_M / 고정밀 무손실)</option>
+              <option value="hf.co/AtomicChat/Qwen3.5-4B-GGUF:Q4_K_M">⚡ HuggingFace Qwen 3.5 4B (AtomicChat imatrix 최적화)</option>
+              <option value="qwen2.5:3b">⚡ Qwen 2.5 3B (0.8초 초고속 / 1.9GB)</option>
+              <option value="qwen2.5:7b">👑 Qwen 2.5 7B (최고 작문 퀄리티)</option>
+              <option value="custom">직접 입력 (Custom Model / HuggingFace ID)...</option>
+            </select>
+            <input type="text" id="setting-llm-model" value="hf.co/bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M" placeholder="hf.co/bartowski/... 또는 qwen3.5:4b" class="hidden w-full mt-1 bg-[#191d33] border border-purple-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none">
+          </div>
+          <div class="space-y-1 sm:col-span-2">
+            <label class="text-slate-300 font-bold flex items-center justify-between">
+              <span>기본 AI 추론 강도 (Reasoning Depth)</span>
+              <span class="text-[10px] text-amber-300">과추론 방지 및 속도 조절</span>
+            </label>
+            <select id="setting-reasoning-mode" class="w-full bg-[#191d33] border border-brand-border text-amber-300 text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer">
+              <option value="fast" selected>⚡ 초고속 모드 (3~6초 / think: false - 불필요한 과추론 없이 신속 생성)</option>
+              <option value="deep">🧠 심층 추론 모드 (20~40초 / think: true - 밸런스 및 복잡한 서사 고심)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="p-2.5 rounded-lg bg-black/60 border border-purple-500/30 text-[10.5px] text-slate-300 space-y-1.5">
+          <p>
+            🚀 <strong>HuggingFace GGUF 직접 다운로드 명령어:</strong><br>
+            <code class="text-amber-300 font-mono select-all">ollama run hf.co/bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M</code>
+          </p>
+          <p class="text-slate-400">
+            * <strong>Q4_K_M</strong>: 메모리 ~2.5GB로 속도와 추론 능력이 가장 이상적으로 균형 잡힌 모델입니다.<br>
+            * <strong>Q5_K_M</strong>: 원본 가중치 대비 손실이 0.01% 미만인 고정밀 양자화 모델입니다.
+          </p>
+        </div>
+      </div>
+
+      <!-- 모델 선택 -->
+      <div class="space-y-1.5">
+        <label class="text-xs font-bold text-slate-300 flex items-center justify-between">
+          <span>생성 모델 (Diffusion Model)</span>
+          <span class="text-[10px] text-purple-300">V4.5 Full & Curated 지원</span>
+        </label>
+        <select id="setting-model" onchange="checkCustomModelInput()" class="w-full bg-[#191d33] border border-brand-border text-white text-xs font-bold rounded-xl px-3.5 py-2.5 outline-none cursor-pointer">
+          <option value="nai-diffusion-4-5-full" selected>NovelAI Diffusion Anime V4.5 (Full) - 🌟 최신 V4.5 풀버전</option>
+          <option value="nai-diffusion-4-5-curated">NovelAI Diffusion Anime V4.5 (Curated) - 💎 V4.5 큐레이티드</option>
+          <option value="nai-diffusion-4-full">NovelAI Diffusion Anime V4 (Full)</option>
+          <option value="nai-diffusion-4-curated">NovelAI Diffusion Anime V4 (Curated)</option>
+          <option value="nai-diffusion-3">NovelAI Diffusion Anime V3</option>
+          <option value="custom">직접 입력 (Custom Model ID)...</option>
+        </select>
+        <input type="text" id="setting-custom-model" placeholder="예: nai-diffusion-4-5-full" class="hidden w-full mt-1.5 bg-[#191d33] border border-purple-500/50 rounded-xl px-3 py-2 text-xs text-white outline-none">
+      </div>
+
+      <!-- 해상도 선택 (0 Anlas 한도 내) -->
+      <div class="space-y-1.5">
+        <label class="text-xs font-bold text-slate-300">해상도 (0 Anlas 최적화 규격)</label>
+        <select id="setting-resolution" class="w-full bg-[#191d33] border border-brand-border text-emerald-300 text-xs font-bold rounded-xl px-3.5 py-2.5 outline-none cursor-pointer">
+          <option value="portrait-small">소형 세로 (512 x 768) - 🛡️ 0 Anlas (가장 빠름)</option>
+          <option value="portrait-normal">고화질 세로 (832 x 1216) - 🛡️ 0 Anlas</option>
+          <option value="square-normal">정사각형 (640 x 640) - 🛡️ 0 Anlas</option>
+          <option value="landscape-small">소형 가로 (768 x 512) - 🛡️ 0 Anlas</option>
+          <option value="landscape-normal">고화질 가로 (1216 x 832) - 🛡️ 0 Anlas</option>
+        </select>
+      </div>
+
+      <!-- Steps & CFG Scale -->
+      <div class="grid grid-cols-2 gap-4 text-xs">
+        <div class="space-y-1">
+          <label class="font-bold text-slate-300">Sampling Steps (최대 28)</label>
+          <input type="number" id="setting-steps" value="28" min="15" max="28" class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white outline-none">
+        </div>
+        <div class="space-y-1">
+          <label class="font-bold text-slate-300">Prompt Guidance (Scale)</label>
+          <input type="number" id="setting-scale" value="6.0" step="0.5" min="1.0" max="15.0" class="w-full bg-[#191d33] border border-brand-border rounded-xl px-3 py-2 text-white outline-none">
+        </div>
+      </div>
+
+      </div><!-- /본문 스크롤 영역 -->
+
+      <!-- 버튼 — 항상 보이도록 하단 고정 -->
+      <div class="shrink-0 border-t border-brand-border/60 px-5 py-3 flex items-center justify-end gap-3 bg-[#121526]">
+        <button onclick="closeSettingsModal()" class="px-4 py-2.5 rounded-xl bg-[#191d33] hover:bg-[#252b47] text-slate-300 text-xs font-bold transition">취소</button>
+        <button onclick="saveSettingsFromModal()" class="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition">설정 저장</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ==================== 👾 AI 보스 / 몬스터 연성 모달 ==================== -->
+  <!-- ⚠️ `items-center` + `overflow-y-auto` 조합은 내용이 화면보다 길 때
+       **위쪽이 잘려서 스크롤로도 닿지 못한다.** 자식에 `my-auto`를 주면
+       여유가 있을 땐 가운데 정렬, 넘칠 땐 정상 스크롤이 된다. -->
+  <div id="boss-forge-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-start justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="bg-[#101322] border border-red-500/50 rounded-2xl max-w-2xl w-full p-5 sm:p-6 space-y-5 shadow-2xl my-auto">
+      
+      <!-- 모달 헤더 -->
+      <div class="flex items-center justify-between border-b border-red-500/30 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-red-950/80 border border-red-500/80 flex items-center justify-center text-red-400 shadow-md">
+            <i data-lucide="skull" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-black text-lg text-slate-100 font-fantasy">AI BOSS & MONSTER FORGE</h3>
+            <p class="text-[11px] text-red-300">원하는 최강의 보스 몬스터를 NovelAI V4.5로 생성하여 아레나에 소환하세요!</p>
+          </div>
+        </div>
+        <button onclick="closeBossForgeModal()" class="text-slate-400 hover:text-white p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- 🤖 로컬 LLM 보스 원클릭 자동 기획 -->
+      <div class="p-3.5 rounded-xl bg-gradient-to-r from-red-950/70 via-[#1b172a] to-purple-950/70 border border-red-500/40 space-y-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-xs font-bold text-red-200 flex items-center gap-1.5">
+            <i data-lucide="bot" class="w-4 h-4 text-amber-400"></i>
+            <span>🤖 LLM 보스 자동 기획</span>
+          </span>
+          <div class="flex items-center gap-2">
+            <label class="text-[11px] font-bold text-slate-300">추론 모드:</label>
+            <select id="boss-forge-reasoning-mode" class="bg-[#0f111f] border border-red-500/50 text-amber-300 text-[11px] font-bold rounded-lg px-2 py-1 outline-none cursor-pointer">
+              <option value="fast" selected>⚡ 초고속 모드 (3~6초)</option>
+              <option value="deep">🧠 심층 추론 (20~40초)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 전술 성향 선택기 -->
+        <div class="flex items-center gap-2 text-xs">
+          <label class="font-bold text-red-300 shrink-0 flex items-center gap-1">
+            <span>전술 성향:</span>
+          </label>
+          <select id="boss-forge-archetype" class="flex-1 bg-[#0f111f] border border-red-500/40 text-amber-300 text-xs font-bold rounded-xl px-3 py-1.5 outline-none cursor-pointer">
+            <option value="random" selected>🎲 전술 성향: 랜덤 (무작위 결정)</option>
+            <option value="juggernaut">👑 압도적 거수형 (초고체력 & 일격필살 차징 대폭발)</option>
+            <option value="tactician">🃏 트릭키 전술가 (소환 & 마나강탈 & 손패 파기 & 결빙/맹독)</option>
+            <option value="berserker">⚡ 속공 광전사 (3연타 폭풍 & 50% 흡혈 & 실드무시 처형)</option>
+            <option value="archmage">🔮 원소 대마도사 (광역 대격변 & 실드분쇄 & 감전 방전)</option>
+            <option value="fortress">🛡️ 불멸의 요새 (피해 35% 가시 반사 & 자가 치유 & 수호석)</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <input type="text" id="boss-llm-concept" placeholder="예: 시공간을 왜곡하는 종말의 메카신, 피의 여왕 뱀파이어" class="flex-1 bg-[#0f111f] border border-red-500/40 rounded-xl px-3.5 py-2 text-xs text-white outline-none">
+          <button type="button" onclick="generateBossWithLLM()" id="btn-boss-llm" class="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1 shrink-0 active:scale-95">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>보스 자동 기획</span>
+          </button>
+        </div>
+        <div id="boss-llm-loading" class="hidden text-[11px] text-red-300 flex items-center gap-2 animate-pulse">
+          <div class="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin"></div>
+          <span>로컬 LLM이 보스의 무시무시한 패턴과 프롬프트를 설계 중입니다...</span>
+        </div>
+      </div>
+
+      <!-- 보스 기본 정보 폼 -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="space-y-1">
+          <label class="text-xs font-bold text-slate-300">보스 이름</label>
+          <input type="text" id="boss-forge-name" value="심연의 파멸룡 아자토스" class="w-full bg-[#181c2e] border border-brand-border rounded-xl px-3 py-2 text-xs text-white outline-none">
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-bold text-slate-300">영문 별칭</label>
+          <input type="text" id="boss-forge-title" value="Abyssal Ruin Dragon" class="w-full bg-[#181c2e] border border-brand-border rounded-xl px-3 py-2 text-xs text-white outline-none">
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs font-bold text-slate-300">원소 속성</label>
+          <select id="boss-forge-element" class="w-full bg-[#181c2e] border border-brand-border text-white text-xs font-bold rounded-xl px-3 py-2 outline-none">
+            <option value="dark">🌑 암흑 (Dark)</option>
+            <option value="fire">🔥 불 (Fire)</option>
+            <option value="water">💧 물 (Water)</option>
+            <option value="lightning">⚡ 번개 (Lightning)</option>
+            <option value="holy">✨ 신성 (Holy)</option>
+            <option value="nature">🌿 자연 (Nature)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 보스 체력 & 비율 선택 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div class="space-y-1">
+          <label class="font-bold text-slate-300 flex items-center justify-between">
+            <span>보스 최대 HP (<span id="boss-hp-val-display" class="text-red-400 font-black">180</span> HP)</span>
+          </label>
+          <input type="range" id="boss-forge-hp" min="80" max="400" step="10" value="180" oninput="document.getElementById('boss-hp-val-display').innerText=this.value" class="w-full accent-red-500 cursor-pointer">
+        </div>
+        <div class="space-y-1">
+          <label class="font-bold text-slate-300">이미지 규격 (🛡️ 0 Anlas)</label>
+          <select id="boss-forge-res" class="w-full bg-[#181c2e] border border-brand-border text-emerald-300 font-bold rounded-xl px-3 py-2 outline-none">
+            <option value="square-normal" selected>⬛ 정사각형 (1:1 / 1024x1024) - 보스 추천</option>
+            <option value="portrait-normal">📱 세로형 (2:3 / 832x1216)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 보스 일러스트 프롬프트 -->
+      <div class="space-y-1">
+        <label class="text-xs font-bold text-slate-300">보스 외형 프롬프트 (NovelAI V4.5 Danbooru Tags)</label>
+        <textarea id="boss-forge-prompt" rows="2" class="w-full bg-[#181c2e] border border-brand-border rounded-xl p-2.5 text-xs text-white outline-none" placeholder="monster, giant abyssal dragon, glowing red eyes, dark wings, dynamic angle, dramatic lighting..."></textarea>
+      </div>
+
+      <!-- 생성 버튼 & 로딩 -->
+      <div class="flex flex-wrap items-center gap-3">
+        <button onclick="generateAIBoss()" id="btn-boss-generate" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-red-600 via-orange-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-xs shadow-lg shadow-red-600/30 transition flex items-center justify-center gap-2 active:scale-95">
+          <i data-lucide="sparkles" class="w-4 h-4 text-amber-300"></i>
+          <span>✨ NovelAI V4.5로 보스 일러스트 생성 & 소환</span>
+        </button>
+        <button onclick="generateMockBoss()" class="px-4 py-3 rounded-xl bg-[#1d2238] hover:bg-[#282f4d] border border-brand-border text-slate-300 text-xs font-bold transition flex items-center gap-1.5">
+          <i data-lucide="play" class="w-3.5 h-3.5 text-emerald-400"></i>
+          <span>🎲 모의 보스 소환</span>
+        </button>
+      </div>
+
+      <!-- 보스 생성 중 알림 -->
+      <div id="boss-forge-loading" class="hidden p-3.5 rounded-xl bg-red-950/60 border border-red-500/50 flex items-center gap-3 text-xs text-red-200 animate-pulse">
+        <div class="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin"></div>
+        <span>NovelAI V4.5로 강력한 보스 일러스트를 연성하고 있습니다... (0 Anlas 무료 규격)</span>
+      </div>
+
+      <!-- 보스 미리보기 & 아레나 등록 버튼 -->
+      <div id="boss-preview-box" class="hidden p-4 rounded-xl bg-black/60 border border-slate-700 space-y-3">
+        <div class="flex items-center gap-4">
+          <img id="boss-preview-img" src="" class="w-24 h-24 rounded-xl object-cover border border-red-500 shadow-md">
+          <div class="space-y-1">
+            <h4 id="boss-preview-name" class="font-black text-sm text-slate-100"></h4>
+            <p id="boss-preview-title" class="text-xs text-red-400"></p>
+            <div class="text-[11px] text-slate-300 flex items-center gap-3">
+              <span>HP: <strong id="boss-preview-hp" class="text-red-300"></strong></span>
+              <span>속성: <strong id="boss-preview-element" class="text-amber-300"></strong></span>
+            </div>
+          </div>
+        </div>
+        <button onclick="saveAndFightBoss()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 text-white font-black text-xs shadow-lg transition flex items-center justify-center gap-1.5">
+          <i data-lucide="swords" class="w-4 h-4"></i>
+          <span>⚔️ 이 보스를 아레나에 등록하고 즉시 배틀 시작!</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 🔍 카드 일러스트 확대 & 프레임 크롭 에디터 모달 -->
+  <div id="card-crop-modal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md items-center justify-center p-4 select-none">
+    <div class="relative w-full max-w-5xl bg-[#0e1122] border-2 border-amber-500/50 rounded-3xl p-6 shadow-2xl space-y-5 max-h-[94vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- 모달 헤더 -->
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-xl shadow-inner">
+            🔍
+          </div>
+          <div>
+            <h3 id="crop-card-name" class="font-black text-lg text-slate-100 flex items-center gap-2">카드 이름</h3>
+            <p id="crop-card-meta" class="text-xs text-amber-300 font-bold">카드 메타 정보</p>
+          </div>
+        </div>
+        <button onclick="closeCardCropModal()" class="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- 모달 본문 (2열 레이아웃) -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center flex-1 overflow-y-auto min-h-0 pr-1">
+        
+        <!-- 좌측: 대형 원본 일러스트 뷰어 & 인터랙티브 조절기 (7 cols) -->
+        <div class="lg:col-span-7 space-y-4 flex flex-col items-center">
+          
+          <!-- 원본 아트 캔버스 (마우스 클릭/드래그로 크롭 중심 이동 & 마우스 휠 줌) -->
+          <div id="crop-viewer-container" class="relative w-full h-[320px] md:h-[360px] rounded-2xl bg-black border-2 border-slate-700/80 overflow-hidden flex items-center justify-center shadow-2xl cursor-crosshair group">
+            <img id="crop-full-art-img" src="" class="max-w-none w-full h-full object-contain pointer-events-none" alt="Original Art">
+            
+            <!-- 🎴 실시간 크롭 뷰파인더 가이드 박스 (카드 프레임 영역을 정확히 표시) -->
+            <div id="crop-viewport-box" class="absolute border-2 border-amber-400 bg-amber-500/15 rounded-xl pointer-events-none shadow-[0_0_20px_rgba(245,158,11,0.6)] transition-all duration-75 flex items-center justify-center" style="width: 75%; height: 55%; left: 12%; top: 22%;">
+              <span class="text-[9px] font-black text-black bg-amber-400 px-2 py-0.5 rounded shadow">🎴 카드 출력 영역</span>
+            </div>
+            
+            <div class="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/85 text-[10px] text-amber-300 font-bold border border-amber-500/40 pointer-events-none flex items-center gap-1.5 shadow">
+              <i data-lucide="crosshair" class="w-3.5 h-3.5"></i> 원하는 부위를 클릭/드래그하여 포커스 이동 & 휠로 줌
+            </div>
+          </div>
+
+          <!-- 슬라이더 컨트롤 패널 (0.4x ~ 3.0x 범위로 전체 이미지 어디든 조절) -->
+          <div class="w-full grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-2xl bg-black/60 border border-slate-800 text-xs">
+            <!-- 줌/배율 -->
+            <div class="space-y-1">
+              <div class="flex items-center justify-between font-bold text-slate-300">
+                <span>🔍 줌 배율 (Zoom: 0.4x ~ 3.0x)</span>
+                <span id="crop-scale-val" class="text-amber-400 font-black">1.00x</span>
+              </div>
+              <input id="crop-scale-input" type="range" min="0.4" max="3.0" step="0.05" value="1.0" oninput="onCropScaleChange(this.value)" class="w-full accent-amber-500 cursor-pointer">
+            </div>
+
+            <!-- X축 위치 -->
+            <div class="space-y-1">
+              <div class="flex items-center justify-between font-bold text-slate-300">
+                <span>↔️ 가로 위치 (X)</span>
+                <span id="crop-x-val" class="text-cyan-400 font-black">50%</span>
+              </div>
+              <input id="crop-x-input" type="range" min="0" max="100" step="1" value="50" oninput="onCropXChange(this.value)" class="w-full accent-cyan-500 cursor-pointer">
+            </div>
+
+            <!-- Y축 위치 -->
+            <div class="space-y-1">
+              <div class="flex items-center justify-between font-bold text-slate-300">
+                <span>↕️ 세로 위치 (Y)</span>
+                <span id="crop-y-val" class="text-purple-400 font-black">35%</span>
+              </div>
+              <input id="crop-y-input" type="range" min="0" max="100" step="1" value="35" oninput="onCropYChange(this.value)" class="w-full accent-purple-500 cursor-pointer">
+            </div>
+          </div>
+
+          <!-- 퀵 프리셋 버튼 모음 -->
+          <div class="w-full flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs text-slate-400 font-bold">⚡ 원터치 포커스 프리셋:</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button onclick="setCropPreset('fit')" class="px-2.5 py-1 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 text-[11px] font-bold text-emerald-300 transition" title="정사각형 일러스트를 잘림 없이 전체 표시">
+                🖼️ 전체 맞춤 (0.85x / 정사각)
+              </button>
+              <button onclick="setCropPreset('center')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-slate-200 transition">
+                🌟 전체 중앙 (1.0x)
+              </button>
+              <button onclick="setCropPreset('face')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-[11px] font-bold text-amber-300 transition">
+                👤 얼굴/머리 (1.2x)
+              </button>
+              <button onclick="setCropPreset('upper')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-slate-200 transition">
+                ⚔️ 상반신 (1.0x)
+              </button>
+              <button onclick="setCropPreset('lower')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-slate-200 transition">
+                🦵 하반신 (1.0x)
+              </button>
+              <button onclick="setCropPreset('zoom')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-slate-200 transition">
+                🔍 클로즈업 (1.8x)
+              </button>
+            </div>
+          </div>
+
+          <!-- 🎨 Danbooru 프롬프트 태그 편집 & 이미지 리롤 패널 -->
+          <div class="w-full p-3.5 rounded-2xl bg-purple-950/30 border border-purple-500/40 space-y-2.5 text-xs">
+            <div class="flex items-center justify-between">
+              <label class="font-bold text-purple-200 flex items-center gap-1.5">
+                <i data-lucide="tag" class="w-3.5 h-3.5 text-amber-400"></i>
+                <span>일러스트 Danbooru 태그 편집 & 리롤</span>
+              </label>
+              <button type="button" onclick="rerollCardPromptAndTags()" class="px-2 py-0.5 rounded bg-purple-900/90 hover:bg-purple-800 text-amber-300 font-bold border border-purple-400/60 text-[10.5px] transition flex items-center gap-1">
+                <i data-lucide="sparkles" class="w-3 h-3"></i>
+                <span>✨ 콘셉트 맞춤 태그 자동 재작성</span>
+              </button>
+            </div>
+            
+            <textarea id="crop-card-prompt-input" rows="2" class="w-full bg-[#0d1020] border border-purple-500/40 focus:border-amber-400 rounded-xl p-2.5 text-[11px] text-white outline-none leading-relaxed" placeholder="카드의 Danbooru 프롬프트 태그를 직접 수정할 수 있습니다..."></textarea>
+
+            <!-- 📐 리롤 이미지 비율 및 해상도 선택기 -->
+            <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-[#0d1020] border border-purple-500/30">
+              <label class="text-[11px] font-bold text-slate-300 flex items-center gap-1 shrink-0">
+                <i data-lucide="ratio" class="w-3.5 h-3.5 text-cyan-400"></i>
+                <span>리롤 비율/해상도:</span>
+              </label>
+              <select id="crop-resolution-select" class="flex-1 bg-[#181d33] border border-purple-500/50 text-amber-300 text-[11px] font-bold rounded-lg px-2.5 py-1.5 outline-none focus:border-amber-400">
+                <option value="portrait-small">📱 세로형 포트레이트 (512x768 · 0 Anlas)</option>
+                <option value="square-normal" selected>🖼️ 정사각형 스퀘어 (640x640 · 0 Anlas)</option>
+                <option value="landscape-small">🌄 가로형 랜드스케이프 (768x512 · 0 Anlas)</option>
+                <option value="portrait-normal">👑 고화질 세로형 (832x1216 · 0 Anlas)</option>
+                <option value="landscape-normal">🌟 고화질 랜드스케이프 (1216x832 · 0 Anlas)</option>
+                <option value="square-large">💎 대형 정사각형 (1024x1024)</option>
+              </select>
+            </div>
+
+            <!-- 리롤 액션 버튼들 -->
+            <div class="flex flex-wrap items-center gap-2 pt-0.5">
+              <button type="button" onclick="rerollCardImageAI(false)" class="flex-1 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 active:scale-95">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-300"></i>
+                <span>🎨 NovelAI V4.5 이미지 리롤 (0 Anlas)</span>
+              </button>
+              <button type="button" onclick="rerollCardImageAI(true)" class="px-3 py-2 rounded-xl bg-[#1d2238] hover:bg-[#282f4d] border border-slate-700 text-slate-300 font-bold text-xs transition flex items-center gap-1">
+                <i data-lucide="play" class="w-3.5 h-3.5 text-emerald-400"></i>
+                <span>🎲 모의 리롤 (무료)</span>
+              </button>
+            </div>
+
+            <!-- 리롤 중 로딩 인디케이터 -->
+            <div id="crop-reroll-loading" class="hidden p-2 rounded-xl bg-purple-900/60 border border-purple-400/50 flex items-center gap-2 text-[11px] text-purple-200 animate-pulse">
+              <div class="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+              <span id="crop-reroll-loading-text">NovelAI V4.5로 새로운 고화질 일러스트를 연성하고 있습니다...</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 우측: 실시간 3D 카드 라이브 미리보기 & 저장 (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col items-center justify-center space-y-4 p-4 rounded-2xl bg-black/40 border border-slate-800/80">
+          
+          <div class="text-center space-y-1">
+            <span class="text-xs font-black text-amber-300">✨ 실시간 카드 프레임 미리보기</span>
+            <p class="text-[10px] text-slate-400">조절한 위치, 배율, 리롤된 이미지가 실시간 반영됩니다.</p>
+          </div>
+
+          <!-- 실시간 렌더링 카드 슬롯 -->
+          <div id="crop-card-preview-box" class="py-2 flex items-center justify-center">
+            <!-- createCardElement가 주입됨 -->
+          </div>
+
+          <!-- AI 프롬프트 태그 정보 -->
+          <div id="crop-card-prompt" class="w-full text-[10.5px] text-slate-400 bg-black/70 p-2.5 rounded-xl border border-slate-800/80 break-words line-clamp-2"></div>
+
+          <!-- 액션 버튼 모음 -->
+          <div class="w-full space-y-2 pt-2">
+            <button onclick="saveCardCropSettings()" class="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>💾 이 위치로 크롭 저장 및 적용</span>
+            </button>
+            
+            <div class="flex gap-2">
+              <button onclick="downloadOriginalArt()" class="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-600 transition flex items-center justify-center gap-1.5">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>📥 원본 다운로드</span>
+              </button>
+              <button onclick="closeCardCropModal()" class="px-4 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white font-bold text-xs transition">
+                닫기
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 📖 키워드 & 테마 효과 상세 설명 모달 (Keyword & Archetype Inspector) -->
+  <div id="keyword-info-modal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-start justify-center p-3 sm:p-4 overflow-y-auto transition-all">
+    <div class="bg-gradient-to-b from-[#181d36] to-[#0d1020] border-2 border-amber-500/70 rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl shadow-amber-500/20 relative space-y-5 my-auto transform transition-all animate-fadeIn">
+      
+      <!-- 닫기 버튼 -->
+      <button onclick="closeKeywordInfoModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg bg-black/40 hover:bg-black/80 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <!-- 모달 헤더 -->
+      <div class="flex items-center gap-3">
+        <div id="keyword-modal-icon" class="w-12 h-12 rounded-2xl bg-amber-950/80 border border-amber-500/80 flex items-center justify-center text-2xl shadow-lg shadow-amber-500/30 shrink-0">
+          ⚜️
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 id="keyword-modal-title" class="font-black text-lg text-amber-300">키워드 이름</h3>
+            <span id="keyword-modal-type-badge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-200 border border-slate-600">
+              TCG 효과
+            </span>
+          </div>
+          <p id="keyword-modal-subtitle" class="text-xs text-slate-400">키워드 분류 및 영문 명칭</p>
+        </div>
+      </div>
+
+      <!-- 상세 효과 설명 박스 -->
+      <div class="p-4 rounded-2xl bg-black/70 border border-amber-500/30 space-y-3">
+        <div class="text-[11px] font-bold text-amber-400/90 flex items-center gap-1.5">
+          <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          <span>효과 메카닉 & 상세 규칙</span>
+        </div>
+        <p id="keyword-modal-description" class="text-xs text-slate-200 leading-relaxed break-words"></p>
+      </div>
+
+      <!-- 추가 세부 정보 (속성, 소속 카드 목록 등) -->
+      <div id="keyword-modal-extra-box" class="hidden p-3.5 rounded-2xl bg-purple-950/30 border border-purple-500/40 space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-purple-200 flex items-center gap-1">
+            <i data-lucide="layers" class="w-3.5 h-3.5 text-amber-400"></i>
+            <span>내 마도서 소속 카드</span>
+          </span>
+          <span id="keyword-modal-card-count" class="font-black text-amber-300">0장 보유 중</span>
+        </div>
+        <div id="keyword-modal-cards-list" class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1"></div>
+      </div>
+
+      <!-- 확인 버튼 -->
+      <button onclick="closeKeywordInfoModal()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 text-black font-black text-xs shadow-lg transition">
+        확인
+      </button>
+
+    </div>
+  </div>
+
+  <!-- 푸터 -->
+  <footer class="border-t border-brand-border/60 bg-[#090b14] py-4 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
+      <span>Novel Duelist © 2026 - AI Card Battler with NovelAI V4.5</span>
+      <span>0 Anlas Free Safety Engine Active 🛡️</span>
+    </div>
+  </footer>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
