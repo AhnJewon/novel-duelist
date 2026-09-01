@@ -17,7 +17,7 @@ import {
 } from './status-effects.js';
 import {
   applyPlayerSkillEffects, selectFrontTarget, strikeFrontLine,
-  damageEntity, removeDead
+  damageEntity, removeDead, describeDamageExtras
 } from './skill-effects.js';
 import { escapeHtml, escapeJsString } from './dom-utils.js';
 import { attachCardDetail, hideCardDetail } from './card-detail.js';
@@ -549,10 +549,24 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
 
   const typeIcon = isStructure ? '🏛️' : elCfg.icon;
   const typeTag = isStructure ? '<span class="text-[9px] text-amber-300 font-bold bg-amber-950/80 px-1 rounded">성물</span>' : '';
-  const frozenTag = entity.frozen ? '<div class="absolute inset-0 bg-cyan-900/60 flex items-center justify-center font-black text-cyan-200 text-xs z-20">❄️ 빙결됨</div>' : '';
+  // 💫 행동 봉쇄(기절·빙결)는 카드 전체를 덮어 즉시 알아볼 수 있게 한다.
+  //    🐛 수정: 예전에는 `entity.frozen`만 봐서 **기절은 화면에 표시되지 않았다.**
+  const blockSpec = entity.blockedBy ? STATUS_EFFECTS[entity.blockedBy] : (entity.frozen ? STATUS_EFFECTS.freeze : null);
+  const frozenTag = blockSpec
+    ? `<div class="absolute inset-0 bg-slate-900/70 flex items-center justify-center font-black ${blockSpec.color} text-xs z-20">${blockSpec.icon} ${blockSpec.name}됨</div>`
+    : '';
+
+  // 🔥 나머지 상태이상(화상·맹독·감전·취약)은 아이콘 띠로 보여준다.
+  //    동작해도 화면에 없으면 플레이어는 왜 체력이 줄는지 알 수 없다.
+  const statusList = describeStatuses(entity.statuses).filter(s => s.type !== entity.blockedBy);
+  const statusTag = statusList.length
+    ? `<div class="absolute top-6 right-1 flex flex-col items-end gap-0.5 z-20">${
+        statusList.map(s => `<span class="text-[8px] font-black ${s.color} bg-black/80 px-1 rounded" title="${escapeHtml(s.label)}">${s.icon}${s.turns || ''}</span>`).join('')
+      }</div>`
+    : '';
 
   div.innerHTML = `
-    ${frozenTag}
+    ${frozenTag}${statusTag}
     <div class="flex items-center justify-between z-10 text-[11px] font-black">
       <span class="truncate text-slate-100 flex items-center gap-1">${typeTag} ${entity.name}</span>
       <span>${typeIcon}</span>
@@ -900,8 +914,9 @@ export function resolveMinionAttack(slotIdx, targetKey) {
     if (!target) {
       dealDamageToBoss(finalAtk, entity.name);
     } else {
-      const { died, dealt, blocked } = damageEntity(target, finalAtk);
-      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${dealt} 피해${blocked > 0 ? ` · 수비력이 ${blocked} 흡수` : ''})</span>`);
+      const hit = damageEntity(target, finalAtk);
+      const { died, dealt } = hit;
+      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${dealt} 피해)${describeDamageExtras(hit)}</span>`);
       if (died) {
         addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(target.name)}] 처치!</span>`);
         state.bossMinions = removeDead(state.bossMinions);
@@ -1142,9 +1157,9 @@ export function describeActiveAuras() {
 function hitPlayerMinion(target, attacker, idx) {
   if (!target) return;
   const defBonus = auraDefenseBonus(target);
-  const { died, dealt, blocked } = damageEntity(target, attacker.attack, { defBonus });
-  const blockNote = blocked > 0 ? ` <span class="text-cyan-400">(방어 ${blocked} 흡수)</span>` : '';
-  addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(attacker.name)}] ➔ [${escapeHtml(target.name)}] 공격! (-${dealt} HP)${blockNote}</span>`);
+  const hit = damageEntity(target, attacker.attack, { defBonus });
+  const { died, dealt } = hit;
+  addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(attacker.name)}] ➔ [${escapeHtml(target.name)}] 공격! (-${dealt} HP)${describeDamageExtras(hit)}</span>`);
   if (died) {
     addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
     state.playerMinions.splice(idx, 1);

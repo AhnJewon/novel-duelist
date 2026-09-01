@@ -7,7 +7,7 @@
 
 import { escapeHtml } from './dom-utils.js';
 import { resolveTargetKey, readHpTarget } from './effect-targets.js';
-import { applyStatus } from './status-effects.js';
+import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
 
 /**
@@ -39,13 +39,42 @@ export function selectFrontTarget(minions = [], { pierceShield = false } = {}) {
  *      오라를 주던 건축물이 부서진 뒤에도 보너스가 남습니다.
  */
 export function damageEntity(entity, dmg, { pierce = false, defBonus = 0 } = {}) {
-  if (!entity) return { died: false, dealt: 0, blocked: 0 };
+  if (!entity) return { died: false, dealt: 0, blocked: 0, amplified: 0, shockBonus: 0 };
   const raw = Math.max(0, Math.floor(dmg));
   const baseDef = Math.max(0, parseInt(entity.defense) || 0) + Math.max(0, parseInt(defBonus) || 0);
   const def = pierce ? 0 : baseDef;
-  const amount = Math.max(raw > 0 ? 1 : 0, raw - def);
-  entity.currentHp -= amount;
-  return { died: entity.currentHp <= 0, dealt: amount, blocked: raw - amount };
+
+  // 1) 수비력으로 흡수
+  const afterDef = Math.max(raw > 0 ? 1 : 0, raw - def);
+  const blocked = raw - afterDef;
+
+  // 2) 💥 취약 — 수비력을 뚫고 들어온 피해에 배율을 곱한다.
+  //    🐛 수정: 취약/감전이 소환수 statuses에 등록만 되고 **읽는 쪽이 없었다.**
+  //       본체(applyDirectDamageToPlayer)에만 구현돼 있어 소환수에 걸면 무효과였다.
+  //    ⚠️ 순서는 본체와 같게 유지한다: 경감/수비 → 취약 → 감전.
+  //       순서가 다르면 같은 상태이상이 대상에 따라 다른 피해가 나온다.
+  const mult = getIncomingDamageMultiplier(entity.statuses);
+  const amplified = mult !== 1 ? Math.floor(afterDef * mult) - afterDef : 0;
+
+  // 3) ⚡ 감전 — 피격될 때마다 추가 연쇄 피해.
+  //    수비력을 무시한다 (전기는 갑옷을 타고 흐른다). 실제로 맞았을 때만 터진다.
+  const shockBonus = afterDef > 0 ? getOnHitBonusDamage(entity.statuses) : 0;
+
+  const total = afterDef + amplified + shockBonus;
+  entity.currentHp -= total;
+  return { died: entity.currentHp <= 0, dealt: total, blocked, amplified, shockBonus };
+}
+
+/**
+ * damageEntity 결과를 로그 꼬리말로 만든다.
+ * 수치가 왜 그렇게 나왔는지 보여주지 않으면 상태이상이 동작하는지 알 수 없다.
+ */
+export function describeDamageExtras({ blocked = 0, amplified = 0, shockBonus = 0 } = {}) {
+  const bits = [];
+  if (blocked > 0) bits.push(`<span class="text-cyan-400">방어 ${blocked} 흡수</span>`);
+  if (amplified > 0) bits.push(`<span class="text-purple-400">💥 취약 +${amplified}</span>`);
+  if (shockBonus > 0) bits.push(`<span class="text-amber-300">⚡ 감전 +${shockBonus}</span>`);
+  return bits.length ? ` (${bits.join(', ')})` : '';
 }
 
 /**
@@ -68,8 +97,9 @@ export function strikeFrontLine(minions, dmg, ctx) {
     return { target: null, died: false, minions };
   }
 
-  const { died } = damageEntity(target, dmg, { pierce: pierceShield });
-  addBattleLog(`<span class="text-yellow-400">🛡️ [${escapeHtml(target.name)}] ${absorbLabel || '이(가) 공격을 대신 흡수했습니다!'} (-${dmg} HP)</span>`);
+  const hit = damageEntity(target, dmg, { pierce: pierceShield });
+  const { died } = hit;
+  addBattleLog(`<span class="text-yellow-400">🛡️ [${escapeHtml(target.name)}] ${absorbLabel || '이(가) 공격을 대신 흡수했습니다!'} (-${hit.dealt} HP)${describeDamageExtras(hit)}</span>`);
   if (died) {
     addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
   }
@@ -127,8 +157,10 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
         if (key === 'face') { hitFace = true; continue; }
         const t = resolveTargetKey(game, key);
         if (t && t.entity) {
-          damageEntity(t.entity, dmg, { pierce: !!skill.pierceShield });
-          addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(t.entity.name)}] -${dmg} 피해!</span>`);
+          // 🐛 수정: 로그가 **요청한** dmg를 찍고 있었다. 수비력·취약·감전이
+          //    붙으면 실제 피해와 달라 로그가 거짓이 된다. 반환값을 쓴다.
+          const hit = damageEntity(t.entity, dmg, { pierce: !!skill.pierceShield });
+          addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(t.entity.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
         }
       }
       game.bossMinions = removeDead(game.bossMinions);
@@ -136,8 +168,8 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       if (hitFace) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
     } else if (allowAoe && skill.isAoeSpell) {
       game.bossMinions.forEach(bm => {
-        damageEntity(bm, dmg, { pierce: !!skill.pierceShield });
-        addBattleLog(`<span class="text-red-300">💥 [${cardName}] 광역 폭격: 부하 [${escapeHtml(bm.name)}] -${dmg} 피해!</span>`);
+        const hit = damageEntity(bm, dmg, { pierce: !!skill.pierceShield });
+        addBattleLog(`<span class="text-red-300">💥 [${cardName}] 광역 폭격: 부하 [${escapeHtml(bm.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
       });
       game.bossMinions = removeDead(game.bossMinions);
       dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);

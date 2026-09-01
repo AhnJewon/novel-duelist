@@ -189,3 +189,11 @@
 28. **`STAT_CURVE`의 `pivot`을 옮기지 마세요.** pivot에서 선형과 같아지도록
     정규화돼 있어서, 옮기면 **모든 카드의 코스트가 움직입니다.**
     → [DECISIONS #71](docs/DECISIONS.md)
+
+29. **소환수 피해 계산은 `damageEntity()` 한 곳입니다.** 수비력·오라·취약·감전이
+    모두 여기서 처리됩니다. 우회해서 `currentHp`를 직접 깎으면 그 전부가 무시됩니다.
+    → [DECISIONS #73](docs/DECISIONS.md)
+
+30. **피해 로그에 요청값을 찍지 마세요.** `damageEntity`의 반환값(`dealt`)을 쓰고
+    `describeDamageExtras()`로 근거를 붙이세요. 요청값을 찍으면 수비력·취약·감전이
+    붙는 순간 로그가 거짓이 됩니다. → [DECISIONS #73](docs/DECISIONS.md)

@@ -175,6 +175,8 @@ export function describeStatuses(statuses) {
         type,
         icon: spec.icon,
         color: spec.color,
+        turns: st.turns,          // 소환수 뱃지에 남은 턴을 찍는다
+        value: st.value || 0,
         label: `${spec.icon} ${spec.name}${st.value ? ` ${st.value}` : ''} (${st.turns}턴)`
       };
     });
