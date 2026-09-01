@@ -81,6 +81,10 @@ export function hasTargetableEffect(skill = {}) {
   if ((skill.damage || 0) > 0) return true;
   if ((skill.heal || 0) > 0) return true;
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') return true;
+  // 약화·무효화는 "누구를"이 없으면 성립하지 않는다
+  if ((skill.attackDown || 0) > 0) return true;
+  if (skill.silence) return true;
+  // ⚠️ damageReduction은 시전자에게 붙는 버프라 대상이 필요 없다 (여기 넣지 말 것)
   return false;
 }
 

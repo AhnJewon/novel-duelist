@@ -71,7 +71,14 @@ export const SIDE_BOSS = 'boss';
 
 /** 진영별 버프 기본값 */
 export function createBuffs() {
-  return { doubleCast: false, invulnerable: 0, pierceShield: false };
+  return {
+    doubleCast: false,
+    invulnerable: 0,
+    pierceShield: false,
+    // 🛡️ 피해 경감 (%) + 남은 턴. 무적과 달리 완전 차단이 아니라 비율로 깎는다.
+    damageReduction: 0,
+    damageReductionTurns: 0
+  };
 }
 
 /**

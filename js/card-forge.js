@@ -200,6 +200,20 @@ TCG Archetype Combo Design Philosophy:
 CARD NAME RULE (카드 타입과 이름이 어긋나면 안 된다):
 ${buildNamingRule(targetType)}
 
+🪤 반응형 효과는 **함정 전용**이다 (가장 자주 어기는 규칙):
+- ❌ 소환수/주문/건축물에 "상대가 ~할 때마다", "적이 ~를 내면", "공격받으면" 같은
+     **상대 행동에 반응하는** 효과를 쓰지 말 것.
+     필드에 계속 남는 소환수가 그런 효과를 가지면 함정 카드가 존재할 이유가 없어진다.
+- ✅ 소환수·주문·건축물은 **낼 때 즉시** 일어나는 일만 서술할 것.
+- ✅ 반응형은 "cardType": "trap"에서만 쓰고, 그때 "trapTrigger"를 지정할 것.
+
+⚙️ 실제로 구현된 효과만 쓸 것 (아래에 없는 건 글자만 남고 동작하지 않는다):
+  damage(피해) · shield(방어막) · heal(치유) · manaGain(마나) · drawCards(드로우)
+  multiHit(연타) · pierceShield(실드 관통) · lifestealPercent(흡혈)
+  executeThreshold(처형) · doubleCastNext(더블캐스트) · invulnerableTurns(무적)
+  damageReduction(피해 경감 %) · attackDown(공격력 약화) · silence(효과 무효화)
+  statusEffect(stun/freeze/burn/shock/poison/vulnerable)
+
 OUTPUT SCHEMA (Return ONLY valid raw JSON):
 {
   "name": "컨셉을 살린 독창적이고 자연스러운 한국어 카드명",
@@ -233,6 +247,9 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "heal": 0-16,
     "multiHit": 1,
     "drawCards": 0-2,
+    "damageReduction": 0-60,
+    "attackDown": 0-9,
+    "silence": false,
     "targetSide": "foe|ally|self|any",
     "targetScope": "single|multi|all|random",
     "targetCount": 1-3,

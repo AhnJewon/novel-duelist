@@ -1368,6 +1368,20 @@
           </select>
         </div>
 
+        <!-- 카드군 보스 — 지정하면 그 카드군 카드와 범용 카드만 전술 덱에 넣는다.
+             (buildBossTacticalDeck이 boss.themeId로 이미 필터링한다) -->
+        <div class="flex items-center gap-2 text-xs">
+          <label class="font-bold text-amber-300 shrink-0 flex items-center gap-1">
+            <span>⚜️ 카드군 보스:</span>
+          </label>
+          <select id="boss-forge-theme" class="flex-1 bg-[#0f111f] border border-amber-500/40 text-amber-200 text-xs font-bold rounded-xl px-3 py-1.5 outline-none cursor-pointer">
+            <option value="">— 지정 없음 (속성 기준 일반 보스) —</option>
+          </select>
+        </div>
+        <p class="text-[10.5px] text-slate-500 keep-words -mt-1">
+          카드군을 지정하면 보스가 <b>그 카드군 카드와 범용 카드만</b> 사용합니다. 해당 카드군 덱의 천적이 됩니다.
+        </p>
+
         <div class="flex items-center gap-2">
           <input type="text" id="boss-llm-concept" placeholder="예: 시공간을 왜곡하는 종말의 메카신, 피의 여왕 뱀파이어" class="flex-1 bg-[#0f111f] border border-red-500/40 rounded-xl px-3.5 py-2 text-xs text-white outline-none">
           <button type="button" onclick="generateBossWithLLM()" id="btn-boss-llm" class="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1 shrink-0 active:scale-95">

@@ -909,10 +909,10 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   // 🌐 PvP: 상대가 고른 대상을 그대로 재생한다.
   //    상대 화면 기준의 `foe:N`은 내 화면에서는 **내 전장의 N번**이다.
   if (targetKey === 'face') {
-    if (playerBuffs.invulnerable <= 0) {
-      state.playerHp -= bm.attack;
-      addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격! (-${bm.attack} HP)</span>`);
-    }
+    // 🐛 예전에는 state.playerHp를 직접 깎아 **방어막·피해 경감·취약을 전부 우회**했다.
+    //    본체가 맞는 경로는 반드시 applyDirectDamageToPlayer 하나로 모은다.
+    addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
+    applyDirectDamageToPlayer(bm.attack, false);
     return;
   }
   if (targetKey && targetKey.startsWith('foe:')) {
@@ -938,9 +938,10 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
       addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
       state.playerMinions.shift();
     }
-  } else if (playerBuffs.invulnerable <= 0) {
-    state.playerHp -= bm.attack;
-    addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격! (-${bm.attack} HP)</span>`);
+  } else {
+    // 🐛 여기도 마찬가지로 직접 차감이었다. 무적만 보고 방어막·경감은 무시했다.
+    addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
+    applyDirectDamageToPlayer(bm.attack, false);
   }
 }
 
@@ -1389,6 +1390,16 @@ function applyDirectDamageToPlayer(dmg, pierceShield = false) {
 
   let finalDmg = Math.max(0, Math.floor(dmg));
 
+  // 🛡️ 피해 경감 — 취약 배율보다 **먼저** 적용한다.
+  //    (경감 후 취약이 곱해지는 편이 "방어를 뚫고 약점을 노린다"는 감각에 맞다)
+  if (playerBuffs.damageReduction > 0 && playerBuffs.damageReductionTurns > 0) {
+    const cut = Math.floor(finalDmg * (playerBuffs.damageReduction / 100));
+    if (cut > 0) {
+      finalDmg -= cut;
+      addBattleLog(`<span class="text-cyan-300">🛡️ [피해 경감 ${playerBuffs.damageReduction}%] ${cut} 피해를 막아냈습니다. (${finalDmg} 관통)</span>`);
+    }
+  }
+
   // 취약 등 받는 피해 배율 (status-effects가 단일 소스)
   const mult = getIncomingDamageMultiplier(playerStatus);
   if (mult !== 1) {
@@ -1427,6 +1438,16 @@ export function startPlayerTurn() {
 
   // 버프 틱 차감
   if (playerBuffs.invulnerable > 0) playerBuffs.invulnerable--;
+
+  // 🛡️ 피해 경감도 턴마다 줄어든다. 안 하면 한 번 걸면 전투 내내 유지된다.
+  if (playerBuffs.damageReductionTurns > 0) {
+    playerBuffs.damageReductionTurns--;
+    if (playerBuffs.damageReductionTurns === 0) {
+      const was = playerBuffs.damageReduction;
+      playerBuffs.damageReduction = 0;
+      if (was > 0) addBattleLog(`<span class="text-slate-400">🛡️ 피해 경감 효과가 사라졌습니다.</span>`);
+    }
+  }
 
   // 🔥 플레이어 지속 피해(화상/맹독) 적용 후 상태이상 1턴 감쇠
   // 🐛 수정: 이전에는 playerDebuffs에 burn/poison 칸만 있고 적용/감쇠가 없어

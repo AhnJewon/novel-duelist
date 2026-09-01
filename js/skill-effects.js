@@ -149,6 +149,45 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     addBattleLog(`<span class="text-purple-300 font-bold">🎯 다음 타격이 보스의 방어막을 관통합니다!</span>`);
   }
 
+  // 🛡️ 피해 경감 — 다음 N턴 동안 받는 피해를 %만큼 줄인다.
+  //    LLM이 설명문에 자주 쓰던 "피해를 50% 줄이고"가 실제로 동작하게 된 것.
+  if (skill.damageReduction > 0) {
+    setPlayerBuff('damageReduction', skill.damageReduction);
+    setPlayerBuff('damageReductionTurns', Math.max(1, skill.reductionTurns || 2));
+    addBattleLog(`<span class="text-cyan-300 font-bold">🛡️ ${cardName}: 받는 피해가 ${skill.damageReduction}% 감소합니다!</span>`);
+  }
+
+  // ⚔️ 공격력 약화 — 지정한 상대 소환수의 공격력을 깎는다.
+  if (skill.attackDown > 0) {
+    const picked = Array.isArray(opts.picked) ? opts.picked : null;
+    const targets = picked
+      ? picked.map(k => resolveTargetKey(game, k)).filter(t => t && t.entity)
+      : (game.bossMinions || []).slice(0, 1).map(e => ({ entity: e }));
+    if (targets.length === 0) {
+      addBattleLog(`<span class="text-slate-400">약화시킬 대상이 없습니다.</span>`);
+    }
+    for (const t of targets) {
+      const before = t.entity.attack || 0;
+      t.entity.attack = Math.max(0, before - skill.attackDown);
+      addBattleLog(`<span class="text-orange-300">⚔️ [${escapeHtml(t.entity.name)}] 공격력 ${before} → ${t.entity.attack}</span>`);
+    }
+  }
+
+  // 🚫 효과 무효화 — 지정한 상대 소환수의 스킬을 지운다.
+  //    수치(공/체)는 남기고 **효과만** 없앤다. 유희왕의 '무효화'와 같은 감각.
+  if (skill.silence) {
+    const picked = Array.isArray(opts.picked) ? opts.picked : null;
+    const targets = picked
+      ? picked.map(k => resolveTargetKey(game, k)).filter(t => t && t.entity)
+      : (game.bossMinions || []).slice(0, 1).map(e => ({ entity: e }));
+    for (const t of targets) {
+      t.entity.skills = [];
+      t.entity.silenced = true;
+      t.entity.taunt = false;
+      addBattleLog(`<span class="text-purple-300 font-bold">🚫 [${escapeHtml(t.entity.name)}]의 효과가 무효화되었습니다!</span>`);
+    }
+  }
+
   // 9. 상태이상
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
     const st = skill.statusEffect;

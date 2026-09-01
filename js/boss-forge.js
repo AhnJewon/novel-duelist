@@ -114,6 +114,7 @@ export function renderBossDropdown() {
 }
 
 export function openBossForgeModal() {
+  refreshBossThemeOptions();
   const previewBox = document.getElementById('boss-preview-box');
   const modal = document.getElementById('boss-forge-modal');
   if (previewBox) previewBox.classList.add('hidden');
@@ -375,7 +376,10 @@ Format:
     comboPatterns: patterns,
     dialogueOnStart: parsedBoss.dialogueOnStart,
     dialogueLowHp: parsedBoss.dialogueLowHp,
-    dialoguePlayerStunned: parsedBoss.dialoguePlayerStunned
+    dialoguePlayerStunned: parsedBoss.dialoguePlayerStunned,
+    // ⚜️ 카드군 보스 — buildBossTacticalDeck이 이 값으로 전술 덱을 거른다.
+    //    지정하면 그 카드군 카드 + 범용 카드만 쓴다.
+    ...readBossTheme()
   };
 
   if (loadingEl) loadingEl.classList.add('hidden');
@@ -515,4 +519,44 @@ export async function triggerLiveBossReaction(situationType, details = '') {
   if (reactionText) {
     addBattleLog(`<span class="text-amber-400 font-bold">💬 ${boss.name}: "${reactionText}"</span>`);
   }
+}
+
+// ============================================================
+// ⚜️ 카드군 보스
+// ------------------------------------------------------------
+// 엔진(buildBossTacticalDeck)은 예전부터 boss.themeId를 보고
+// "그 카드군 카드 + 범용 카드"만 전술 덱에 넣도록 돼 있었다.
+// 그런데 연성 UI에 지정할 수단이 없어 **쓸 수가 없었다.**
+//
+// ⚠️ boss-forge의 'archetype'은 전술 성향(juggernaut/tactician/...)이고
+//    여기서 말하는 카드군(themeId)과는 완전히 다른 축이다. 헷갈리지 말 것.
+// ============================================================
+
+/** 보스 연성 모달의 카드군 선택기를 현재 DB로 채운다 */
+export function refreshBossThemeOptions() {
+  const sel = document.getElementById('boss-forge-theme');
+  if (!sel) return;
+  const keep = sel.value;
+  const list = state.archetypesList || [];
+
+  sel.innerHTML = `<option value="">— 지정 없음 (속성 기준 일반 보스) —</option>` +
+    list
+      .filter(a => a && a.id && a.name)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'))
+      .map(a => {
+        const els = (a.elements || [a.element]).filter(Boolean).join('/');
+        return `<option value="${a.id}">${a.name}${els ? ' · ' + els : ''}</option>`;
+      }).join('');
+
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+
+/** 선택된 카드군을 보스 데이터 조각으로 (없으면 빈 객체) */
+function readBossTheme() {
+  const sel = document.getElementById('boss-forge-theme');
+  const id = sel ? sel.value : '';
+  if (!id) return {};
+  const t = (state.archetypesList || []).find(a => a.id === id);
+  if (!t) return {};
+  return { themeId: t.id, themeName: t.name, themeKeyword: t.keyword || null };
 }

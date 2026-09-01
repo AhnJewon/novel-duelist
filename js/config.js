@@ -139,6 +139,13 @@ export const EFFECT_COSTS = {
   // 🪤 함정 — 조건부 발동이라 즉발보다 싸다 (조건이 안 맞으면 아무 일도 없다)
   trapTrigger:       { cost: 1, minRarity: 'common',    label: '함정 발동조건' },
 
+  // 🛡️ 방어·무력화 계열
+  //    LLM이 설명문에는 자주 쓰는데 엔진에 없어서 **글자만 있고 동작하지 않던** 효과들이다.
+  //    ("피해를 50% 줄이고", "공격력을 0으로", "효과를 무효화")
+  damageReduction:   { cost: 2, minRarity: 'rare',      label: '피해 경감' },
+  attackDown:        { cost: 2, minRarity: 'rare',      label: '공격력 약화' },
+  silence:           { cost: 3, minRarity: 'epic',      label: '효과 무효화' },
+
   // 게임을 끝내는 효과 — legendary 전용
   invulnerableTurns: { cost: 5, minRarity: 'legendary', label: '무적' }
 };
@@ -154,7 +161,7 @@ function listActiveEffects(skill = {}) {
       on = (skill.multiHit || 1) > 1;
     } else if (key === 'trapTrigger') {
       on = !!skill.trapTrigger;
-    } else if (key === 'passiveEffect' || key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext') {
+    } else if (key === 'passiveEffect' || key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'silence') {
       on = !!skill[key];
     } else {
       on = (skill[key] || 0) > 0;
@@ -451,6 +458,24 @@ export function sanitizeAndClampCardData(cardData) {
   }
   if (skill.multiHit !== undefined) {
     skill.multiHit = Math.min(3, Math.max(1, Math.round(parseInt(skill.multiHit) || 1)));
+  }
+
+  // 🪤 반응형 발동조건은 **함정 전용**이다.
+  //    소환수가 "상대가 소환수를 낼 때마다 ~"를 갖게 되면 함정 카드의 존재 이유가 사라진다.
+  //    필드에 남아 계속 반응하는 소환수 쪽이 세트해서 한 번 쓰는 함정보다 무조건 낫기 때문이다.
+  //    LLM이 프롬프트를 어겨도 여기서 막는다.
+  if (cardType !== 'trap') {
+    if (skill.trapTrigger) delete skill.trapTrigger;
+    if (skill.condition) delete skill.condition;
+  }
+
+  // 🛡️ 피해 경감 — 퍼센트. 100%(완전 무효)는 '무적'과 같아지므로 상한을 둔다.
+  if (skill.damageReduction !== undefined && skill.damageReduction > 0) {
+    skill.damageReduction = Math.min(60, Math.max(10, parseInt(skill.damageReduction) || 0));
+  }
+  // ⚔️ 공격력 약화 — 등급 버프 상한과 같은 범위를 쓴다 (대칭)
+  if (skill.attackDown !== undefined && skill.attackDown > 0) {
+    skill.attackDown = Math.min(caps.buffValue[1] * 3, Math.max(1, parseInt(skill.attackDown) || 0));
   }
 
   // 🎯 대상 규칙 정규화. LLM이 아무 문자열이나 넣어도 안전한 값으로 떨어진다.
