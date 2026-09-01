@@ -226,7 +226,11 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
       <div class="flex flex-wrap gap-1 items-center shrink-0">
         ${getSkillBadgesHtml(skill)}
       </div>
-      <p class="text-slate-300 leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>
+      ${skill.isVanilla
+        // 🃏 바닐라는 효과가 아니라 **플레이버 텍스트**다. 기울임 + 흐린 색으로
+        //    효과 설명과 구분한다. 안 그러면 "효과가 안 적힌 카드"로 보인다.
+        ? `<p class="text-slate-400/80 italic leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>`
+        : `<p class="text-slate-300 leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>`}
     </div>
 
     <!-- 하단 스탯 바 -->

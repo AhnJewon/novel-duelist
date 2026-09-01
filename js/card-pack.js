@@ -350,6 +350,8 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let skillTargetScope = 'single';
   let skillTargetCount = 1;
   let llmPassiveRaw = null;      // 🏛️ LLM이 설계한 건축물 패시브 (없으면 폴백)
+  let llmVanilla = false;        // 🃏 LLM이 바닐라로 만들겠다고 했는가
+  let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
   let skillName = `${baseConcept}의 비기`;
   let skillDesc = cardType === 'spell' 
     ? `[즉발 주문] 적에게 ${spellDmg}의 ${ELEMENT_CONFIG[element].name} 피해를 입힙니다.`
@@ -384,6 +386,13 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
 - ${cost}마나에 어울리는 규모로 설계하라:
   1~2마나 → 효과 1개, 작은 스탯 / 3~4마나 → 효과 1~2개 / 5마나 이상 → 효과 2~3개.
 - ⚠️ 넘치면 시스템이 효과를 잘라내거나 수치를 깎고, 너무 빈약하면 마나를 내린다.
+
+🃏 VANILLA CARD (효과 없는 카드 — 정상적인 카드 종류다):
+1~2마나는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다. 그럴 때는
+억지로 효과를 만들지 말고 "isVanilla": true 로 두고 효과 수치를 비워라.
+대신 "flavorText"에 세계관 한 줄(25자 이내)을 쓴다. **효과처럼 읽히면 안 된다.**
+  ✅ "이름 없는 자들이 전장을 채운다."   ❌ "적에게 큰 피해를 준다."
+바닐라는 약한 카드가 아니다 — 효과가 없는 만큼 스탯이 더 좋다.
 Seed Nonce: ${nonce}
 Existing Archetypes list:
 ${knownThemes}
@@ -505,6 +514,8 @@ Return ONLY JSON:
   "visualSeeds": "이 카드의 그림을 묘사하는 영어 핵심 키워드 3~6개, 쉼표 구분. 완성된 태그 목록이 아니라 핵심만. 예: frost sorceress, ice crystal staff, snowfall",
   "skillName": "독창적인 스킬명",
   "skillDesc": "명확한 고정 정수 효과 설명 문장",
+  "isVanilla": "효과 없는 바닐라로 만들 때만 true (그러면 효과 수치는 전부 0)",
+  "flavorText": "isVanilla가 true일 때만: 세계관 한 줄 (25자 이내). 효과 서술 금지.",
   "targetSide": "foe|ally|self|any",
   "targetScope": "single|multi|all|random",
   "targetCount": 1-3,
@@ -586,6 +597,9 @@ Return ONLY JSON:
       }, element, cardType, packThemeName || '');
       if (cardJson.skillName) skillName = cardJson.skillName;
       if (cardJson.skillDesc) skillDesc = cardJson.skillDesc;
+      // 🃏 바닐라 — 효과 대신 플레이버 텍스트를 담는 카드
+      if (cardJson.isVanilla) llmVanilla = true;
+      if (cardJson.flavorText) llmFlavorText = String(cardJson.flavorText);
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;
       if (cardJson.targetScope) skillTargetScope = cardJson.targetScope;
       if (cardJson.targetCount) skillTargetCount = parseInt(cardJson.targetCount) || 1;
@@ -687,11 +701,17 @@ Return ONLY JSON:
     skillDesc = describeStructurePassive(structPassive);
   }
 
+  // 🃏 바닐라 — LLM이 그렇게 만들겠다고 했으면 효과 수치를 넣지 않는다.
+  //    (건축물은 패시브가 정체성이라 바닐라로 두지 않는다)
+  const makeVanilla = llmVanilla && cardType !== 'structure';
+
   const skill = {
     name: skillName,
     description: skillDesc,
     cost: cost,
-    damage: cardType === 'spell' ? spellDmg : atk,
+    isVanilla: makeVanilla || undefined,
+    flavorText: llmFlavorText || undefined,
+    damage: makeVanilla ? 0 : (cardType === 'spell' ? spellDmg : atk),
     // 🎯 LLM이 정한 대상 규칙. 없으면 sanitizeAndClampCardData가 기본값(적 1체)으로 떨군다.
     //    isAoeSpell은 여기서 강제하지 않는다 — targetScope가 단일 소스다.
     targetSide: skillTargetSide,

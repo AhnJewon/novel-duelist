@@ -22,6 +22,8 @@ const IMPLEMENTED_FIELDS = new Set([
   // 🏛️ 건축물 패시브 — EFFECT_COSTS의 'aura'는 passiveEffect **안에** 들어가므로
   //    스킬 최상위 키로는 나타나지 않는다. taunt도 예산에 있지만 별도 키다.
   'passiveEffect', 'taunt',
+  // 🃏 바닐라 카드의 플레이버 텍스트 (효과가 없을 때 설명 슬롯에 들어간다)
+  'flavorText', 'isVanilla',
   // 💫 본체 지정 상태이상 옵트인 (BODY_STATUS_COST_MULT 할증을 치른다)
   'bodyStatus'
 ]);
@@ -78,8 +80,14 @@ export function validateCardPlan(data, cardType = 'unit') {
     if (k === 'multiHit') return (skill.multiHit || 1) > 1;
     return !!skill[k];
   });
-  if (!hasAnyEffect && desc.length > 8) {
-    problems.push('설명문은 있는데 실제 효과 수치가 하나도 없습니다. damage/shield/heal 등을 채우세요.');
+  // 🃏 바닐라는 예외다. 효과가 없는 대신 플레이버 텍스트를 갖는 정상적인 카드다.
+  //    (저코스트 카드는 스탯만으로 예산이 차서 효과를 넣을 자리가 없다)
+  const isVanillaPlan = !!skill.isVanilla || (!hasAnyEffect && !!skill.flavorText);
+  if (!hasAnyEffect && !isVanillaPlan && desc.length > 8) {
+    problems.push(
+      '설명문은 있는데 실제 효과 수치가 하나도 없습니다. damage/shield/heal 등을 채우거나, ' +
+      '효과 없는 바닐라 카드로 만들 거면 "isVanilla": true 와 "flavorText"를 넣으세요.'
+    );
   }
 
   // 4) 설명문의 숫자가 수치와 다르다 (가장 흔한 어긋남)

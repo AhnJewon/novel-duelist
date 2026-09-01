@@ -97,6 +97,8 @@
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
 | PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
+| 덱 마나 커브 (코스트 분포) | `js/config.js`의 `COST_CURVE_WEIGHTS` |
+| 보스 초반 공세 세기 | `js/battle-engine.js`의 `BOSS_RAMP` |
 | 카드 타입별 예산 (소환수/건축물/마법/함정) | `js/config.js`의 `TYPE_POWER` **한 곳** |
 | 효과 **크기**의 값 (피해 28 vs 8) | `js/config.js`의 `EFFECT_MAGNITUDE` **한 곳** |
 | 전투 무작위 / 재현 | `js/rng.js` (`initBattle({seed})`) |
@@ -207,3 +209,20 @@
 32. **`needsTargetPick`이 true인 효과는 `opts.picked`를 반드시 읽으세요.**
     heal이 이걸 어겨서 대상을 고르게 하고도 본체를 회복했습니다.
     → [DECISIONS #74](docs/DECISIONS.md)
+
+33. **등급으로 코스트를 가두지 마세요.** 등급은 "그 코스트에서 얼마나 강한가"만
+    정합니다. 코스트는 `COST_CURVE_WEIGHTS`에서 먼저 굴려 LLM에 넘깁니다.
+    가두면 레어+ 카드가 1마나가 될 수 없어 **덱에서 저코스트가 사라집니다.**
+    → [DECISIONS #75](docs/DECISIONS.md)
+
+34. **`costLocked` 카드의 코스트를 예산으로 움직이지 마세요.** 대신 내용을 깎습니다.
+    안 그러면 등급별 스탯 하한 때문에 1마나 카드가 전부 2마나로 밀립니다.
+    → [DECISIONS #75](docs/DECISIONS.md)
+
+35. **예산 정산 뒤에 효과를 되살리지 마세요.** 그러면 검사를 통과한 뒤 카드가
+    조용히 예산을 넘깁니다. 효과가 없으면 **바닐라**(`isVanilla` + 플레이버)로
+    두세요. → [DECISIONS #75](docs/DECISIONS.md)
+
+36. **보스 소환수에도 소환 후유증을 적용하세요.** `summonedTurn`을 기록하고
+    `refreshMinions`를 콤보 실행 **앞에** 부르세요. 뒤에 두면 이번 턴에 소환된
+    소환수까지 풀려 후유증이 무효가 됩니다. → [DECISIONS #75](docs/DECISIONS.md)

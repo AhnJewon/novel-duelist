@@ -120,6 +120,18 @@ CRITICAL NUMERICAL RULES & STAT CAPS (스펙 인플레 방지 및 고정 정수 
 - ⚠️ 예산을 넘으면 시스템이 **효과를 잘라내거나 수치를 깎는다.** 반대로 너무
   빈약하면 **마나를 내려버린다.** 처음부터 ${plannedCost}마나에 맞춰 설계하라.
 
+🃏 VANILLA CARD (효과 없는 카드 — 정상적인 카드 종류다):
+1~2마나 카드는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다.
+그럴 때는 **억지로 효과를 만들지 말고 바닐라로 만들어라.**
+- skill에 "isVanilla": true 를 넣고, 효과 수치는 전부 0/생략한다.
+- 대신 "flavorText"에 **세계관 한 줄**을 쓴다 (25자 이내, 한국어).
+  카드의 정체·유래·분위기를 담되 **효과처럼 읽히면 안 된다.**
+  * ✅ "이름 없는 자들이 전장을 채운다."
+  * ✅ "그가 지나간 자리에는 재만 남았다."
+  * ❌ "적에게 큰 피해를 준다."        — 효과 서술이다
+  * ❌ "매 턴 방어막을 얻는다."        — 구현되지 않는 거짓말이다
+- 바닐라는 약한 카드가 아니다. 효과가 없는 만큼 **스탯이 더 좋다.**
+
 TCG ARCHETYPE DECK COMBO (유희왕/TCG식 상호 연계 테마 덱):
 Cards belong to a Theme Archetype (카드군) and trigger interlocking combos when played or when theme allies exist!
 Existing Archetypes list:
@@ -326,6 +338,8 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "skill": {
     "name": "컨셉에 맞춘 독창적인 스킬명",
     "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",
+    "isVanilla": "효과 없는 바닐라로 만들 때만 true. 그러면 아래 수치는 전부 0/생략.",
+    "flavorText": "isVanilla가 true일 때만: 세계관 한 줄 (25자 이내). 효과 서술 금지.",
     "cost": 1-3,
     "damage": 0-22,
     "shield": 0-16,

@@ -732,17 +732,19 @@ export function enforcePowerBudget(cardData, skill) {
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
 
-  // 3-b. 효과가 전부 사라졌으면 기본 피해 하나는 남긴다.
+  // 3-b. 🃏 효과가 하나도 안 남았으면 **바닐라 카드**가 된다.
   //
-  //   🐛 수정: 이 블록이 **맨 마지막**에 있었다. 3단계가 예산을 맞추려고 효과를
-  //      지워 놓으면 여기서 다시 넣어버려, 예산 검사를 통과한 뒤에 카드가
-  //      조용히 예산을 넘겼다. (측정: 생성 카드의 25%가 예산 초과)
-  //      이제 스탯 깎기(4)와 안전밸브(5) **앞에** 둬서 되돌린 몫까지 정산한다.
-  //   ⚠️ 되돌리는 피해는 등급 하한으로 낮춘다. 원래 값을 그대로 되살리면
-  //      3단계가 지운 이유가 사라진다.
-  if (listActiveEffects(out).length === 0) {
-    out.damage = Math.max(1, Math.min(caps.spellDamage[0], parseInt(skill.damage) || caps.spellDamage[0]));
-  }
+  //   🐛 예전에는 여기서 억지로 피해 효과를 되살렸다. 두 가지가 잘못됐다:
+  //      ① 이 블록이 맨 마지막이라, 3단계가 예산을 맞추려고 지운 효과를
+  //         되살려 검사를 통과한 뒤 카드가 조용히 예산을 넘겼다 (25% 초과)
+  //      ② 애초에 **모든 카드가 효과를 가져야 한다는 전제가 틀렸다.**
+  //         저코스트 카드는 스탯만으로 예산이 차서 효과를 넣을 자리가 없다.
+  //         실제 TCG에서 그건 정상적인 카드 종류다 — 바닐라.
+  //
+  //   바닐라는 효과 대신 **스탯 효율**과 플레이버 텍스트를 갖는다.
+  //   효과가 없으니 남는 예산이 전부 스탯으로 가고, 4단계가 덜 깎는다.
+  const isVanilla = listActiveEffects(out).length === 0;
+  if (isVanilla) out.isVanilla = true;
 
   // 4. 그래도 넘치면 스탯을 깎는다
   let guard = 0;
@@ -943,7 +945,13 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   }
   if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
 
-  if (parts.length === 0) return cardType === 'trap' ? '조건 충족 시 발동합니다.' : '특별한 효과가 없습니다.';
+  if (parts.length === 0) {
+    // 🃏 바닐라 — 효과 슬롯에 **플레이버 텍스트**를 담는다.
+    //    "특별한 효과가 없습니다"는 카드를 실패작처럼 보이게 한다.
+    //    바닐라는 스탯 효율로 값을 하는 정상적인 카드 종류다.
+    if (skill.flavorText) return String(skill.flavorText);
+    return cardType === 'trap' ? '조건 충족 시 발동합니다.' : '';
+  }
   return parts.join(' · ') + '.';
 }
 
@@ -1135,6 +1143,36 @@ const EFFECT_DESC_PATTERNS = {
 function descMentionsEffect(desc = '', key) {
   const re = EFFECT_DESC_PATTERNS[key];
   return re ? re.test(desc) : false;
+}
+
+/**
+ * 🃏 바닐라 카드의 기본 플레이버 텍스트.
+ *
+ * LLM이 flavorText를 안 줬을 때만 쓴다. 효과가 없는 카드에
+ * "특별한 효과가 없습니다"라고 적으면 실패작처럼 보이므로,
+ * 세계관 한 줄을 넣어 **의도된 카드**로 읽히게 한다.
+ */
+const VANILLA_FLAVOR = {
+  unit: [
+    '이름 없는 자들이 전장을 채운다.',
+    '말은 없다. 그저 앞으로 나아갈 뿐.',
+    '기교는 없다. 그래서 무너지지 않는다.'
+  ],
+  structure: [
+    '오래 서 있는 것에는 그만한 이유가 있다.',
+    '무너지지 않는 것이 곧 승리다.'
+  ],
+  spell: ['짧은 주문. 확실한 결과.'],
+  trap: ['기다림도 하나의 전술이다.']
+};
+
+function defaultFlavorText(name = '', cardType = 'unit') {
+  const pool = VANILLA_FLAVOR[cardType] || VANILLA_FLAVOR.unit;
+  // ⚠️ Math.random() 대신 이름 해시를 쓴다 — 같은 카드는 늘 같은 문구여야
+  //    한다(카드 상세를 다시 열 때마다 문구가 바뀌면 버그처럼 보인다).
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 9973;
+  return pool[h % pool.length];
 }
 
 export function sanitizeAndClampCardData(cardData) {
@@ -1385,6 +1423,15 @@ export function sanitizeAndClampCardData(cardData) {
       finalSkill.description = describeSkillFromData(finalSkill, cardType);
       console.log(`[Balance] 설명문 재생성 (제거된 "${ghost.label}"이 문장에 남아 있었음): "${before}" → "${finalSkill.description}"`);
     }
+  }
+
+  // 🃏 바닐라로 확정됐으면 설명 슬롯을 **플레이버 텍스트**로 채운다.
+  //    LLM이 flavorText를 줬으면 그걸 쓰고, 없으면 짧은 기본 문구를 만든다.
+  //    ⚠️ 예산으로 효과가 잘려 바닐라가 된 경우, 남아 있는 효과 설명문은
+  //       전부 거짓이므로 반드시 갈아치운다.
+  if (finalSkill.isVanilla) {
+    finalSkill.description = String(finalSkill.flavorText || cardData.flavorText || '').trim()
+      || defaultFlavorText(cardData.name, cardType);
   }
 
   const power = evaluateCardPower({ ...cardData, rarity, cost, attack: atk, hp, defense: def, cardType, skill: finalSkill });

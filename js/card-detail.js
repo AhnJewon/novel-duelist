@@ -69,11 +69,19 @@ function detailHtml(card) {
           : (type !== 'spell' && type !== 'trap' ? statRow('체력', card.hp ?? 0, 'text-emerald-300') : '')}
       </div>
 
-      ${skill ? `
+      ${skill ? (skill.isVanilla
+        // 🃏 바닐라 — 효과가 아니라 플레이버다. "⚔️ 효과" 머리말을 붙이면
+        //    효과가 있는 것처럼 오해된다. 스탯으로 값을 하는 카드임을 밝힌다.
+        ? `
+        <div class="border-t border-slate-700/60 pt-1.5 space-y-1">
+          <div class="font-black text-slate-400 text-[11px]">🃏 바닐라 — 효과 없이 스탯으로 싸운다</div>
+          <div class="text-slate-400/90 italic leading-relaxed text-[11px] break-words">${escapeHtml(skill.description || '')}</div>
+        </div>`
+        : `
         <div class="border-t border-slate-700/60 pt-1.5 space-y-1">
           <div class="font-black text-amber-300 text-[11px]">⚔️ ${escapeHtml(skill.name || '효과')}</div>
           <div class="text-slate-300 leading-relaxed text-[11px] break-words">${escapeHtml(skill.description || '설명 없음')}</div>
-        </div>` : ''}
+        </div>`) : ''}
 
       ${card.frozen ? `<div class="text-cyan-300 font-bold text-[10px]">❄️ 빙결 — 이번 턴 행동 불가</div>` : ''}
       ${card.taunt ? `<div class="text-amber-300 font-bold text-[10px]">🛡️ 도발 — 먼저 공격받습니다</div>` : ''}
