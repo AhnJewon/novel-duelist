@@ -2880,3 +2880,71 @@ LLM 카드는 `skill.taunt`에 있으므로 **아무리 도발 카드를 내도 
 ⚠️ 검증할 때 `selfLowHp` / `foeShielded`는 `side.hp` / `foe.shield`를 읽는다.
    목(mock)에 **Side 접근자 모양**을 주지 않으면 미발동으로 오판한다.
    (엔진은 `side: defender, foe: actor`로 실제 Side 객체를 넘긴다)
+
+---
+
+## 82. 카드군 연계 전수 검증 — 14 액션 × 2 진영 + 조건·증가·범위
+
+**날짜:** 2026-09-01
+**파일:** (검증만, 코드 변경 없음)
+
+카드 효과([#81](#81))에 이어 **연계**를 전수 검증했다. **버그는 없었다.**
+대신 검증 자체에서 두 번 헛다리를 짚었으므로 그 함정을 남긴다.
+
+### 14개 액션 × 2 진영 = 28 경로
+
+`search · manaCharge · chainDamage · freeze · doubleCast · shieldHeal · draw ·
+specialSummon · archetypeRally · archetypeSalvage · archetypeGuard ·
+shieldBreak · handDisrupt · sacrificeStrike` — 전부 player/boss 양쪽 구현이 있고
+**27/28이 상태를 바꿨다.**
+
+유일한 예외 `shieldBreak / boss`는 **조건부 정상**이다 —
+`playerMaxShield <= 0`이면 부술 방어막이 없어 발동하지 않는다.
+
+### 발동조건 7종 — 통과·차단 양방향
+
+`always · archetypePair · lowHp · bossShielded · handRich · lateGame · earlyGame`
+전부 조건 충족 시 발동하고, 불충족 시 차단된다.
+(`always`는 정의상 항상 발동하므로 차단 검사가 성립하지 않는다)
+
+⚠️ **보스는 발동조건을 검사하지 않는다** (`runArchetypeCombo`의 `side === 'player'` 가드).
+   보스는 턴마다 카드를 몰아 내므로 조건까지 걸면 체감이 너무 약해진다 — 의도된 비대칭이다.
+
+### 증가방식 4종 · 범위 4종
+
+| 증가방식 | 최소 상황 → 최대 상황 |
+|---|---|
+| flat | 6 → 6 (고정) |
+| perAlly | 6 → 12 |
+| perTurn | 8 → 18 |
+| perHand | 7 → 11 |
+
+| 범위 | 위력 | 배수 |
+|---|---|---|
+| archetype | 6 | 1.0 |
+| element | 5 | 0.8 |
+| cardType | 5 | 0.8 |
+| any | 4 | 0.6 |
+
+범위 **판정**(어떤 카드가 세어지는가)도 규칙대로다 — `archetype`은 같은 카드군과
+이름에 키워드를 가진 카드만, `element`는 같은 속성, `any`는 전부.
+
+### ⚠️ 검증할 때 밟은 함정 둘
+
+**① 헬퍼 목이 부족하면 "무동작"으로 오판한다.**
+액션들은 `const { audio, dealDamageToBoss } = helpers`처럼 **구조 분해**로 헬퍼를
+받는다. `helpers.X` 패턴만 grep하면 놓친다. 빠뜨린 채 실행하면 예외가 나고
+`runArchetypeCombo`의 try/catch가 `console.warn`으로 삼켜서
+**조용히 null이 반환된다** — 버그처럼 보인다.
+실제로 필요한 세트는 액션마다 다르다:
+
+| 진영 | 필요 헬퍼 |
+|---|---|
+| player | addBattleLog · audio · dealDamageToBoss · drawCards · setBossStatus · setPlayerBuff · discardFromBoss |
+| boss | addBattleLog · audio · applyDirectDamageToPlayer · discardFromPlayer |
+
+**② 픽스처 상태가 조건을 만족하지 않으면 "미발동"으로 오판한다.**
+`shieldBreak`는 방어막이 있어야, `selfLowHp`는 체력이 절반 이하여야 발동한다.
+[#81](#81)의 `selfLowHp`/`foeShielded` 오판과 같은 부류다.
+
+**검증 전에 픽스처가 그 기능의 전제를 만족하는지부터 확인하세요.**
