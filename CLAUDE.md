@@ -286,3 +286,8 @@
     `attackWithMinion`(목록 생성)에만 있어서 `resolveMinionAttack`은 주는 대로
     실행했고, PvP에서 도발을 넘어 때릴 수 있었습니다.
     → [DECISIONS #80](docs/DECISIONS.md)
+
+50. **본체 공격 가능 여부는 `canAttackFace()`로만 판정하세요.** 전장에 소환수가
+    있으면 본체를 칠 수 없습니다(유희왕식). 양 진영의 **해결 지점**에서 강제해야
+    합니다 — UI 목록에만 두면 PvP 재생 경로가 뚫립니다.
+    → [DECISIONS #81](docs/DECISIONS.md)

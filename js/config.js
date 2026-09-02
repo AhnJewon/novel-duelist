@@ -147,6 +147,9 @@ export const EFFECT_COSTS = {
   //    ⚠️ 이건 카드 한 장과 마나를 지불하고 얻는 효과다. 전개 수만으로 공짜로
   //       붙던 오토체스식 종족 버프(DECISIONS #4)와는 다르다.
   aura:              { cost: 2, minRarity: 'common',    label: '전장 오라' },
+  // ⚔️ 직접 공격 — 상대 전장을 무시하고 본체를 친다.
+  //    기본 규칙(전장에 소환수가 있으면 본체 불가)을 뚫는 능력이라 비싸다.
+  directAttack:      { cost: 3, minRarity: 'rare',      label: '직접 공격' },
   isAoeSpell:        { cost: 3, minRarity: 'rare',      label: '광역' },
   lifestealPercent:  { cost: 3, minRarity: 'rare',      label: '흡혈' },
 
@@ -280,7 +283,7 @@ function listActiveEffects(skill = {}) {
     } else if (key === 'passiveEffect') {
       // 오라만 있는 경우는 aura 쪽에서 값을 치르므로 여기서 또 받지 않는다
       on = !!(skill.passiveEffect && hasPerTurnPassive(skill.passiveEffect));
-    } else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'silence') {
+    } else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'silence' || key === 'directAttack') {
       on = !!skill[key];
     } else {
       on = (skill[key] || 0) > 0;
@@ -572,7 +575,7 @@ export function enforcePowerBudget(cardData, skill) {
       }
     }
     else if (key === 'trapTrigger') delete out.trapTrigger;
-    else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext') out[key] = false;
+    else if (key === 'isAoeSpell' || key === 'pierceShield' || key === 'doubleCastNext' || key === 'directAttack') out[key] = false;
     else out[key] = 0;
   };
 
@@ -1027,6 +1030,7 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
       if (eff.length) parts.push(`이 카드가 전장에 있는 동안 ${describeAuraScope(a)} ${eff.join(', ')}`);
     }
   }
+  if (skill.directAttack) parts.push('직접 공격 — 상대 전장을 무시하고 본체를 친다');
   if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
 
   // 🪤 함정은 **언제 터지는지**가 효과만큼 중요하다.

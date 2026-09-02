@@ -47,6 +47,37 @@ export const BOSS_SLOTS = 3;
  *
  * 건축물은 공격할 수 없으므로 자동으로 도발이다 — 그게 존재 이유다.
  */
+/**
+ * ⚔️ 카드가 **직접 공격**(전장을 무시하고 본체 타격)을 갖는가.
+ * `readTaunt`와 같은 이유로 최상위·skill 양쪽을 본다.
+ */
+export function readDirectAttack(card) {
+  if (!card) return false;
+  if (card.directAttack) return true;
+  const skill = card.skill || (Array.isArray(card.skills) && card.skills[0]);
+  return !!(skill && skill.directAttack);
+}
+
+/**
+ * 🏟️ **전장에 소환수가 있으면 본체를 직접 칠 수 없다** (유희왕식).
+ *
+ * 🐛 예전에는 두 진영이 서로 다른 규칙을 썼다:
+ *    · 보스 → 플레이어 전장이 비었을 때만 본체 타격 (유희왕식)
+ *    · 플레이어 → **도발만 없으면** 본체 타격 (하스스톤식)
+ *    같은 판에서 규칙이 둘이라 위화감이 컸고, 좁은 필드(4칸/3칸)에서는
+ *    도발이 슬롯의 25%를 먹어 쓰기도 어려웠다.
+ *
+ * 이제 양쪽 다 이 함수를 쓴다. 소환수 하나하나가 곧 방벽이 되고,
+ * 도발은 "그 소환수들 중 **누구를** 먼저 쳐야 하는가"를 정하는 역할로 남는다.
+ *
+ * 예외는 `directAttack`을 가진 카드뿐이다 — 값을 치르고 사는 능력이다.
+ */
+export function canAttackFace(defenderMinions, attacker) {
+  const alive = (defenderMinions || []).filter(m => m && m.currentHp > 0);
+  if (alive.length === 0) return true;
+  return readDirectAttack(attacker);
+}
+
 export function readTaunt(card) {
   if (!card) return false;
   if (card.cardType === 'structure') return true;
@@ -918,9 +949,11 @@ export function attackWithMinion(slotIdx) {
   const taunts = alive.filter(m => m.taunt);
   const pickable = taunts.length > 0 ? taunts : alive;
 
-  // 도발이 없으면 본체도 노릴 수 있다
+  // 🏟️ 전장이 비어 있을 때만 본체를 노릴 수 있다 (directAttack은 예외).
+  //    ⚠️ 예전에는 "도발만 없으면" 본체를 칠 수 있었다(하스스톤식).
+  //       보스는 반대로 전장이 비었을 때만 쳤다(유희왕식). 규칙이 둘이었다.
   const keys = pickable.map(m => `foe:${state.bossMinions.indexOf(m)}`);
-  if (taunts.length === 0) keys.push('face');
+  if (canAttackFace(state.bossMinions, entity)) keys.push('face');
 
   if (keys.length > 1) {
     beginTargeting({
@@ -949,6 +982,15 @@ export function resolveMinionAttack(slotIdx, targetKey) {
   //       PvP 재생 경로도 이 함수를 쓰므로 상대가 도발을 넘어 때릴 수 있었다.
   //    규칙은 **해결되는 지점**에서 지켜야 한다. UI는 편의일 뿐이다.
   const aliveFoes = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
+
+  // 🏟️ 상대 전장에 소환수가 있으면 본체를 칠 수 없다 (directAttack 제외)
+  if (targetKey === 'face' && !canAttackFace(state.bossMinions, entity)) {
+    const redirect = selectFrontTarget(state.bossMinions);
+    addBattleLog(`<span class="text-amber-300">🏟️ 상대 전장에 소환수가 있어 본체를 칠 수 없습니다 — [${escapeHtml(redirect.name)}]을(를) 먼저 처리하세요.</span>`);
+    targetKey = `foe:${state.bossMinions.indexOf(redirect)}`;
+  }
+
+  // 🛡️ 도발이 있으면 **그 소환수들 중에서만** 고를 수 있다
   const foeTaunts = aliveFoes.filter(m => m.taunt);
   if (foeTaunts.length > 0) {
     const idx = String(targetKey || '').startsWith('foe:')
@@ -1031,6 +1073,13 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
 
   // 🌐 PvP: 상대가 고른 대상을 그대로 재생한다.
   //    상대 화면 기준의 `foe:N`은 내 화면에서는 **내 전장의 N번**이다.
+  // 🏟️ 내 전장에 소환수가 있으면 상대도 본체를 칠 수 없다.
+  //    🐛 PvP 재생 경로는 `face`를 그대로 실행했다 — 상대가 내 전장을 무시하고
+  //       본체를 때릴 수 있었다. 규칙은 해결 지점에서 양쪽 모두에 강제한다.
+  if (targetKey === 'face' && !canAttackFace(state.playerMinions, bm)) {
+    targetKey = null;   // 아래 최전방 타격 경로로 떨어뜨린다
+  }
+
   if (targetKey === 'face') {
     // 🐛 예전에는 state.playerHp를 직접 깎아 **방어막·피해 경감·취약을 전부 우회**했다.
     //    본체가 맞는 경로는 반드시 applyDirectDamageToPlayer 하나로 모은다.
