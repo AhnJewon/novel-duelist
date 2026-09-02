@@ -18,7 +18,12 @@ import { EFFECT_COSTS } from './config.js';
 const IMPLEMENTED_FIELDS = new Set([
   ...Object.keys(EFFECT_COSTS),
   'name', 'description', 'cost', 'critMultiplier', 'reductionTurns',
-  'targetSide', 'targetScope', 'targetCount', 'hpTarget', 'condition',
+  // 🎯 대상 규칙 — 효과가 아니라 **효과를 어디에 적용할지** 정하는 축이다.
+  //    EFFECT_COSTS에 없으므로 여기에 손으로 적어야 한다.
+  //    🐛 `damageTarget`을 프롬프트 스키마에는 넣고 여기에 빠뜨려서,
+  //       LLM이 시키는 대로 쓴 필드를 "구현되지 않았다"며 반려하고
+  //       재요청까지 돌았다 (실제 로그로 확인). → CLAUDE.md 금지사항 42
+  'targetSide', 'targetScope', 'targetCount', 'hpTarget', 'damageTarget', 'condition',
   // 🏛️ 건축물 패시브 — EFFECT_COSTS의 'aura'는 passiveEffect **안에** 들어가므로
   //    스킬 최상위 키로는 나타나지 않는다.
   'passiveEffect',

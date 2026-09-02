@@ -178,10 +178,19 @@ export function describeTarget(skill = {}) {
   //    예전에는 "자신 1체에 12 피해"처럼 말이 안 되는 문장이 나왔다.
   //    (게다가 self는 고를 대상이 없어 실제로는 보스를 때렸다 → sanitize에서 교정)
   if (side === 'self') return '자신';
-  if (scope === 'all') return `${s} 전체`;
-  if (scope === 'random') return `무작위 ${s}`;
-  if (scope === 'multi') return `${s} ${count}체`;
-  return `${s} 1체`;
+
+  // 💥 피해 대상이 지정돼 있으면 표적 표현이 달라진다.
+  //    ⚠️ 여기 한 곳에서만 만든다. 🐛 describeSkillFromData가 문자열을 잘라
+  //       "적 2체" → "적 전장의 기물"로 만들면서 **개수를 잃었다**
+  //       (실측: "적 2체에게 18 피해"가 "적 전장의 기물에게 18 피해"가 됐다).
+  const dt = readDamageTarget(skill);
+  if ((skill.damage || 0) > 0 && dt === 'body') return '상대 본체';
+  const 표적 = ((skill.damage || 0) > 0 && dt === 'field') ? `${s} 전장의 기물` : s;
+
+  if (scope === 'all') return `${표적} 전체`;
+  if (scope === 'random') return `무작위 ${표적}`;
+  if (scope === 'multi') return `${표적} ${count}체`;
+  return `${표적} 1체`;
 }
 
 /**

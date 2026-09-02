@@ -893,30 +893,48 @@ export function syncDescriptionNumbers(desc, skill, cardData = null) {
   //    describeSkillFromData와 card-validator는 둘 다 총량을 쓴다 — 여기가 어긋났다.
   const totalDamage = skill.multiHit > 1 ? skill.damage * skill.multiHit : skill.damage;
 
+  // ⚠️ 숫자 뒤 경계는 `(?![\d%])`로 잡는다.
+  //    🐛 예전에는 `(?!\s*%)`였다. 정규식은 되추적하므로 "30%"에서 "30"이 막히면
+  //       **"3"으로 물러나 매치**된다. 실측: "상대 체력 30% 이하면 처형"이
+  //       "상대 체력 +3 이하면 처형"으로 깨졌다. 비율이 통째로 망가진다.
+  const NOT_NUM_OR_PCT = '(?![\\d%])';
+
   const rules = [
-    [totalDamage, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
-    [skill.shield, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:방어막|실드|보호막|shield))`, 'gi')],
-    [skill.heal,   new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')],
+    [totalDamage, new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(${JOSA}\\s*(?:추가\\s*)?(?:고정\\s*)?(?:피해|데미지|damage))`, 'gi')],
+    [skill.shield, new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(${JOSA}\\s*(?:방어막|실드|보호막|shield))`, 'gi')],
+    [skill.heal,   new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(${JOSA}\\s*(?:회복|치유|heal))`, 'gi')],
     // 🐛 드로우·마나 수급이 빠져 있었다. 예산이 값을 깎아 drawCards가 3→1이
     //    되어도 설명문은 "카드 3장을 뽑는다"로 남았다. 카드가 거짓말을 한다.
     //    ⚠️ "카드 3장" / "3장의 카드" 두 어순을 모두 본다.
-    [skill.drawCards, /(\d+)(?!\s*%)(\s*장)/gi],
-    [skill.manaGain,  new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*(?:마나|mana))`, 'gi')]
+    [skill.drawCards, new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(\\s*장)`, 'gi')],
+    [skill.manaGain,  new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(${JOSA}\\s*(?:마나|mana))`, 'gi')]
   ];
+
+  // 🗡️ 연타 표기는 엔진이 "N씩 M연타(총 T)" 형태로 쓴다.
+  //    🐛 위 규칙은 `숫자 + 조사 + 피해`만 보므로 괄호가 끼면 못 잡았다.
+  //       그래서 **엔진이 자기가 만든 문장을 동기화하지 못했다** —
+  //       등급 하한이 피해를 8→18로 올려도 문장은 "8씩 3연타(총 24)"로 남았다.
+  if (skill.multiHit > 1 && skill.damage > 0) {
+    out = out.replace(/(\d+)\s*씩\s*(\d+)\s*연타\s*\(\s*총\s*(\d+)\s*\)/g,
+      () => `${skill.damage}씩 ${skill.multiHit}연타(총 ${skill.damage * skill.multiHit})`);
+  }
 
   for (const [value, re] of rules) {
     if (!Number.isFinite(value) || value <= 0) continue;
     out = out.replace(re, (_m, _num, tail) => `${value}${tail}`);
   }
 
-  // 어순이 뒤집힌 표기도 있다: "방어막 99를 얻는다", "체력 15 회복"
+  // 어순이 뒤집힌 표기도 있다: "방어막 99를 얻는다", "체력 15 회복", "방어막 +12"
   // 위 규칙은 `숫자 + 명사`만 잡으므로 `명사 + 숫자`도 따로 본다.
+  // ⚠️ `+`를 허용해야 한다. 🐛 엔진이 스스로 "본체 방어막 +12"라고 쓰는데
+  //    규칙이 `+`를 몰라서 **자기가 만든 문장을 동기화하지 못했다**
+  //    (등급 하한이 방어막을 16으로 올려도 문장은 12로 남았다).
   const reverse = [
-    [totalDamage, /((?:피해|데미지)\s*)(\d+)(?!\s*%)/gi],
-    [skill.shield, /((?:방어막|실드|보호막)\s*)(\d+)(?!\s*%)/gi],
-    [skill.heal,   /((?:체력)\s*)(\d+)(?!\s*%)/gi],
+    [totalDamage, new RegExp(`((?:피해|데미지)\\s*\\+?\\s*)(\\d+)${NOT_NUM_OR_PCT}`, 'gi')],
+    [skill.shield, new RegExp(`((?:방어막|실드|보호막)\\s*\\+?\\s*)(\\d+)${NOT_NUM_OR_PCT}`, 'gi')],
+    [skill.heal,   new RegExp(`((?:체력)\\s*\\+?\\s*)(\\d+)${NOT_NUM_OR_PCT}`, 'gi')],
     [skill.drawCards, /((?:카드)\s*)(\d+)(?=\s*장)/gi],
-    [skill.manaGain,  /((?:마나)\s*\+?\s*)(\d+)(?!\s*%)/gi]
+    [skill.manaGain,  new RegExp(`((?:마나)\\s*\\+?\\s*)(\\d+)${NOT_NUM_OR_PCT}`, 'gi')]
   ];
   for (const [value, re] of reverse) {
     if (!Number.isFinite(value) || value <= 0) continue;
@@ -927,8 +945,8 @@ export function syncDescriptionNumbers(desc, skill, cardData = null) {
   //    예산이 공격력을 깎으면 이 숫자도 따라가야 한다.
   if (cardData) {
     const statRules = [
-      [parseInt(cardData.attack) || 0, new RegExp(`(\\d+)(?!\\s*%)(${JOSA}\\s*공격)`, 'gi')],
-      [parseInt(cardData.attack) || 0, /((?:공격력)\s*)(\d+)(?!\s*%)/gi]
+      [parseInt(cardData.attack) || 0, new RegExp(`(\\d+)${NOT_NUM_OR_PCT}(${JOSA}\\s*공격)`, 'gi')],
+      [parseInt(cardData.attack) || 0, new RegExp(`((?:공격력)\\s*\\+?\\s*)(\\d+)${NOT_NUM_OR_PCT}`, 'gi')]
     ];
     for (const [value, re] of statRules) {
       if (!(value > 0)) continue;
@@ -940,7 +958,7 @@ export function syncDescriptionNumbers(desc, skill, cardData = null) {
   // (예: "적 방어막을 100 무시하고") — 세 자리 이상은 두 자리로 눌러 표기만 정리한다.
   // ⚠️ %가 붙은 숫자는 비율이므로 건드리지 않는다
   //    ("100% 무효"가 "10% 무효"로 바뀌면 뜻이 완전히 달라진다)
-  out = out.replace(/\b(\d{3,})\b(?!\s*%)/g, (m) => {
+  out = out.replace(/\b(\d{3,})\b(?![\d%])/g, (m) => {
     const n = parseInt(m, 10);
     return String(Math.min(99, Math.max(1, Math.round(n / 10))));
   });
@@ -1025,13 +1043,12 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
 
   if (skill.damage > 0) {
     const total = skill.multiHit > 1 ? skill.damage * skill.multiHit : skill.damage;
-    // 💥 피해 대상이 지정돼 있으면 문장도 그걸 밝힌다 —
-    //    "적 본체"와 "적 전장"은 값도 다르고 쓰임도 완전히 다르다.
-    const dt = readDamageTarget(skill);
-    const 표적 = dt === 'body' ? '상대 본체' : (dt === 'field' ? `${tgt.replace(/\s*\d+체$|\s*전체$/, '')} 전장의 기물` : tgt);
+    // 💥 표적 문구는 describeTarget이 만든다 (피해 대상까지 반영한다).
+    //    🐛 예전에는 여기서 문자열을 잘라 붙이다 **개수를 잃었다**
+    //       ("적 2체" → "적 전장의 기물"). 문구는 한 곳에서만 만든다.
     parts.push(skill.multiHit > 1
-      ? `${표적}에게 ${skill.damage}씩 ${skill.multiHit}연타(총 ${total}) 피해`
-      : `${표적}에게 ${skill.damage} 피해`);
+      ? `${tgt}에게 ${skill.damage}씩 ${skill.multiHit}연타(총 ${total}) 피해`
+      : `${tgt}에게 ${skill.damage} 피해`);
   }
   if (skill.pierceShield) parts.push('방어막 관통');
   if (skill.critChance > 0) parts.push(`${Math.round(skill.critChance * 100)}% 확률로 치명타 ${skill.critMultiplier || 1.8}배`);
@@ -1277,27 +1294,42 @@ export function describeAuraScope(aura = {}) {
  *    제거된 효과가 문장에 남아 있을 때만 설명을 다시 만들기 위한 판별기다.
  *    (언급이 없으면 LLM이 쓴 플레이버 문장을 굳이 버리지 않는다.)
  */
+// ⚠️ 패턴은 **동사·부호에 앵커를 걸어** 정확해야 한다.
+//
+// 🐛 처음에는 `damage: /피해|데미지/`, `shield: /방어막|실드/`처럼 낱말만 봤다.
+//    그러니 **엔진이 스스로 만든 정답 문장까지 거짓말로 판정**했다 (실측 10문장 중 2건):
+//      "받는 피해가 30% 감소합니다."      → damage가 없다고 반려 (실제론 damageReduction)
+//      "적 1체에게 16 피해 · 방어막 관통"  → shield가 없다고 반려 (실제론 pierceShield)
+//      "적 실드를 제거한다"                → shield가 없다고 반려 (남의 방어막 이야기다)
+//    `skill.shield`는 "**내가** 방어막을 얻는다"는 뜻이다. 남의 방어막을 언급한
+//    문장과 같은 패턴으로 잡으면 정반대의 것을 같다고 보는 셈이다.
 const EFFECT_DESC_PATTERNS = {
-  damage:            /피해|데미지/,
-  shield:            /방어막|실드/,
-  heal:              /회복|치유/,
-  drawCards:         /드로우|뽑/,
-  manaGain:          /마나/,
+  // 피해를 **가한다**는 서술만. "받는 피해 감소"는 damageReduction의 몫이다.
+  damage:            /\d+\s*[^\s.·]{0,4}?(피해|데미지)|(피해|데미지)\s*[를을]?\s*(입힌|입혀|준다|주고|가한|가하|꽂)/,
+  // **내가 얻는** 방어막만. "방어막 관통", "적 방어막 제거"는 아니다.
+  shield:            /(방어막|실드)\s*\+\s*\d+|(방어막|실드)[^.·]{0,8}(얻|획득|전개|충전|두른)/,
+  // ⚠️ "최대 체력 +N"은 maxHpGain이다 — **회복 동사가 있을 때만** heal로 본다
+  heal:              /(체력|생명력|내구도)[^.·]{0,10}(회복|치유)|(회복|치유)시킨/,
+  drawCards:         /드로우|카드[^.·]{0,8}(뽑|가져)/,
+  manaGain:          /마나\s*\+\s*\d+|마나[^.·]{0,8}(얻|획득|공급|충전)/,
   multiHit:          /연타|번\s*공격|회\s*공격/,
   critChance:        /치명타|크리/,
   lifestealPercent:  /흡혈|생명력\s*흡수/,
   executeThreshold:  /처형/,
   pierceShield:      /관통/,
-  isAoeSpell:        /광역|전체/,
+  isAoeSpell:        /광역/,
   doubleCastNext:    /2연속|두 번 발동|더블/,
   invulnerableTurns: /무적/,
-  damageReduction:   /경감|피해.{0,6}감소/,
+  damageReduction:   /경감|받는[^.·]{0,8}(피해|데미지)[^.·]{0,8}감소|(피해|데미지)\s*\d+%\s*감소/,
   attackDown:        /공격력\s*(-|감소|약화|하락)/,
   silence:           /무효화|봉인|침묵/,
-  passiveEffect:     /매\s*턴|턴\s*종료\s*시|턴\s*시작\s*시|패시브|지속/,
+  // '지속'은 뺐다 — "지속 피해"(상태이상)에도 걸려 오탐이 났다
+  passiveEffect:     /매\s*턴|턴\s*종료\s*시|턴\s*시작\s*시|패시브/,
   statusEffect:      /화상|맹독|빙결|기절|출혈|중독|동상/,
   // 🆕 DECISIONS #85 — 예전에는 설명문에만 있던 동작들. 이제 실제로 구현됐다.
-  destroy:           /파괴한다|파괴하고|파괴하며|파괴합니다|제거한다|제거하고|제거하며|제거합니다/,
+  // ⚠️ "방어막/실드를 제거"는 destroy(소환수 파괴)가 아니다 — 앞에 그 낱말이
+  //    오면 제외한다. (실측: "적 실드를 제거한다"가 destroy로 오탐났다)
+  destroy:           /(?:(?!방어막|실드)[^.·]){0,10}(파괴한다|파괴하고|파괴하며|파괴합니다|제거한다|제거하고|제거하며|제거합니다)/,
   searchDeck:        /서치|덱에서.{0,12}(찾|가져)/,
   summonToken:       /소환한다|소환하고|소환하며|소환합니다|토큰/
 };
@@ -1380,11 +1412,26 @@ function findDescriptionLies(desc, skill, cardType) {
   }
 
   // 2) 있는 척하는 효과 — 문장은 말하는데 스킬에는 없다
+  //
+  // ⚠️ 🏛️ 건축물의 방어막·회복·마나는 `skill.shield`가 아니라
+  //    **`passiveEffect` 안에** 있다. 그걸 모르면 정확한 문장
+  //    ("턴 종료 시 본체 방어막 +8")을 "없는 효과 주장: shield"로 반려한다.
+  //    card-describe.js가 같은 함정을 밟은 적이 있다 → DECISIONS #76
+  const p = skill.passiveEffect || {};
+  const 패시브가_설명함 = {
+    shield: (p.endTurnShield || 0) > 0 || (p.endTurnAoeShield || 0) > 0
+            || ((p.aura && p.aura.defenseBonus) || 0) > 0,
+    heal: (p.endTurnAoeHeal || 0) > 0,
+    manaGain: (p.manaPerTurn || 0) > 0,
+    damageReduction: ((p.aura && p.aura.damageReduction) || 0) > 0,
+    attackDown: false
+  };
+
   for (const [key, re] of Object.entries(EFFECT_DESC_PATTERNS)) {
     if (!re.test(t)) continue;
     const has = key === 'statusEffect'
       ? !!(skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none')
-      : !!skill[key];
+      : !!skill[key] || !!패시브가_설명함[key];
     if (!has) lies.push(`없는 효과 주장: ${key}`);
   }
   return lies;
@@ -1596,8 +1643,14 @@ export function sanitizeAndClampCardData(cardData) {
     //    → 기본을 **살리는 쪽**으로 뒤집는다. 위험한 경우는 (A)(B)(C)가 이미
     //      정수로 바꿨으므로, 남은 %는 대부분 정당한 비율이다.
     //      스탯 이름에 바로 붙은 %만 정수로 떨어뜨린다 (스펙 인플레 방지).
-    desc = desc.replace(/(공격력|체력|방어력|방어막|실드)\s*(\d+)\s*%/g,
-      (m, stat, num) => `${stat} +${Math.min(caps.buffValue[1], Math.max(1, Math.round(parseInt(num) / 10)))}`);
+    //      ⚠️ **증감 표현일 때만** 바꾼다.
+    //      🐛 예전에는 스탯 이름 뒤의 %를 무조건 정수로 눌렀다. 그래서
+    //         문턱 표현까지 망가뜨렸다:
+    //           "상대 체력 30% 이하면 처형(2배)" → "상대 체력 +3 이하면 처형(2배)"
+    //         30%는 스탯 배율이 아니라 **처형 사거리**다. 뜻이 통째로 달라진다.
+    desc = desc.replace(/(공격력|체력|방어력|방어막|실드)\s*(\d+)\s*%\s*(증가|상승|강화|증폭|감소|하락|약화)/g,
+      (m, stat, num, verb) =>
+        `${stat} ${/(감소|하락|약화)/.test(verb) ? '-' : '+'}${Math.min(caps.buffValue[1], Math.max(1, Math.round(parseInt(num) / 10)))} ${verb}`);
 
     // (D-2) 분수·모호한 배율 표기를 정수 %로 굳힌다.
     //   "피해를 1/2로 줄이고" 처럼 읽는 사람마다 다르게 해석되는 표기를 없앤다.

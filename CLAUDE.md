@@ -412,3 +412,20 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 
 77. **정산을 통과한 스킬을 저장 경로에서 다시 조립하지 마세요.** 기본값 위에
     스프레드하면 정산이 지운 효과가 되살아납니다. → [DECISIONS #89](docs/DECISIONS.md)
+
+78. **프롬프트 스키마에 필드를 추가하면 `card-validator.js`의 `IMPLEMENTED_FIELDS`에도
+    넣으세요.** 안 넣으면 LLM이 시키는 대로 쓴 필드를 "구현되지 않았다"며 반려하고
+    재요청까지 돕니다. → [DECISIONS #90](docs/DECISIONS.md)
+
+79. **설명문 검증 패턴은 낱말이 아니라 동사·부호에 앵커를 거세요.**
+    `shield: /방어막|실드/`는 "적 방어막을 관통"·"적 실드를 제거"까지 잡아
+    **엔진 자신의 정답 문장을 거짓말로 판정**했습니다.
+    고칠 때는 **오탐과 놓침을 함께** 재세요. → [DECISIONS #90](docs/DECISIONS.md)
+
+80. **숫자 뒤 경계는 `(?![\d%])`로 잡으세요.** `(?!\s*%)`는 되추적 때문에
+    "30%"에서 "3"으로 물러나 매치됩니다 — 비율이 통째로 깨집니다.
+    → [DECISIONS #90](docs/DECISIONS.md)
+
+81. **자연어를 정규식으로 "수리"하지 마세요.** 놓치면 거짓말 카드, 오탐이면 문장
+    손상입니다. `describeSkillFromData`로 다시 만들고 산문은 **채택/폐기**만
+    하세요 — 최악이 "건조한 문장"입니다. → [DECISIONS #90](docs/DECISIONS.md)

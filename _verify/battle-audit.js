@@ -1775,13 +1775,74 @@ function suiteKeywordDisplay() {
     !String(describeSkillFromData({ taunt: true, damage: 10 }, 'unit') || '').includes('도발'),
     String(describeSkillFromData({ taunt: true, damage: 10 }, 'unit')));
 
+  // 🚫 거짓말 관문의 **오탐**을 잡는다 (DECISIONS #90)
+  //
+  //    🐛 처음 패턴은 낱말만 봤다(`damage: /피해|데미지/`). 그래서
+  //       **엔진이 스스로 만든 정답 문장까지** 거짓말로 판정하고 갈아치웠다:
+  //         "받는 피해가 30% 감소합니다."     → damage가 없다고 반려
+  //         "적 1체에게 16 피해 · 방어막 관통" → shield가 없다고 반려
+  //         "턴 종료 시 본체 방어막 +8"        → shield가 없다고 반려(패시브에 있다)
+  //    ⚠️ 관문을 고칠 때는 **오탐과 놓침을 함께** 재세요. 한쪽만 보면
+  //       패턴을 조이다 진짜 거짓말을 놓치거나, 풀다 정답을 죽입니다.
+  {
+    const 정답 = [
+      ['피해경감', { damageReduction: 30, reductionTurns: 2 }, 'spell'],
+      ['관통+피해', { damage: 16, pierceShield: true }, 'spell'],
+      ['흡혈', { damage: 12, lifestealPercent: 0.5 }, 'spell'],
+      ['소환수치유', { heal: 10, hpTarget: 'minion' }, 'unit'],
+      ['최대체력', { maxHpGain: 8 }, 'spell'],
+      ['방어막', { shield: 12 }, 'spell'],
+      ['파괴', { destroy: 1 }, 'spell'],
+      ['토큰소환', { summonToken: 2 }, 'spell'],
+      ['서치', { searchDeck: 2 }, 'spell'],
+      ['상태이상', { statusEffect: { type: 'burn', duration: 2, value: 6 } }, 'spell'],
+      ['기물2체', { damage: 18, targetScope: 'multi', targetCount: 2, damageTarget: 'field' }, 'spell'],
+      ['본체직격', { damage: 20, damageTarget: 'body' }, 'spell'],
+      ['드로우+마나', { drawCards: 2, manaGain: 1 }, 'spell'],
+      ['연타', { damage: 8, multiHit: 3 }, 'spell'],
+      ['무효화', { silence: true }, 'spell'],
+      ['약화', { attackDown: 4 }, 'spell'],
+      ['무적', { invulnerableTurns: 2 }, 'spell'],
+      ['더블캐스트', { doubleCastNext: true }, 'spell'],
+      ['처형', { damage: 14, executeThreshold: 0.3 }, 'spell'],
+      ['치명타', { damage: 12, critChance: 0.3 }, 'spell'],
+      ['광역', { damage: 14, isAoeSpell: true, targetScope: 'all' }, 'spell'],
+      ['건축물방어막', { passiveEffect: { endTurnShield: 8 } }, 'structure'],
+      ['건축물마나', { passiveEffect: { manaPerTurn: 1 } }, 'structure'],
+      ['건축물회복', { passiveEffect: { endTurnAoeHeal: 5 } }, 'structure'],
+      ['오라방어', { passiveEffect: { aura: { scope: 'all', defenseBonus: 3 } } }, 'structure'],
+      ['오라경감', { passiveEffect: { aura: { scope: 'all', damageReduction: 20 } } }, 'structure']
+    ];
+    // ⚠️ **관문이 발동했는지만** 본다. 문장 비교로 하면 등급 보정·수치 동기화
+    //    같은 정상 변환까지 실패로 잡힌다 (실제로 그렇게 헛짚었다).
+    //    관문은 console.warn을 남기므로 그걸 가로챈다.
+    const 오탐 = [];
+    const ow = console.warn;
+    for (const [라벨, skill, type] of 정답) {
+      let 발동 = false;
+      console.warn = (...a) => { if (String(a[0] || '').includes('설명문이 카드와 달라')) 발동 = true; };
+      sanitizeAndClampCardData({
+        name: 라벨, cardType: type, rarity: 'legendary', cost: 8,
+        attack: 0, defense: type === 'structure' ? 8 : 0, hp: type === 'structure' ? 30 : 0,
+        skills: [{ name: '효과', ...skill, description: describeSkillFromData(skill, type) }]
+      });
+      console.warn = ow;
+      if (발동) 오탐.push(라벨);
+    }
+    console.warn = ow;
+    check(S, `거짓말 관문 오탐 0 (엔진이 만든 정답 문장 ${정답.length}개)`,
+      오탐.length === 0, `오탐: ${오탐.join(', ')}`);
+  }
+
   // 🚫 거짓말 관문 — 설명문이 스킬로 뒷받침되지 않으면 교체된다 (DECISIONS #85)
   const 거짓말들 = [
     ['미구현 동작(부활)', { damage: 14 }, '쓰러진 아군을 부활시킨다.'],
     ['미구현 동작(강탈)', { damage: 14 }, '상대 카드를 훔친다.'],
     ['없는 효과(드로우)', { damage: 7 }, '손패에서 1장을 드로우한다.'],
     ['없는 효과(파괴)', { damage: 14 }, '상대 소환수 1체를 제거하고 공격한다.'],
-    ['없는 효과(방어막)', { damage: 10 }, '10 피해를 주고 방어막 8을 얻는다.']
+    ['없는 효과(방어막)', { damage: 10 }, '10 피해를 주고 방어막 8을 얻는다.'],
+    ['없는 효과(회복)', { damage: 10 }, '아군 체력을 10 회복시킨다.'],
+    ['미구현 동작(변신)', { damage: 10 }, '적을 양으로 변신시킨다.']
   ];
   for (const [label, skill, desc] of 거짓말들) {
     const out = sanitizeAndClampCardData({
