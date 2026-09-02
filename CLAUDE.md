@@ -95,7 +95,7 @@
 | 건축물 패시브 · 오라 | `js/config.js`의 `buildStructurePassive` + `js/battle-engine.js`의 오라 계산 |
 | 카드군 초기화 · 병합 · 보수 | `js/archetype-service.js` (콘솔에서 `resetArchetypes()`) |
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
-| 도발 판정 | `js/battle-engine.js`의 `readTaunt()` **한 곳** |
+| 도발 · 직접공격 판정 | `js/card-keywords.js` **한 곳** (엔진·렌더러·상세가 공유) |
 | PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
 | 덱 마나 커브 (코스트 분포) | `js/config.js`의 `COST_CURVE_WEIGHTS` |
@@ -134,6 +134,12 @@
 ## 검증 방법
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
+
+전투 로직은 **하네스가 있습니다** (293항목):
+
+```js
+const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
+```
 스니펫은 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 마지막 절에 있습니다.
 
 > **수정이 반영 안 되면 캐시입니다.** `await fetch('/js/파일.js', {cache:'reload'})`
@@ -291,3 +297,30 @@
     있으면 본체를 칠 수 없습니다(유희왕식). 양 진영의 **해결 지점**에서 강제해야
     합니다 — UI 목록에만 두면 PvP 재생 경로가 뚫립니다.
     → [DECISIONS #81](docs/DECISIONS.md)
+
+51. **연계 발동조건에서 `game.playerHp` 같은 필드를 직접 읽지 마세요.**
+    `selfView(ctx)` / `foeView(ctx)`를 쓰세요. 직접 읽으면 보스 경로와 PvP 거울
+    경로에서 조용히 **틀린 진영**을 봅니다. → [DECISIONS #83](docs/DECISIONS.md)
+
+52. **대상 키를 만들면 그 키를 가진 DOM도 만드세요.** `collectTargetKeys`가
+    `ally:N`/`self-face`를 돌려주는데 누를 곳이 없어서, 아군 대상 카드는
+    **Esc 말고는 빠져나올 수 없었습니다.** → [DECISIONS #83](docs/DECISIONS.md)
+
+53. **`makeMirroredGame`은 필드를 전부 뒤집으세요.** 일부만 뒤집으면 나머지는
+    `undefined`이고, 그 결과가 조용히 번집니다 (`turnCount` 누락 → **NaN 피해**).
+    → [DECISIONS #83](docs/DECISIONS.md)
+
+54. **도발은 소환수를 노릴 때만 검사하세요.** 본체 지정까지 도발로 되돌리면
+    `canAttackFace`가 통과시킨 `directAttack`을 바로 다음 줄이 부정합니다.
+    → [DECISIONS #83](docs/DECISIONS.md)
+
+55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
+    쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
+
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (293항목, 약 3초):
+    ```js
+    const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
+    ```
+    ⚠️ 전부 초록인 결과는 그 자체로 아무것도 증명하지 않습니다. 새 검사를 쓸 때는
+    **수정 전 코드에서 실패하는지** 반드시 확인하세요 (`git stash`).
+    → [DECISIONS #83](docs/DECISIONS.md)

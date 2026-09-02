@@ -309,7 +309,8 @@
           <div class="bg-[#121526] border border-brand-border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-lg">
             
             <!-- 플레이어 HP & 실드 -->
-            <div class="flex items-center gap-5">
+            <!-- data-target-key: "아군 본체"를 효과 대상으로 고를 때 누르는 곳 -->
+            <div id="player-face" data-target-key="self-face" class="flex items-center gap-5 rounded-xl transition">
               <div class="space-y-1">
                 <div class="flex items-center gap-2 text-xs font-bold">
                   <span class="text-emerald-400 flex items-center gap-1"><i data-lucide="heart" class="w-4 h-4 fill-emerald-500"></i> 플레이어 본체 HP</span>

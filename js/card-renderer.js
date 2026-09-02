@@ -45,7 +45,12 @@ const SKILL_BADGE_SPECS = [
   { key: 'manaGain', tone: 'blue', when: s => s.manaGain > 0, label: s => `💎 +${s.manaGain} 마나` },
   { key: 'doubleCast', tone: 'indigo', when: s => !!s.doubleCastNext, label: () => '✨ 더블캐스트' },
   { key: 'invulnerable', tone: 'yellow', when: s => s.invulnerableTurns > 0, label: s => `🛡️ ${s.invulnerableTurns}턴 무적` },
-  { key: 'execute', tone: 'execute', when: s => s.executeThreshold > 0, label: s => `💀 ${Math.round(s.executeThreshold * 100)}%이하 처형` }
+  { key: 'execute', tone: 'execute', when: s => s.executeThreshold > 0, label: s => `💀 ${Math.round(s.executeThreshold * 100)}%이하 처형` },
+  // 🐛 아래 둘은 **규칙을 바꾸는 키워드인데 카드에 표시가 없었다.**
+  //    설명문에만 적혀 있어서 한눈에 알 수 없었다. 전장이 곧 방벽이 된
+  //    지금은 "이 카드가 본체를 칠 수 있는가"가 카드의 핵심 정보다.
+  { key: 'taunt', tone: 'amber', when: s => !!s.taunt, label: () => '🛡️ 도발' },
+  { key: 'directAttack', tone: 'purple', when: s => !!s.directAttack, label: () => '⚔️ 직접 공격' }
 ];
 
 // 상태이상 뱃지 문구는 status-effects의 정의를 따라간다.

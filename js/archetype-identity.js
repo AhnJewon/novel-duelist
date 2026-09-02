@@ -122,6 +122,48 @@ export function coerceCardElement(theme, requestedElement) {
 //
 // 조건이 안 맞으면 콤보는 발동하지 않는다 — 이게 덱 빌딩의 재미를 만든다.
 
+// ── 진영 시점 ────────────────────────────────────────────────
+// 발동조건과 증가방식은 "나"와 "상대"를 본다. 보스가 쓸 때는 그 둘이 뒤집힌다.
+//
+// 🐛 예전에는 전부 game.playerHp / game.currentBoss를 직접 읽었다. 그래서
+//    보스에게 조건을 걸 수가 없었고(플레이어 기준으로 판정됐다),
+//    runArchetypeCombo가 `side === 'player'`일 때만 검사하는 비대칭이 남았다.
+//    이제 시점을 뒤집을 수 있으므로 **양 진영이 같은 규칙**을 쓴다.
+//
+// ⚠️ game 필드를 직접 읽지 말고 이 뷰를 쓰세요. 직접 읽으면 보스 경로와
+//    PvP 거울 경로에서 조용히 틀린 진영을 봅니다.
+
+/** 손패 상한. handRich를 진영별 비율로 판정하는 데 쓴다. */
+export const HAND_CAP = { player: 7, boss: 5 };
+
+function viewOf(ctx, who) {
+  const g = (ctx && ctx.game) || {};
+  const mine = (ctx && ctx.side) === 'boss' ? 'boss' : 'player';
+  const key = who === 'self' ? mine : (mine === 'boss' ? 'player' : 'boss');
+  if (key === 'boss') {
+    const b = g.currentBoss || {};
+    return {
+      hp: b.currentHp || 0, maxHp: b.maxHp || 0, shield: b.shield || 0,
+      hand: g.bossHand || [], minions: g.bossMinions || [], handCap: HAND_CAP.boss
+    };
+  }
+  return {
+    hp: g.playerHp || 0, maxHp: g.playerMaxHp || 0, shield: g.playerMaxShield || 0,
+    hand: g.playerHand || [], minions: g.playerMinions || [], handCap: HAND_CAP.player
+  };
+}
+
+/** 연계를 발동한 진영 자신의 상태 */
+export function selfView(ctx) { return viewOf(ctx, 'self'); }
+/** 그 상대 진영의 상태 */
+export function foeView(ctx) { return viewOf(ctx, 'foe'); }
+
+/** 턴 수. 없으면 0 — NaN이 위력 계산으로 새어 나가면 안 된다. */
+function turnOf(ctx) {
+  const t = ctx && ctx.game && ctx.game.turnCount;
+  return Number.isFinite(t) ? t : 0;
+}
+
 export const COMBO_TRIGGERS = {
   always: {
     label: '항상',
@@ -136,27 +178,30 @@ export const COMBO_TRIGGERS = {
   lowHp: {
     label: '체력 절반 이하',
     desc: '내 체력이 50% 이하로 떨어졌을 때만',
-    test: ({ game }) => game.playerHp <= game.playerMaxHp * 0.5
+    test: (ctx) => { const s = selfView(ctx); return s.maxHp > 0 && s.hp <= s.maxHp * 0.5; }
   },
   bossShielded: {
-    label: '보스 방어막 보유 시',
-    desc: '보스가 방어막을 두르고 있을 때만',
-    test: ({ game }) => (game.currentBoss && game.currentBoss.shield > 0)
+    // ⚠️ 키 이름은 세이브 호환 때문에 남긴다. 뜻은 "상대"다 — 보스가 써도 성립한다.
+    label: '상대 방어막 보유 시',
+    desc: '상대가 방어막을 두르고 있을 때만',
+    test: (ctx) => foeView(ctx).shield > 0
   },
   handRich: {
-    label: '손패 5장 이상',
-    desc: '손패가 두둑할 때만',
-    test: ({ game }) => (game.playerHand || []).length >= 5
+    // 손패 상한이 진영마다 다르다(플레이어 7 / 보스 5). 고정 5장으로 재면
+    // 보스는 영원히 만족할 수 없다 — **비율**로 재야 같은 조건이 된다.
+    label: '손패가 두둑할 때',
+    desc: '손패가 상한의 70% 이상일 때만',
+    test: (ctx) => { const s = selfView(ctx); return s.hand.length >= Math.ceil(s.handCap * 0.7); }
   },
   lateGame: {
     label: '5턴 이후',
     desc: '장기전에서 진가를 발휘',
-    test: ({ game }) => game.turnCount >= 5
+    test: (ctx) => turnOf(ctx) >= 5
   },
   earlyGame: {
     label: '3턴 이내',
     desc: '초반 속공 특화',
-    test: ({ game }) => game.turnCount <= 3
+    test: (ctx) => { const t = turnOf(ctx); return t > 0 && t <= 3; }
   }
 };
 
@@ -174,12 +219,12 @@ export const COMBO_SCALINGS = {
   perTurn: {
     label: '턴 수 비례',
     desc: '길어질수록 강해진다',
-    value: (base, { game }) => base + Math.min(12, game.turnCount * 2)
+    value: (base, ctx) => base + Math.min(12, turnOf(ctx) * 2)
   },
   perHand: {
     label: '손패 수 비례',
     desc: '손패를 아낄수록 강해진다',
-    value: (base, { game }) => base + (game.playerHand || []).length
+    value: (base, ctx) => base + selfView(ctx).hand.length
   }
 };
 

@@ -31,9 +31,7 @@ export const BATTLE_MODES = {
     foeUsesMana: false,
     foeVirtualMana: 99,
     // 보스 고유의 다단계 콤보 패턴 사용
-    foeComboPatterns: true,
-    // 연계 발동 조건을 보스에게도 적용할지 (PvE는 미적용 — 체감이 너무 약해진다)
-    foeComboTriggers: false
+    foeComboPatterns: true
   },
   pvp: {
     label: 'PvP (1대1 대전)',
@@ -41,10 +39,12 @@ export const BATTLE_MODES = {
     foeUsesMana: true,
     foeVirtualMana: 0,
     // 스크립트 패턴 없음 — 상대도 카드만 낸다
-    foeComboPatterns: false,
-    // 연계 조건을 양쪽에 동일 적용
-    foeComboTriggers: true
+    foeComboPatterns: false
   }
+  // ⚠️ 연계 발동조건은 **모드와 무관하게 양 진영 동일**이다.
+  //    예전에는 여기 foeComboTriggers 플래그가 있었지만 아무도 읽지 않았고,
+  //    runArchetypeCombo가 `side === 'player'`로 하드코딩돼 있었다.
+  //    → archetype-combos.js의 runArchetypeCombo
 };
 
 let _mode = 'pve';

@@ -90,7 +90,10 @@ export async function handleRemoteAction(action) {
         return;
       }
       removeFromFoeHand(action.instanceId);
-      if (_handlers.playFoeCard) await _handlers.playFoeCard(card, action.slot);
+      // 🐛 action.picked를 넘기지 않았다. 받는 쪽(playFoeCardPvp)은 선언되지도
+      //    않은 `picked`를 참조하고 있어서 **상대의 주문·전투의 함성이
+      //    전부 ReferenceError로 죽었다.** 고른 대상까지 그대로 넘긴다.
+      if (_handlers.playFoeCard) await _handlers.playFoeCard(card, action.slot, action.picked || null);
       break;
     }
 
