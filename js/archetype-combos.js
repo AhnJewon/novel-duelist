@@ -354,31 +354,35 @@ export const ARCHETYPE_COMBO_ACTIONS = {
     }
   },
 
-  // 같은 카드군 소환수에게만 도발 부여 — 벽 카드군
+  // 같은 카드군 소환수의 방어력을 올린다 — 벽 카드군
+  //
+  // 🗑️ 예전에는 **도발 부여 + 방어력**이었다. 도발이 제거되면서(DECISIONS #84)
+  //    방어력만 남았다. 전장에 서 있는 것 자체가 이미 벽이므로 연계의 뜻은
+  //    "그 벽을 더 단단하게"로 그대로 성립한다.
   archetypeGuard: {
     label: '카드군 수호',
     tier: 2,
     player({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
-      const targets = (game.playerMinions || []).filter(m => belongsToTheme(m, theme) && !m.taunt);
+      const targets = (game.playerMinions || []).filter(m => belongsToTheme(m, theme));
       if (targets.length === 0) return null;
       const bonus = scale(4);
-      targets.forEach(m => { m.taunt = true; m.defense = (m.defense || 0) + bonus; });
+      targets.forEach(m => { m.defense = (m.defense || 0) + bonus; });
       audio.playShield();
       addBattleLog(comboLog('blue', `🛡️ [${escapeHtml(theme.name)} 수호]`,
-        `[${escapeHtml(theme.name)}] ${targets.length}체가 도발을 얻고 방어력 +${bonus}.`));
+        `[${escapeHtml(theme.name)}] ${targets.length}체의 방어력 +${bonus}.`));
       return { name: `${theme.name} 수호`, triggered: true };
     },
     boss({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
-      const targets = (game.bossMinions || []).filter(m => belongsToTheme(m, theme) && !m.taunt);
+      const targets = (game.bossMinions || []).filter(m => belongsToTheme(m, theme));
       if (targets.length === 0) return null;
       // 🐛 방어력 보너스가 빠져 있었다 — 같은 연계인데 보스 쪽만 절반이었다.
       const bonus = scale(4);
-      targets.forEach(m => { m.taunt = true; m.defense = (m.defense || 0) + bonus; });
+      targets.forEach(m => { m.defense = (m.defense || 0) + bonus; });
       audio.playShield();
       addBattleLog(comboLog('blue', `🛡️ [보스 ${escapeHtml(theme.name)} 수호]`,
-        `부하 ${targets.length}체가 도발을 얻고 방어력 +${bonus}.`));
+        `부하 ${targets.length}체의 방어력 +${bonus}.`));
       return { name: `보스 ${theme.name} 수호`, triggered: true };
     }
   },

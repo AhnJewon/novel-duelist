@@ -3,22 +3,24 @@
 // 통합 대상:
 //  1) triggerSpellEffect / triggerBattlecry — 두 함수가 약 95% 동일했다.
 //     (차이는 광역 처리 여부와 로그 문구뿐인데 50줄씩 따로 유지되고 있었다)
-//  2) "도발 우선 -> 전방 유닛 -> 본체 직격" 타겟 선택이 3곳에 복붙돼 있었다.
+//  2) "전방 유닛 -> 본체 직격" 타겟 선택이 3곳에 복붙돼 있었다.
 
 import { escapeHtml } from './dom-utils.js';
-import { resolveTargetKey, readHpTarget } from './effect-targets.js';
+import { resolveTargetKey, readHpTarget, readTargetSpec } from './effect-targets.js';
 import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
 
 /**
  * 공격 대상 선택. 실드 관통이면 전열을 무시하고 본체(null)를 노린다.
+ *
+ * 🗑️ 도발 우선 규칙은 제거됐다 — 이제 그냥 **맨 앞**이 맞는다 (DECISIONS #84).
  * @returns 피격될 소환수, 또는 null(본체 직격)
  */
 export function selectFrontTarget(minions = [], { pierceShield = false } = {}) {
   if (pierceShield) return null;
   const alive = minions.filter(m => m && m.currentHp > 0);
   if (alive.length === 0) return null;
-  return alive.find(m => m.taunt) || alive[0];
+  return alive[0];
 }
 
 /**
@@ -107,6 +109,70 @@ export function strikeFrontLine(minions, dmg, ctx) {
 }
 
 /**
+ * 🎯 이 효과가 **실제로 닿는 대상**을 정한다.
+ *
+ * 🐛 왜 한 곳으로 모았나: 대상 해석이 효과마다 따로 쓰여 있었고,
+ *    `targetScope: 'all'`은 **피해에만** 구현돼 있었다. 그 결과 실측:
+ *      "적 전체를 약화"   → 적 0번만 약화 (10→5, 나머지 10)
+ *      "적 전체를 무효화" → 적 0번만
+ *      "적 전체에 화상"   → 적 0번만
+ *      "아군 전체를 회복" → 아군은 아무도 회복 안 되고 **본체만** 회복
+ *      "무작위 적 1체"    → 아무데도 구현이 없어 그냥 본체를 때림
+ *    카드에 적힌 범위와 실제 동작이 전부 달랐다.
+ *
+ * ⚠️ **새 효과를 추가하면 반드시 이 함수를 쓰세요.** 효과마다 대상을 다시
+ *    해석하면 또 갈라집니다.
+ *
+ * @param picked   플레이어가 고른 대상 키 배열 (없으면 null)
+ * @param allowAoe 광역 확장을 허용하는가. 전투의 함성은 false다.
+ * @returns {{minions:Array, foeFace:boolean, selfFace:boolean, explicit:boolean}}
+ *   explicit=false면 "정해진 대상이 없다"는 뜻 — 각 효과가 자기 기본값을 쓴다.
+ */
+export function resolveEffectTargets(game, skill, picked = null, { allowAoe = true } = {}) {
+  const spec = readTargetSpec(skill);
+  const out = { minions: [], foeFace: false, selfFace: false, explicit: false };
+
+  // 1) 플레이어가 직접 고른 대상이 최우선이다
+  if (Array.isArray(picked) && picked.length > 0) {
+    out.explicit = true;
+    for (const key of picked) {
+      if (key === 'face') { out.foeFace = true; continue; }
+      // 🐛 예전에는 self-face를 고르면 **조용히 버려졌다.** 다중 지정에서
+      //    본체를 고른 한 번이 아무 일도 안 하고 사라졌다.
+      if (key === 'self-face') { out.selfFace = true; continue; }
+      const t = resolveTargetKey(game, key);
+      if (t && t.entity) out.minions.push(t.entity);
+    }
+    return out;
+  }
+
+  const foes = (game.bossMinions || []).filter(m => m && m.currentHp > 0);
+  const allies = (game.playerMinions || []).filter(m => m && m.currentHp > 0);
+
+  // 2) 전체 — 전투의 함성은 광역이 되지 않는다(allowAoe=false)
+  if (spec.scope === 'all' && allowAoe) {
+    out.explicit = true;
+    if (spec.side === 'ally') { out.minions = allies; out.selfFace = true; }
+    else if (spec.side === 'any') { out.minions = [...foes, ...allies]; out.foeFace = true; out.selfFace = true; }
+    else { out.minions = foes; out.foeFace = true; }
+    return out;
+  }
+
+  // 3) 무작위 — ⚠️ 반드시 battleRng. Math.random을 쓰면 PvP 락스텝이 깨진다.
+  if (spec.scope === 'random') {
+    out.explicit = true;
+    const pool = spec.side === 'ally' ? allies : (spec.side === 'any' ? [...foes, ...allies] : foes);
+    if (pool.length > 0) out.minions = [pool[battleRng().index(pool.length)]];
+    else if (spec.side === 'ally') out.selfFace = true;
+    else out.foeFace = true;
+    return out;
+  }
+
+  // 4) 그 외(단일·다중인데 고르지 않음) — 효과별 기본값에 맡긴다
+  return out;
+}
+
+/**
  * 카드 스킬의 효과를 플레이어 진영에 적용한다.
  * 주문(spell)과 전투의 함성(battlecry)이 이 하나를 공유한다.
  *
@@ -147,26 +213,23 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       }
     }
 
-    // 🎯 플레이어가 대상을 지정했으면 그 대상에게만 들어간다.
-    //    (opts.picked — targeting.js가 고른 키 배열)
-    const picked = Array.isArray(opts.picked) ? opts.picked : null;
+    // 🎯 대상 해석은 resolveEffectTargets 한 곳이 맡는다 (지정 / 전체 / 무작위)
+    const T = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
 
-    if (picked && picked.length > 0) {
-      let hitFace = false;
-      for (const key of picked) {
-        if (key === 'face') { hitFace = true; continue; }
-        const t = resolveTargetKey(game, key);
-        if (t && t.entity) {
-          // 🐛 수정: 로그가 **요청한** dmg를 찍고 있었다. 수비력·취약·감전이
-          //    붙으면 실제 피해와 달라 로그가 거짓이 된다. 반환값을 쓴다.
-          const hit = damageEntity(t.entity, dmg, { pierce: !!skill.pierceShield });
-          addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(t.entity.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
-        }
+    if (T.explicit) {
+      for (const e of T.minions) {
+        // 🐛 수정: 로그가 **요청한** dmg를 찍고 있었다. 수비력·취약·감전이
+        //    붙으면 실제 피해와 달라 로그가 거짓이 된다. 반환값을 쓴다.
+        const hit = damageEntity(e, dmg, { pierce: !!skill.pierceShield });
+        addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(e.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
       }
       game.bossMinions = removeDead(game.bossMinions);
       game.playerMinions = removeDead(game.playerMinions);
-      if (hitFace) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+      if (T.foeFace) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+      // ⚠️ selfFace(내 본체)에 피해를 넣는 경로는 일부러 없다. 자해 메커니즘이
+      //    없으므로 sanitize가 해로운 효과의 대상을 foe로 교정한다 → DECISIONS #74
     } else if (allowAoe && skill.isAoeSpell) {
+      // 구버전 호환: targetScope 없이 isAoeSpell만 가진 카드
       game.bossMinions.forEach(bm => {
         const hit = damageEntity(bm, dmg, { pierce: !!skill.pierceShield });
         addBattleLog(`<span class="text-red-300">💥 [${cardName}] 광역 폭격: 부하 [${escapeHtml(bm.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
@@ -204,14 +267,20 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     //    needsTargetPick은 heal도 대상 지정이 필요하다고 판단해 선택을 받는데
     //    (hasTargetableEffect에 heal이 있다) 여기서 picked를 보지 않아
     //    "아군 1체를 회복" 카드가 대상을 고르게 하고도 본체를 회복했다.
-    const pickedAllies = (Array.isArray(opts.picked) ? opts.picked : [])
-      .map(k => resolveTargetKey(game, k))
-      .filter(t => t && t.entity && t.kind === 'allyMinion');
-    if (pickedAllies.length > 0) {
-      for (const t of pickedAllies) {
-        const before = t.entity.currentHp;
-        t.entity.currentHp = Math.min(t.entity.maxHp, t.entity.currentHp + skill.heal);
-        addBattleLog(`<span class="text-emerald-400">💖 [${escapeHtml(t.entity.name)}] 체력 ${before} → ${t.entity.currentHp}</span>`);
+    const H = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+    // 회복은 아군에게만 의미가 있다 — 적을 골랐으면 무시한다
+    const healTargets = H.minions.filter(e => (game.playerMinions || []).includes(e));
+    if (H.explicit && (healTargets.length > 0 || H.selfFace)) {
+      for (const e of healTargets) {
+        const before = e.currentHp;
+        e.currentHp = Math.min(e.maxHp, e.currentHp + skill.heal);
+        addBattleLog(`<span class="text-emerald-400">💖 [${escapeHtml(e.name)}] 체력 ${before} → ${e.currentHp}</span>`);
+      }
+      // 🐛 예전에는 본체 지정(self-face)이 조용히 버려졌다. "아군 전체"도
+      //    본체만 회복하고 소환수는 아무도 회복되지 않았다.
+      if (H.selfFace) {
+        game.playerHp = Math.min(game.playerMaxHp, game.playerHp + skill.heal);
+        addBattleLog(`<span class="text-emerald-400">💖 ${cardName}의 치유로 본체 체력 +${skill.heal} 회복!</span>`);
       }
     } else if (readHpTarget(skill) === 'minion') {
       // 이 카드가 필드에 낸 소환수를 회복시킨다. 아직 안 나왔으면 시전 대상이 없다.
@@ -279,53 +348,129 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
 
   // ⚔️ 공격력 약화 — 지정한 상대 소환수의 공격력을 깎는다.
   if (skill.attackDown > 0) {
-    const picked = Array.isArray(opts.picked) ? opts.picked : null;
-    const targets = picked
-      ? picked.map(k => resolveTargetKey(game, k)).filter(t => t && t.entity)
-      : (game.bossMinions || []).slice(0, 1).map(e => ({ entity: e }));
+    // 🐛 예전에는 `targetScope:'all'`을 몰라서 **적 전체 약화가 첫 한 기만** 약화시켰다
+    const A = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+    const targets = A.explicit && A.minions.length > 0
+      ? A.minions
+      : (game.bossMinions || []).slice(0, 1);
     if (targets.length === 0) {
       addBattleLog(`<span class="text-slate-400">약화시킬 대상이 없습니다.</span>`);
     }
-    for (const t of targets) {
-      const before = t.entity.attack || 0;
-      t.entity.attack = Math.max(0, before - skill.attackDown);
-      addBattleLog(`<span class="text-orange-300">⚔️ [${escapeHtml(t.entity.name)}] 공격력 ${before} → ${t.entity.attack}</span>`);
+    for (const e of targets) {
+      const before = e.attack || 0;
+      e.attack = Math.max(0, before - skill.attackDown);
+      addBattleLog(`<span class="text-orange-300">⚔️ [${escapeHtml(e.name)}] 공격력 ${before} → ${e.attack}</span>`);
     }
   }
 
   // 🚫 효과 무효화 — 지정한 상대 소환수의 스킬을 지운다.
   //    수치(공/체)는 남기고 **효과만** 없앤다. 유희왕의 '무효화'와 같은 감각.
   if (skill.silence) {
-    const picked = Array.isArray(opts.picked) ? opts.picked : null;
-    const targets = picked
-      ? picked.map(k => resolveTargetKey(game, k)).filter(t => t && t.entity)
-      : (game.bossMinions || []).slice(0, 1).map(e => ({ entity: e }));
-    for (const t of targets) {
-      t.entity.skills = [];
-      t.entity.silenced = true;
-      t.entity.taunt = false;
-      addBattleLog(`<span class="text-purple-300 font-bold">🚫 [${escapeHtml(t.entity.name)}]의 효과가 무효화되었습니다!</span>`);
+    // 🐛 여기도 `targetScope:'all'`을 몰라서 **적 전체 무효화가 첫 한 기만** 지웠다
+    const Q = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+    const targets = Q.explicit && Q.minions.length > 0
+      ? Q.minions
+      : (game.bossMinions || []).slice(0, 1);
+    for (const e of targets) {
+      e.skills = [];
+      e.silenced = true;
+      addBattleLog(`<span class="text-purple-300 font-bold">🚫 [${escapeHtml(e.name)}]의 효과가 무효화되었습니다!</span>`);
+    }
+  }
+
+  // 💀 파괴 — 체력과 무관하게 없앤다.
+  //    🆕 예전에는 설명문에만 있고 엔진에 없던 동작이다 (DECISIONS #85).
+  //    ⚠️ 건축물도 파괴된다 — "전장을 비운다"가 이 효과의 값이다.
+  if (skill.destroy > 0) {
+    const D = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+    const targets = (D.explicit && D.minions.length > 0
+      ? D.minions
+      : (game.bossMinions || []).slice(0, 1)
+    ).slice(0, Math.max(1, skill.destroy));
+    if (targets.length === 0) {
+      addBattleLog(`<span class="text-slate-400">파괴할 대상이 없습니다.</span>`);
+    }
+    for (const e of targets) {
+      e.currentHp = 0;
+      addBattleLog(`<span class="text-red-400 font-black">💀 [${cardName}] ➔ [${escapeHtml(e.name)}] 파괴!</span>`);
+    }
+    game.bossMinions = removeDead(game.bossMinions);
+    game.playerMinions = removeDead(game.playerMinions);
+  }
+
+  // 🔍 덱 서치 — 덱에서 **같은 카드군**을 우선으로 찾아 패로 가져온다.
+  //    드로우와 다른 점: 무엇이 올지 고를 수 있다는 것. 그래서 값이 더 비싸다.
+  if (skill.searchDeck > 0 && Array.isArray(game.playerDeck) && Array.isArray(game.playerHand)) {
+    const wantTheme = card.themeId || card.themeName || null;
+    let found = 0;
+    for (let i = 0; i < skill.searchDeck; i++) {
+      if (game.playerHand.length >= 7) {
+        addBattleLog(`<span class="text-red-400">손패가 가득 차 더 가져올 수 없습니다. (최대 7장)</span>`);
+        break;
+      }
+      // 같은 카드군 → 없으면 아무 카드나
+      let idx = wantTheme
+        ? game.playerDeck.findIndex(c => c && (c.themeId === card.themeId || c.themeName === card.themeName))
+        : -1;
+      if (idx === -1) idx = game.playerDeck.length - 1;
+      if (idx < 0) { addBattleLog(`<span class="text-slate-400">덱이 비어 서치할 수 없습니다.</span>`); break; }
+      const got = game.playerDeck.splice(idx, 1)[0];
+      if (!got) break;
+      game.playerHand.push(got);
+      found++;
+      addBattleLog(`<span class="text-amber-300">🔍 [${cardName}] 덱에서 <b>[${escapeHtml(got.name)}]</b>을(를) 패로 가져왔습니다.</span>`);
+    }
+    if (found === 0 && game.playerDeck.length === 0) {
+      addBattleLog(`<span class="text-slate-400">덱이 비어 서치가 불발됐습니다.</span>`);
+    }
+  }
+
+  // 👾 토큰 소환 — 전장을 채운다.
+  //    전장 자체가 벽인 지금(DECISIONS #84) 이건 방어 수단이기도 하다.
+  if (skill.summonToken > 0 && Array.isArray(game.playerMinions)) {
+    const maxSlots = 4;
+    let made = 0;
+    for (let i = 0; i < skill.summonToken; i++) {
+      if (game.playerMinions.length >= maxSlots) {
+        addBattleLog(`<span class="text-slate-400">전장이 가득 차 토큰을 더 소환할 수 없습니다.</span>`);
+        break;
+      }
+      game.playerMinions.push({
+        id: `token-${card.id || 'x'}-${game.turnCount || 0}-${game.playerMinions.length}`,
+        instanceId: `token-${card.id || 'x'}-${game.turnCount || 0}-${game.playerMinions.length}`,
+        name: `${card.name}의 그림자`,
+        cardType: 'unit',
+        element: card.element || 'dark',
+        themeId: card.themeId, themeName: card.themeName, themeKeyword: card.themeKeyword,
+        attack: 4, defense: 2, maxHp: 10, currentHp: 10,
+        // ⚠️ 소환 후유증. 없으면 이번 턴에 바로 때린다.
+        canAttack: false, summonedTurn: game.turnCount, frozen: false, statuses: {},
+        isToken: true, imageUrl: card.imageUrl, skills: [{}]
+      });
+      made++;
+    }
+    if (made > 0) {
+      addBattleLog(`<span class="text-emerald-300 font-bold">👾 [${cardName}] 토큰 ${made}체 소환! (4/2/10)</span>`);
     }
   }
 
   // 9. 상태이상
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
     const st = skill.statusEffect;
-    const picked = Array.isArray(opts.picked) ? opts.picked : null;
+    const spec = STATUS_EFFECTS[st.type];
 
-    // 🎯 소환수를 지정했으면 그 소환수에게 건다.
-    //    소환수는 자체 상태이상 칸이 없으므로 여기서 만들어 붙인다.
-    const minionTargets = picked
-      ? picked.map(k => resolveTargetKey(game, k)).filter(t => t && t.entity)
-      : [];
+    // 🎯 소환수는 자체 상태이상 칸이 없으므로 여기서 만들어 붙인다.
+    // 🐛 예전에는 지정(picked)만 봐서 **"적 전체에 화상"이 첫 한 기만** 태웠다.
+    const St = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
 
-    if (minionTargets.length > 0) {
-      for (const t of minionTargets) {
-        if (!t.entity.statuses) t.entity.statuses = {};
-        applyStatus(t.entity.statuses, st.type, st.duration || 1, st.value || 0);
+    if (St.explicit && St.minions.length > 0) {
+      for (const e of St.minions) {
+        if (!e.statuses) e.statuses = {};
+        applyStatus(e.statuses, st.type, st.duration || 1, st.value || 0);
         // 빙결은 소환수 표시에 직접 쓰이는 플래그가 따로 있다
-        if (st.type === 'freeze') t.entity.frozen = true;
-        addBattleLog(`<span class="text-yellow-400">⚡ [${escapeHtml(t.entity.name)}]에게 [${st.type}] 부여!</span>`);
+        if (st.type === 'freeze') e.frozen = true;
+        // ⚠️ 카드 텍스트에 엔진 키를 그대로 쓰지 않는다 → CLAUDE.md 금지사항 47
+        addBattleLog(`<span class="${spec ? spec.color : 'text-yellow-400'}">${spec ? spec.icon : '⚡'} [${escapeHtml(e.name)}]에게 ${spec ? spec.name : st.type} ${st.duration || 1}턴 부여!</span>`);
       }
     } else {
       // 본체를 골랐거나 지정이 없으면 예전대로 상대 본체에 건다

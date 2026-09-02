@@ -118,6 +118,9 @@ export function hasTargetableEffect(skill = {}) {
   // 약화·무효화는 "누구를"이 없으면 성립하지 않는다
   if ((skill.attackDown || 0) > 0) return true;
   if (skill.silence) return true;
+  // 💀 파괴는 "누구를"이 없으면 성립하지 않는다 (DECISIONS #85)
+  if ((skill.destroy || 0) > 0) return true;
+  // ⚠️ searchDeck·summonToken은 시전자 쪽 효과라 대상이 필요 없다 (여기 넣지 말 것)
   // ⚠️ damageReduction은 시전자에게 붙는 버프라 대상이 필요 없다 (여기 넣지 말 것)
   return false;
 }

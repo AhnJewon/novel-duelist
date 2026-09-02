@@ -95,7 +95,9 @@
 | 건축물 패시브 · 오라 | `js/config.js`의 `buildStructurePassive` + `js/battle-engine.js`의 오라 계산 |
 | 카드군 초기화 · 병합 · 보수 | `js/archetype-service.js` (콘솔에서 `resetArchetypes()`) |
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
-| 도발 · 직접공격 판정 | `js/card-keywords.js` **한 곳** (엔진·렌더러·상세가 공유) |
+| 직접공격(directAttack) 판정 | `js/card-keywords.js` **한 곳** (엔진·렌더러·상세가 공유) |
+| 효과 대상 해석 (지정/전체/무작위) | `js/skill-effects.js`의 `resolveEffectTargets()` **한 곳** |
+| 설명문 거짓말 관문 | `js/config.js`의 `findDescriptionLies()` **한 곳** |
 | PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
 | 덱 마나 커브 (코스트 분포) | `js/config.js`의 `COST_CURVE_WEIGHTS` |
@@ -135,7 +137,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (293항목):
+전투 로직은 **하네스가 있습니다** (324항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -317,10 +319,42 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (293항목, 약 3초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (324항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
     ⚠️ 전부 초록인 결과는 그 자체로 아무것도 증명하지 않습니다. 새 검사를 쓸 때는
     **수정 전 코드에서 실패하는지** 반드시 확인하세요 (`git stash`).
     → [DECISIONS #83](docs/DECISIONS.md)
+
+57. **도발(taunt)은 게임에서 제거됐습니다.** 되살리지 마세요. 전장에 소환수가
+    있으면 본체를 칠 수 없는 규칙이 그 일을 대신합니다. 공격자는 상대 전장의
+    소환수 중 **아무나** 고릅니다. → [DECISIONS #84](docs/DECISIONS.md)
+
+58. **효과의 대상은 `resolveEffectTargets()`로만 해석하세요.** 효과마다 따로
+    쓰면 갈라집니다 — `targetScope:'all'`이 피해에만 구현돼 있어서 "적 전체
+    약화"가 첫 한 기만 약화시켰고, `'random'`은 아예 없었습니다.
+    → [DECISIONS #85](docs/DECISIONS.md)
+
+59. **보스 경로에도 같은 효과를 구현하세요.** `resolveBossSpell`이 연타·치명타·
+    처형·흡혈·드로우를 무시해서, 같은 카드가 보스 손에서는 3배 약했습니다.
+    → [DECISIONS #85](docs/DECISIONS.md)
+
+60. **카드팩 프롬프트에 효과 스키마를 빼먹지 마세요.** 설명문만 요구하면
+    LLM은 화려한 문장을 쓰는데 엔진에는 굴린 `damage`만 들어가, **설명문이
+    구조적으로 거짓**이 됩니다 (실측: 유저 카드 43장 중 29장).
+    → [DECISIONS #85](docs/DECISIONS.md)
+
+61. **설명문 검증은 `sanitize`에도 있어야 합니다.** `card-describe.js`의 검사는
+    2단계 LLM 경로에서만 돌고, fastMode·오프라인이면 건너뜁니다.
+    `sanitize`는 항상 지나므로 거기가 최후의 관문입니다.
+    → [DECISIONS #85](docs/DECISIONS.md)
+
+62. **`sanitizeAndClampCardData`는 `skill`과 `skills[0]`을 함께 갱신합니다.**
+    호출부에서 `card.skills = [card.skill]`을 챙기게 두지 마세요 — 언젠가
+    빠뜨리고, 엔진은 `skills[0]`을 읽습니다. → [DECISIONS #85](docs/DECISIONS.md)
+
+63. **하네스 검사 사이에 대상 선택 모드를 남기지 마세요.** 켜진 채로 넘어가면
+    다음 검사의 `attackWithMinion`이 "취소"로 해석해 즉시 반환합니다 —
+    기능이 고장난 것처럼 보입니다. `__test.reset()`이 꺼줍니다.
+    → [DECISIONS #85](docs/DECISIONS.md)

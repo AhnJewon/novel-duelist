@@ -33,9 +33,11 @@ import { readTargetSpec, needsTargetPick, collectTargetKeys, resolveTargetKey,
 import { TRAP_TRIGGERS, checkTraps, normalizeTrapTrigger } from '/js/trap-system.js';
 import { refreshMinions, createSides, createBuffs, canPlayCard } from '/js/combat-side.js';
 import { seedBattleRng } from '/js/rng.js';
+import { isValidTarget, cancelTargeting } from '/js/targeting.js';
 import { getSkillBadgesHtml } from '/js/card-renderer.js';
 import { KEYWORD_DEFINITIONS } from '/js/keyword-service.js';
-import { readTaunt, readDirectAttack } from '/js/card-keywords.js';
+import { describeSkillFromData, sanitizeAndClampCardData } from '/js/config.js';
+import { readDirectAttack } from '/js/card-keywords.js';
 import { attachCardDetail, hideCardDetail } from '/js/card-detail.js';
 
 // ── 결과 수집 ────────────────────────────────────────────────
@@ -117,12 +119,8 @@ function suiteAttack() {
   check(S, 'directAttack(skill)도 인식',
     BE.canAttackFace([minion()], minion({ skills: [{ directAttack: true }] })) === true);
 
-  // readTaunt
-  check(S, 'readTaunt: 최상위 taunt', BE.readTaunt({ taunt: true }) === true);
-  check(S, 'readTaunt: skill.taunt', BE.readTaunt({ skills: [{ taunt: true }] }) === true);
-  check(S, 'readTaunt: skill(단수).taunt', BE.readTaunt({ skill: { taunt: true } }) === true);
-  check(S, 'readTaunt: 건축물은 자동 도발', BE.readTaunt({ cardType: 'structure' }) === true);
-  check(S, 'readTaunt: 없으면 false', BE.readTaunt({ skills: [{}] }) === false);
+  // 🗑️ 도발은 게임에서 제거됐다 (DECISIONS #84)
+  check(S, 'readTaunt는 더 이상 존재하지 않는다', typeof BE.readTaunt === 'undefined');
 
   // 본체 지정이 전장에 막혀 최전방으로 리다이렉트되는가
   resetBoard({
@@ -134,25 +132,47 @@ function suiteAttack() {
     state.bossMinions[0].currentHp === 28 && state.currentBoss.currentHp === 300,
     `앞=${state.bossMinions[0].currentHp} 보스=${state.currentBoss.currentHp}`);
 
-  // 도발 리다이렉트 (뒤에 도발이 있을 때 앞을 지정)
+  // 🗑️ 도발 제거 — 옛 도발 소환수가 뒤에 있어도 내가 지정한 대상이 맞는다
   resetBoard({
     playerMinions: [minion({ name: '내병사', attack: 12 })],
-    bossMinions: [minion({ name: '비도발', currentHp: 40 }), minion({ name: '도발', currentHp: 40, taunt: true })]
+    bossMinions: [minion({ name: '앞', currentHp: 40 }), minion({ name: '옛도발', currentHp: 40, taunt: true })]
   });
   BE.resolveMinionAttack(0, 'foe:0');
-  check(S, '도발을 무시한 지정은 도발로 되돌아감',
-    state.bossMinions[1].currentHp === 28 && state.bossMinions[0].currentHp === 40,
-    `비도발=${state.bossMinions[0].currentHp} 도발=${state.bossMinions[1].currentHp}`);
+  check(S, '지정한 대상이 그대로 맞는다 (도발 리다이렉트 없음)',
+    state.bossMinions[0].currentHp === 28 && state.bossMinions[1].currentHp === 40,
+    `앞=${state.bossMinions[0].currentHp} 옛도발=${state.bossMinions[1].currentHp}`);
 
-  // directAttack + 상대 도발 → 본체 타격이 성립해야 한다 (모순 수정 확인)
+  // 뒤에 있는 소환수도 자유롭게 고를 수 있다
+  resetBoard({
+    playerMinions: [minion({ name: '내병사', attack: 12 })],
+    bossMinions: [minion({ name: '앞', currentHp: 40 }), minion({ name: '뒤', currentHp: 40 })]
+  });
+  BE.resolveMinionAttack(0, 'foe:1');
+  check(S, '뒷줄도 직접 지정할 수 있다',
+    state.bossMinions[1].currentHp === 28 && state.bossMinions[0].currentHp === 40,
+    `앞=${state.bossMinions[0].currentHp} 뒤=${state.bossMinions[1].currentHp}`);
+
+  // attackWithMinion이 고를 수 있는 목록에 전원이 들어가는가
+  resetBoard({
+    playerMinions: [minion({ name: '내병사', attack: 12, canAttack: true })],
+    bossMinions: [minion({ name: 'A' }), minion({ name: 'B', taunt: true }), minion({ name: 'C' })]
+  });
+  BE.attackWithMinion(0);
+  const keys = ['foe:0', 'foe:1', 'foe:2'].filter(k => isValidTarget(k));
+  const faceOffered = isValidTarget('face');
+  cancelTargeting();
+  check(S, '상대 전장 전원이 유효 대상 / 본체는 제외',
+    keys.length === 3 && !faceOffered, `${keys.join(',')} face=${faceOffered}`);
+
+  // directAttack은 전장을 무시하고 본체 타격 (유일한 예외)
   resetBoard({
     playerMinions: [minion({ name: '직격병', attack: 12, directAttack: true })],
-    bossMinions: [minion({ name: '도발', currentHp: 40, taunt: true })]
+    bossMinions: [minion({ name: '벽', currentHp: 40 })]
   });
   BE.resolveMinionAttack(0, 'face');
-  check(S, 'directAttack은 도발도 넘어 본체 타격',
+  check(S, 'directAttack은 전장을 넘어 본체 타격',
     state.currentBoss.currentHp === 288 && state.bossMinions[0].currentHp === 40,
-    `보스=${state.currentBoss.currentHp} 도발=${state.bossMinions[0].currentHp}`);
+    `보스=${state.currentBoss.currentHp} 벽=${state.bossMinions[0].currentHp}`);
 
   // 수비력이 방어할 때도 적용되는가 (보스 → 내 소환수)
   resetBoard({ playerMinions: [minion({ name: '방패병', defense: 4, currentHp: 30 })] });
@@ -166,23 +186,23 @@ function suiteAttack() {
   check(S, '수비력 초과여도 최소 1 피해',
     state.playerMinions[0].currentHp === 29, `hp=${state.playerMinions[0].currentHp}`);
 
-  // 보스가 내 도발을 존중하는가 (PvE 기본 경로)
+  // 보스는 지정이 없으면 맨 앞을 친다 (도발 우선순위 없음)
   resetBoard({
-    playerMinions: [minion({ name: '앞줄' }), minion({ name: '도발벽', taunt: true })]
+    playerMinions: [minion({ name: '앞줄' }), minion({ name: '옛도발', taunt: true })]
   });
   BE.foeMinionAttack(0, minion({ attack: 10 }));
-  check(S, '보스 공격이 내 도발을 우선 타격',
-    state.playerMinions[1].currentHp === 20 && state.playerMinions[0].currentHp === 30,
-    `앞=${state.playerMinions[0].currentHp} 도발=${state.playerMinions[1].currentHp}`);
+  check(S, '보스 공격은 맨 앞을 친다 (도발 우선 없음)',
+    state.playerMinions[0].currentHp === 20 && state.playerMinions[1].currentHp === 30,
+    `앞=${state.playerMinions[0].currentHp} 옛도발=${state.playerMinions[1].currentHp}`);
 
-  // PvP 재생 경로: 상대가 foe:0(비도발)을 지정해도 도발로 돌아가야 한다
+  // PvP 재생: 상대가 고른 대상이 그대로 맞는다
   resetBoard({
-    playerMinions: [minion({ name: '앞줄' }), minion({ name: '도발벽', taunt: true })]
+    playerMinions: [minion({ name: '앞줄' }), minion({ name: '뒷줄' })]
   });
-  BE.foeMinionAttack(0, minion({ attack: 10 }), 'foe:0');
-  check(S, 'PvP 지정 공격도 내 도발을 못 넘음',
+  BE.foeMinionAttack(0, minion({ attack: 10 }), 'foe:1');
+  check(S, 'PvP 지정 공격이 그대로 재생된다',
     state.playerMinions[1].currentHp === 20 && state.playerMinions[0].currentHp === 30,
-    `앞=${state.playerMinions[0].currentHp} 도발=${state.playerMinions[1].currentHp}`);
+    `앞=${state.playerMinions[0].currentHp} 뒤=${state.playerMinions[1].currentHp}`);
 
   // 보스도 내 전장이 있으면 본체를 못 친다
   resetBoard({ playerMinions: [minion({ name: '벽' })] });
@@ -466,11 +486,74 @@ function suiteEffects() {
   check(S, 'attackDown 미지정 → 첫 대상', state.bossMinions[0].attack === 6);
 
   // 무효화
-  resetBoard({ bossMinions: [minion({ name: 'X', taunt: true, skills: [{ damage: 5 }] })] });
+  resetBoard({ bossMinions: [minion({ name: 'X', skills: [{ damage: 5 }] })] });
   fireSkill({ silence: true }, { picked: ['foe:0'] });
-  check(S, 'silence: 효과·도발 제거, 스탯 유지',
-    state.bossMinions[0].skills.length === 0 && state.bossMinions[0].taunt === false &&
+  check(S, 'silence: 효과 제거, 스탯 유지',
+    state.bossMinions[0].skills.length === 0 &&
     state.bossMinions[0].attack === 10 && state.bossMinions[0].silenced === true);
+
+  // 💀 파괴 (DECISIONS #85)
+  resetBoard({ bossMinions: [minion({ name: 'A', currentHp: 99, maxHp: 99, defense: 20 }), minion({ name: 'B' })] });
+  fireSkill({ destroy: 1 }, { picked: ['foe:0'] });
+  check(S, 'destroy: 체력·수비력 무관하게 즉시 제거',
+    state.bossMinions.length === 1 && state.bossMinions[0].name === 'B',
+    state.bossMinions.map(m => m.name).join(','));
+
+  resetBoard({ bossMinions: [minion({ name: 'A' }), minion({ name: 'B' }), minion({ name: 'C' })] });
+  fireSkill({ destroy: 3, targetScope: 'all' });
+  check(S, 'destroy + 전체 대상 → 전장을 비운다', state.bossMinions.length === 0,
+    `${state.bossMinions.length}기 남음`);
+
+  resetBoard({ bossMinions: [minion({ name: 'A' }), minion({ name: 'B' }), minion({ name: 'C' })] });
+  fireSkill({ destroy: 1, targetScope: 'all' });
+  check(S, 'destroy 개수 상한이 지켜진다 (1체만)', state.bossMinions.length === 2,
+    `${state.bossMinions.length}기 남음`);
+
+  resetBoard({ bossMinions: [] });
+  fireSkill({ destroy: 1 });
+  check(S, 'destroy: 대상이 없으면 아무 일도 없다', state.bossMinions.length === 0);
+
+  // 🔍 덱 서치
+  resetBoard({
+    playerDeck: [card({ name: '무관카드' }), card({ name: '카드군카드', themeId: 'th-A', themeName: '검증군' })],
+    playerHand: []
+  });
+  {
+    const c = card({ name: '서치카드', cardType: 'spell', themeId: 'th-A', themeName: '검증군',
+      skills: [{ searchDeck: 1 }] });
+    applyPlayerSkillEffects(c.skills[0], { card: c, game: state, helpers: BE.__test.helpers() },
+      { sourceLabel: '주문', allowAoe: true });
+  }
+  check(S, 'searchDeck: 같은 카드군을 우선으로 가져온다',
+    state.playerHand.length === 1 && state.playerHand[0].name === '카드군카드' && state.playerDeck.length === 1,
+    `손패=${state.playerHand.map(c => c.name)} 덱=${state.playerDeck.length}`);
+
+  resetBoard({ playerDeck: [], playerHand: [] });
+  fireSkill({ searchDeck: 2 });
+  check(S, 'searchDeck: 덱이 비면 불발', state.playerHand.length === 0);
+
+  resetBoard({ playerDeck: [card(), card()], playerHand: Array.from({ length: 7 }, () => card()) });
+  fireSkill({ searchDeck: 2 });
+  check(S, 'searchDeck: 손패 상한 7을 넘지 않는다', state.playerHand.length === 7, `${state.playerHand.length}`);
+
+  // 👾 토큰 소환
+  resetBoard({ playerMinions: [], turnCount: 4 });
+  fireSkill({ summonToken: 2 });
+  check(S, 'summonToken: 2체 소환 + 소환 후유증',
+    state.playerMinions.length === 2 &&
+    state.playerMinions.every(m => m.canAttack === false && m.summonedTurn === 4 && m.attack === 4 && m.maxHp === 10),
+    JSON.stringify(state.playerMinions.map(m => `${m.name} ${m.attack}/${m.currentHp} atk=${m.canAttack}`)));
+
+  resetBoard({ playerMinions: [minion(), minion(), minion()], turnCount: 4 });
+  fireSkill({ summonToken: 3 });
+  check(S, 'summonToken: 전장 4칸을 넘지 않는다', state.playerMinions.length === 4,
+    `${state.playerMinions.length}기`);
+
+  // 토큰이 전장 차단에 실제로 기여하는가 (이게 소환의 값이다)
+  resetBoard({ playerMinions: [], turnCount: 4 });
+  fireSkill({ summonToken: 1 });
+  check(S, 'summonToken: 소환된 토큰이 본체 공격을 막는다',
+    BE.canAttackFace(state.playerMinions, minion()) === false);
 
   // 상태이상 — 지정 소환수
   resetBoard({ bossMinions: [minion({ name: 'X' })] });
@@ -937,15 +1020,15 @@ function suitePlayRules() {
 function suitePlayCard() {
   const S = '시전 통합';
 
-  // 소환수: 마나 차감 · 손패 제거 · 전장 배치 · 소환 후유증 · 도발 전달
+  // 소환수: 마나 차감 · 손패 제거 · 전장 배치 · 소환 후유증
   resetBoard({ playerMana: 5, turnCount: 3 });
-  state.playerHand = [card({ name: '도발병', cost: 2, hp: 25, defense: 3, skills: [{ taunt: true }] })];
+  state.playerHand = [card({ name: '방벽병', cost: 2, hp: 25, defense: 3, skills: [{}] })];
   BE.playCard(0);
   const e0 = state.playerMinions[0];
   check(S, '소환수 시전: 마나·손패·전장',
     state.playerMana === 3 && state.playerHand.length === 0 && state.playerMinions.length === 1,
     `mana=${state.playerMana} hand=${state.playerHand.length} field=${state.playerMinions.length}`);
-  check(S, '소환수 시전: skill.taunt가 전장까지 전달', e0.taunt === true);
+  check(S, '소환수 시전: 도발 필드가 남지 않는다', !e0.taunt);
   check(S, '소환수 시전: 소환 후유증 + summonedTurn',
     e0.canAttack === false && e0.summonedTurn === 3, `${e0.canAttack}/${e0.summonedTurn}`);
   check(S, '소환수 시전: 체력/수비력이 카드값', e0.currentHp === 25 && e0.defense === 3);
@@ -983,12 +1066,12 @@ function suitePlayCard() {
     state.currentBoss.currentHp === 282 && state.playerMinions.length === 1,
     `${state.currentBoss.currentHp} field=${state.playerMinions.length}`);
 
-  // 건축물: 전장을 차지하고 자동 도발
+  // 건축물: 전장을 차지한다 (도발 없이도 전장 차단으로 벽이 된다)
   resetBoard({ playerMana: 5 });
   state.playerHand = [card({ name: '성벽', cost: 3, cardType: 'structure', hp: 22, skills: [{}] })];
   BE.playCard(0);
-  check(S, '건축물 시전: 전장 점유 + 자동 도발',
-    state.playerMinions.length === 1 && state.playerMinions[0].taunt === true &&
+  check(S, '건축물 시전: 전장 점유 (도발 없음)',
+    state.playerMinions.length === 1 && !state.playerMinions[0].taunt &&
     state.playerMinions[0].currentHp === 22);
 
   // 함정: 세트만 되고 전장에는 안 나온다
@@ -1031,13 +1114,30 @@ function suitePlayCard() {
 async function suiteBossTurn() {
   const S = '보스 턴';
 
-  // 보스 소환수 배치 + 소환 후유증 + 도발 전달
+  // 보스 소환수 배치 + 소환 후유증
   resetBoard({ turnCount: 5 });
-  await BE.playBossCard(card({ name: '보스병', cardType: 'unit', attack: 14, hp: 24, skills: [{ taunt: true }] }));
+  await BE.playBossCard(card({ name: '보스병', cardType: 'unit', attack: 14, hp: 24, skills: [{}] }));
   const bm = state.bossMinions[0];
-  check(S, '보스 소환: 후유증 + 도발 전달',
-    bm && bm.canAttack === false && bm.summonedTurn === 5 && bm.taunt === true,
+  check(S, '보스 소환: 후유증 + 도발 없음',
+    bm && bm.canAttack === false && bm.summonedTurn === 5 && !bm.taunt,
     JSON.stringify(bm && { c: bm.canAttack, t: bm.taunt, s: bm.summonedTurn }));
+
+  // 🏛️ 보스가 낸 건축물은 공격력 0이어야 한다
+  //    🐛 `attack: Math.max(8, card.attack || 12)`가 0을 덮어써서,
+  //       플레이어의 0공격 요새가 보스 손에서는 12공격 소환수가 됐다.
+  resetBoard({ turnCount: 5 });
+  await BE.playBossCard(card({ name: '보스요새', cardType: 'structure', attack: 0, defense: 12, hp: 40, skills: [{}] }));
+  const bs = state.bossMinions[0];
+  check(S, '보스 건축물은 공격력 0으로 배치된다',
+    bs && bs.attack === 0 && bs.cardType === 'structure',
+    JSON.stringify(bs && { atk: bs.attack, type: bs.cardType }));
+
+  // 그리고 실제로 공격하지 않는다
+  resetBoard({ playerMinions: [minion({ name: '벽', currentHp: 30 })], playerHp: 50 });
+  BE.foeMinionAttack(0, { name: '보스요새', cardType: 'structure', attack: 0, defense: 12, currentHp: 40, maxHp: 40 });
+  check(S, '보스 건축물은 공격 단계에서 아무 일도 하지 않는다',
+    state.playerMinions[0].currentHp === 30 && state.playerHp === 50,
+    `벽=${state.playerMinions[0].currentHp} 본체=${state.playerHp}`);
 
   // 보스 주문 — 전장이 비면 본체 직격
   resetBoard({ playerMinions: [] });
@@ -1064,6 +1164,64 @@ async function suiteBossTurn() {
   check(S, '보스 광역: 전부 + 본체 70%',
     state.playerMinions.every(m => m.currentHp === 20) && state.playerHp === 43,
     `${state.playerMinions.map(m => m.currentHp)} php=${state.playerHp}`);
+
+  // ⭐ 보스 광역이 수비력을 존중하는가 (실전에서 22체력/8수비 벽이 20에 죽었다)
+  resetBoard({ playerMinions: [minion({ name: '벽', defense: 8, currentHp: 22, maxHp: 22 })] });
+  await BE.playBossCard(card({ name: '광역', cardType: 'spell', skills: [{ damage: 20, isAoeSpell: true }] }));
+  check(S, '보스 광역 주문이 수비력을 적용 (20-8=12)',
+    state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 10,
+    `${state.playerMinions.map(m => m.name + ':' + m.currentHp)}`);
+
+  resetBoard({ playerMinions: [minion({ name: '벽', defense: 14, currentHp: 32, maxHp: 32 })] });
+  await BE.__test.bossStep({ type: 'attack', name: '광역', value: 28, isAoe: true });
+  check(S, '보스 광역 스텝도 수비력을 적용 (28-14=14)',
+    state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 18,
+    `${state.playerMinions.map(m => m.name + ':' + m.currentHp)}`);
+
+  // 보스 광역 관통은 수비를 무시한다
+  resetBoard({ playerMinions: [minion({ name: '벽', defense: 8, currentHp: 22, maxHp: 22 })] });
+  await BE.playBossCard(card({ name: '관통광역', cardType: 'spell', skills: [{ damage: 20, isAoeSpell: true, pierceShield: true }] }));
+  check(S, '보스 광역 관통은 수비를 무시 (20 전부)',
+    state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 2,
+    `${state.playerMinions.map(m => m.currentHp)}`);
+
+  // ⭐ 보스 주문이 연타·치명타·처형·흡혈을 반영하는가
+  resetBoard({ playerMinions: [] });
+  await BE.playBossCard(card({ name: '연타', cardType: 'spell', skills: [{ damage: 6, multiHit: 3 }] }));
+  check(S, '보스 주문 연타 3회 → 총 18', state.playerHp === 32, `${state.playerHp}`);
+
+  resetBoard({ playerMinions: [] });
+  await BE.playBossCard(card({ name: '크리', cardType: 'spell', skills: [{ damage: 10, critChance: 1, critMultiplier: 2 }] }));
+  check(S, '보스 주문 치명타 2배', state.playerHp === 30, `${state.playerHp}`);
+
+  resetBoard({ playerMinions: [], playerHp: 10, playerMaxHp: 50 });
+  await BE.playBossCard(card({ name: '처형', cardType: 'spell', skills: [{ damage: 4, executeThreshold: 0.3 }] }));
+  check(S, '보스 주문 처형 2배', state.playerHp === 2, `${state.playerHp}`);
+
+  resetBoard({ playerMinions: [], boss: { maxHp: 300, currentHp: 100, shield: 0 } });
+  await BE.playBossCard(card({ name: '흡혈', cardType: 'spell', skills: [{ damage: 20, lifestealPercent: 0.5 }] }));
+  check(S, '보스 주문 흡혈로 보스 회복', state.currentBoss.currentHp === 110, `${state.currentBoss.currentHp}`);
+
+  // ⭐ 보스 드로우 — 실전에서 드로우 카드가 死카드였다
+  resetBoard({ bossHand: [], bossDeck: [card(), card(), card()] });
+  await BE.playBossCard(card({ name: '드로우', cardType: 'spell', skills: [{ drawCards: 2 }] }));
+  check(S, '보스 주문 드로우 2장', state.bossHand.length === 2 && state.bossDeck.length === 1,
+    `손패=${state.bossHand.length} 덱=${state.bossDeck.length}`);
+
+  resetBoard({ bossHand: [card(), card(), card(), card(), card()], bossDeck: [card()] });
+  await BE.playBossCard(card({ name: '드로우', cardType: 'spell', skills: [{ drawCards: 2 }] }));
+  check(S, '보스 손패 상한 5에서 멈춘다', state.bossHand.length === 5, `${state.bossHand.length}`);
+
+  // ⭐ 보스 약화 · 무효화
+  resetBoard({ playerMinions: [minion({ name: '내병사', attack: 12 })] });
+  await BE.playBossCard(card({ name: '약화', cardType: 'spell', skills: [{ attackDown: 5 }] }));
+  check(S, '보스 주문 약화 (12→7)', state.playerMinions[0].attack === 7, `${state.playerMinions[0].attack}`);
+
+  resetBoard({ playerMinions: [minion({ name: '내병사', skills: [{ damage: 3 }] })] });
+  await BE.playBossCard(card({ name: '무효화', cardType: 'spell', skills: [{ silence: true }] }));
+  check(S, '보스 주문 무효화 (효과 제거, 스탯 유지)',
+    state.playerMinions[0].skills.length === 0 &&
+    state.playerMinions[0].attack === 10);
 
   // 보스 방어막/치유
   resetBoard({ boss: { maxHp: 300, currentHp: 200, shield: 0 } });
@@ -1263,11 +1421,11 @@ async function suitePvpMirror() {
     state.playerMinions[0].currentHp === 30 && state.playerMinions[1].currentHp === 18,
     `${state.playerMinions.map(m => m.currentHp)}`);
 
-  // 상대 소환수 배치 + 슬롯 재현 + 도발
+  // 상대 소환수 배치 + 슬롯 재현
   resetBoard({ bossMinions: [minion({ name: '기존' })] });
-  await BE.playFoeCardPvp(card({ name: '상대병', cardType: 'unit', hp: 20, skills: [{ taunt: true }] }), 0);
-  check(S, '상대 소환수: 지정 슬롯(0)에 배치 + 도발',
-    state.bossMinions[0].name === '상대병' && state.bossMinions[0].taunt === true &&
+  await BE.playFoeCardPvp(card({ name: '상대병', cardType: 'unit', hp: 20, skills: [{}] }), 0);
+  check(S, '상대 소환수: 지정 슬롯(0)에 배치',
+    state.bossMinions[0].name === '상대병' &&
     state.bossMinions[0].canAttack === false,
     state.bossMinions.map(m => m.name).join(','));
 
@@ -1390,7 +1548,6 @@ function suiteKeywordDisplay() {
     ['execute', { executeThreshold: 0.3 }, '처형'],
     ['spell', { isAoeSpell: true }, '광역'],
     ['structure', { passiveEffect: { endTurnShield: 5 } }, '패시브'],
-    ['taunt', { taunt: true }, '도발'],
     ['directAttack', { directAttack: true }, '직접 공격'],
     ['stun', { statusEffect: { type: 'stun', duration: 1 } }, '기절'],
     ['freeze', { statusEffect: { type: 'freeze', duration: 1 } }, '빙결'],
@@ -1409,27 +1566,78 @@ function suiteKeywordDisplay() {
   const missing = cases.map(([k]) => k).filter(k => !KEYWORD_DEFINITIONS[k]);
   check(S, '모든 뱃지 키워드에 설명이 있다', missing.length === 0, `누락: ${missing.join(',')}`);
 
-  // 도발 판정이 세 형태를 모두 읽는가 (엔진·렌더러·상세가 같은 함수를 쓴다)
-  check(S, 'readTaunt 단일 소스: 최상위/skill/skills/건축물',
-    readTaunt({ taunt: true }) && readTaunt({ skill: { taunt: true } }) &&
-    readTaunt({ skills: [{ taunt: true }] }) && readTaunt({ cardType: 'structure' }) &&
-    !readTaunt({ skills: [{}] }));
   check(S, 'readDirectAttack 단일 소스',
     readDirectAttack({ directAttack: true }) && readDirectAttack({ skills: [{ directAttack: true }] }) &&
     !readDirectAttack({ skills: [{}] }));
   check(S, '엔진이 재수출하는 함수가 같은 구현',
-    BE.readTaunt === readTaunt && BE.readDirectAttack === readDirectAttack);
+    BE.readDirectAttack === readDirectAttack);
 
-  // 상세 팝업이 skill.taunt를 읽는가 (예전에는 최상위만 봤다)
+  // 🗑️ 도발이 게임 어디에도 남아 있지 않은가 (DECISIONS #84)
+  check(S, '도발 뱃지가 더 이상 만들어지지 않는다',
+    !getSkillBadgesHtml({ taunt: true }).includes('도발'), getSkillBadgesHtml({ taunt: true }));
+  check(S, '키워드 사전에 도발 항목이 없다', !KEYWORD_DEFINITIONS.taunt);
+  check(S, '전장 차단 규칙이 키워드 사전에 있다', !!KEYWORD_DEFINITIONS.fieldBlock);
+
   const anchor = document.createElement('div');
   document.body.appendChild(anchor);
-  attachCardDetail(anchor, card({ name: '도발병', skills: [{ taunt: true, description: '도발' }] }));
+  attachCardDetail(anchor, card({ name: '옛벽카드', taunt: true, skills: [{ taunt: true, description: '설명' }] }));
   anchor.dispatchEvent(new MouseEvent('mouseenter'));
   const panelHtml = (document.getElementById('card-detail-popover') || {}).innerHTML || '';
   hideCardDetail();
   anchor.remove();
-  check(S, '상세 팝업이 skill.taunt를 표시한다', panelHtml.includes('도발 —'),
-    panelHtml.slice(0, 160));
+  check(S, '상세 팝업에도 도발이 뜨지 않는다', !panelHtml.includes('도발'), panelHtml.slice(0, 160));
+
+  // 설명문 생성기가 도발을 쓰지 않는가
+  check(S, 'describeSkillFromData가 도발을 적지 않는다',
+    !String(describeSkillFromData({ taunt: true, damage: 10 }, 'unit') || '').includes('도발'),
+    String(describeSkillFromData({ taunt: true, damage: 10 }, 'unit')));
+
+  // 🚫 거짓말 관문 — 설명문이 스킬로 뒷받침되지 않으면 교체된다 (DECISIONS #85)
+  const 거짓말들 = [
+    ['미구현 동작(부활)', { damage: 14 }, '쓰러진 아군을 부활시킨다.'],
+    ['미구현 동작(강탈)', { damage: 14 }, '상대 카드를 훔친다.'],
+    ['없는 효과(드로우)', { damage: 7 }, '손패에서 1장을 드로우한다.'],
+    ['없는 효과(파괴)', { damage: 14 }, '상대 소환수 1체를 제거하고 공격한다.'],
+    ['없는 효과(방어막)', { damage: 10 }, '10 피해를 주고 방어막 8을 얻는다.']
+  ];
+  for (const [label, skill, desc] of 거짓말들) {
+    const out = sanitizeAndClampCardData({
+      name: '검증', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
+      skills: [{ name: '효과', ...skill, description: desc }]
+    });
+    check(S, `거짓말 관문: ${label}`, out.skills[0].description !== desc,
+      `그대로 남음: "${out.skills[0].description}"`);
+  }
+  // 정직한 설명문은 건드리지 않는다 (오탐 방지)
+  {
+    const honest = sanitizeAndClampCardData({
+      name: '검증', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
+      skills: [{ name: '효과', damage: 14, description: '적 1체에게 14 피해.' }]
+    });
+    check(S, '거짓말 관문: 정직한 문장은 그대로 둔다',
+      honest.skills[0].description === '적 1체에게 14 피해.', honest.skills[0].description);
+  }
+  // 새 효과를 실제로 가진 카드는 그 문장을 유지한다
+  {
+    const real = sanitizeAndClampCardData({
+      name: '검증', cardType: 'spell', rarity: 'epic', cost: 5,
+      skills: [{ name: '효과', destroy: 1, searchDeck: 1,
+                 description: '적 1체를 파괴하고 덱에서 카드 1장을 서치한다.' }]
+    });
+    check(S, '거짓말 관문: 진짜로 구현된 파괴·서치는 통과',
+      real.skills[0].description.includes('파괴') && real.skills[0].description.includes('서치'),
+      real.skills[0].description);
+  }
+
+  // sanitize가 기존 카드의 죽은 taunt 필드를 지우는가
+  const old = sanitizeAndClampCardData({
+    name: '옛카드', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
+    taunt: true, skills: [{ name: '효과', damage: 8, taunt: true, description: '8 피해' }]
+  });
+  const oldSkill = (old.skills && old.skills[0]) || {};
+  check(S, 'sanitize가 taunt 필드를 지운다',
+    oldSkill.taunt === undefined && old.taunt === undefined,
+    JSON.stringify({ card: old.taunt, skill: oldSkill.taunt }));
 }
 
 // ============================================================

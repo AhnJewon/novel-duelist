@@ -368,10 +368,10 @@ export const ARCHETYPE_PLAYSTYLES = {
     label: '방어 버티기',
     short: '높은 체력과 방어막으로 버티다가 상대가 지쳤을 때 역습한다',
     costBias: '2~4 마나 중심. 스탯은 공격력보다 **체력/방어력**에 몰아준다',
-    favor: ['shield', 'damageReduction', 'heal', 'taunt', 'attackDown'],
+    favor: ['shield', 'damageReduction', 'heal', 'attackDown'],
     avoid: ['multiHit', 'executeThreshold', 'drawCards'],
     typeGuide: {
-      unit:      '공격력은 낮고 체력이 두껍다. 도발(taunt)을 자주 단다',
+      unit:      '공격력은 낮고 체력이 두껍다. 전장에 오래 남아 벽 노릇을 한다',
       spell:     '방어막을 두르거나 체력을 회복한다. 피해 주문은 드물다',
       structure: '매 턴 방어막을 쌓거나 본체를 회복한다. 이 카드군의 핵심이다',
       trap:      '받는 피해를 줄이거나 공격을 무디게 한다'
@@ -410,7 +410,7 @@ export const ARCHETYPE_PLAYSTYLES = {
     label: '에이스 서포트',
     short: '강력한 소환수 하나를 마법·함정·건축물이 둘러싸고 지켜낸다',
     costBias: '에이스는 5~6 마나, 서포트 카드는 1~3 마나로 가볍게',
-    favor: ['shield', 'heal', 'damageReduction', 'taunt', 'attackDown'],
+    favor: ['shield', 'heal', 'damageReduction', 'attackDown'],
     avoid: ['isAoeSpell'],
     typeGuide: {
       unit:      '**소수의 에이스**는 크고 강하게. 나머지는 에이스를 지키는 호위다',
@@ -425,7 +425,7 @@ export const ARCHETYPE_PLAYSTYLES = {
     short: '상대 소환수를 무시하고 본체 체력을 직접 태워 끝낸다',
     costBias: '1~4 마나. 피해 효율이 최우선이다',
     favor: ['damage', 'multiHit', 'critChance', 'pierceShield', 'executeThreshold'],
-    avoid: ['taunt', 'heal'],
+    avoid: ['damageReduction', 'heal'],
     typeGuide: {
       unit:      '체력은 얇아도 좋다. 공격력과 연타가 핵심이다',
       spell:     '이 카드군의 주력. 본체를 직접 노린다 (hpTarget: body)',

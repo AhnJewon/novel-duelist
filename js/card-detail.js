@@ -12,7 +12,7 @@
 
 import { escapeHtml } from './dom-utils.js';
 import { ELEMENT_CONFIG, RARITY_STYLE } from './config.js';
-import { readTaunt, readDirectAttack } from './card-keywords.js';
+import { readDirectAttack } from './card-keywords.js';
 
 const PANEL_ID = 'card-detail-popover';
 const LONG_PRESS_MS = 380;
@@ -85,9 +85,7 @@ function detailHtml(card) {
         </div>`) : ''}
 
       ${card.frozen ? `<div class="text-cyan-300 font-bold text-[10px]">❄️ 빙결 — 이번 턴 행동 불가</div>` : ''}
-      ${/* 🐛 `card.taunt`만 읽고 있었다. 팩·LLM 카드의 도발은 skill 안에 있어서
-             손패 카드는 도발을 갖고도 상세에 아무 표시가 없었다. */''}
-      ${readTaunt(card) ? `<div class="text-amber-300 font-bold text-[10px]">🛡️ 도발 — 전장에서 가장 먼저 공격받습니다</div>` : ''}
+      ${/* 🗑️ 도발 표시는 제거됐다 (DECISIONS #84). 전장에 서 있는 것만으로 벽이다. */''}
       ${readDirectAttack(card) ? `<div class="text-purple-300 font-bold text-[10px]">⚔️ 직접 공격 — 상대 전장을 무시하고 본체를 칩니다</div>` : ''}
     </div>`;
 }

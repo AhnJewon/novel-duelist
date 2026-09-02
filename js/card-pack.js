@@ -356,6 +356,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
   let llmTrapTrigger = null;     // 🪤 함정 발동조건 (없으면 sanitize가 기본값을 넣는다)
   let llmTrapCondition = null;   // 🪤 그 조건이 요구하는 값 (속성·카드군 등)
+  let llmEffects = null;         // ⚙️ LLM이 정한 실제 효과 수치 (없으면 굴린 damage만)
   let skillName = `${baseConcept}의 비기`;
   // 🐛 수정: 예전에는 함정에도 소환수 문구를 붙여 **"0 공격을 가합니다"**가 나왔다
   //    (함정은 공격력이 0이다). 건축물 문구도 실제 패시브와 무관한 고정 문장이었다.
@@ -468,7 +469,7 @@ ${knownThemes}
 모든 카드가 카드군에 속할 필요는 없다. 실제 TCG는 **범용 카드가 덱의 절반 가까이** 차지한다.
 - 약 **35~40%는 범용 카드**로 만들라. 범용은 "themeId": null, "themeName": null 로 둔다.
 - 범용 카드는 특정 카드군에 얽매이지 않는 대신 자체 스펙이 깔끔해야 한다
-  (드로우, 제거, 방어막, 도발, 마나 수급 같은 만능 도구).
+  (드로우, 제거, 방어막, 마나 수급 같은 만능 도구).
 - ✅ 좋은 범용 예: "결계 분쇄의 일격", "욕망의 항아리", "방랑 용병"
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
@@ -512,8 +513,36 @@ Return ONLY JSON:
   "targetSide": "foe|ally|self|any",
   "targetScope": "single|multi|all|random",
   "targetCount": 1-3,
+  "damage": 0-24,
+  "shield": 0-18,
+  "heal": 0-18,
+  "multiHit": 1-3,
+  "drawCards": 0-3,
+  "manaGain": 0-2,
+  "maxHpGain": 0-10,
+  "lifestealPercent": 0,
+  "critChance": 0,
+  "executeThreshold": 0,
+  "pierceShield": false,
+  "doubleCastNext": false,
+  "invulnerableTurns": 0,
+  "damageReduction": 0-60,
+  "attackDown": 0-9,
+  "silence": false,
+  "destroy": 0-3,
+  "searchDeck": 0-3,
+  "summonToken": 0-3,
+  "hpTarget": "body|minion",
+  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable", "duration": 1-3, "value": 0-10 },
   "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
+
+⚙️ 실제로 구현된 효과만 쓸 것 (위 목록에 없는 건 글자만 남고 동작하지 않는다).
+- 쓰지 않는 효과는 0 / false / "none"으로 둘 것.
+- ❌ 엔진에 **없는** 동작이라 설명문에도 쓰면 안 되는 것: 부활·되살리기, 카드 강탈,
+  변신·둔갑. (묘지·소유권 이전·카드 교체가 없다)
+- ✅ 파괴(destroy)·덱 서치(searchDeck)·토큰 소환(summonToken)은 **있다.** 쓰려면
+  설명문이 아니라 위 필드에 숫자를 넣을 것.
 
 
 💫 STATUS EFFECT 적용 범위 (중요):
@@ -535,7 +564,7 @@ Return ONLY JSON:
    死카드이기 때문이다. 마나와 효과량을 애초에 맞춰서 내라.
 
 🎯 targetSide는 **누구를 겨냥하는가**다. 스킬 하나에 하나만 있다.
-- 공격·디버프(damage / attackDown / silence / statusEffect) → "foe"
+- 공격·디버프(damage / attackDown / silence / statusEffect / destroy) → "foe"
 - 남을 치유하거나 버프 → "ally"        - 양쪽 다 고를 수 있게 → "any"
 - "self"는 **겨냥하는 효과가 하나도 없을 때만** 쓴다.
   ⚠️ 방어막·마나 수급·드로우는 겨냥이 필요 없어 targetSide를 보지 않는다.
@@ -580,6 +609,47 @@ Return ONLY JSON:
       //    프롬프트로는 요구해놓고 응답에서 버리고 있었다 (보관함 함정 6/6이 死카드).
       if (cardJson.trapTrigger) llmTrapTrigger = String(cardJson.trapTrigger);
       if (cardJson.condition) llmTrapCondition = cardJson.condition;
+
+      // ⚙️ 🐛 **효과 필드를 하나도 읽지 않고 있었다.**
+      //    프롬프트는 설명문만 요구했고, damage는 등급 범위에서 굴려 붙였다.
+      //    그 결과 팩에서 나온 카드가 **전부 순수 피해 카드**였다 —
+      //    실측: 유저 덱 14종 중 11종이 damage 하나뿐.
+      //    LLM은 "소환수를 제거하고 드로우한다"는 화려한 문장을 쓰는데
+      //    엔진에 들어가는 건 damage=14뿐이라, 설명문이 구조적으로 거짓이 됐다.
+      //    → 프롬프트에 필드를 추가하면 **파싱·조립에도 반드시** 넣는다 (규칙 42)
+      llmEffects = {};
+      const num = (v, max) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) && n > 0 ? Math.min(max, n) : 0;
+      };
+      for (const [key, cap] of Object.entries({
+        damage: 30, shield: 24, heal: 24, multiHit: 3, drawCards: 3, manaGain: 3,
+        maxHpGain: 12, damageReduction: 60, attackDown: 12,
+        destroy: 3, searchDeck: 3, summonToken: 3
+      })) {
+        const v = num(cardJson[key], cap);
+        if (v > 0) llmEffects[key] = (key === 'multiHit') ? Math.round(v) : Math.round(v);
+      }
+      // 0~1 비율 계열 (LLM이 30처럼 퍼센트로 주기도 한다 — 1을 넘으면 100으로 나눈다)
+      for (const key of ['lifestealPercent', 'critChance', 'executeThreshold']) {
+        let v = parseFloat(cardJson[key]);
+        if (!Number.isFinite(v) || v <= 0) continue;
+        if (v > 1) v = v / 100;
+        llmEffects[key] = Math.min(1, v);
+      }
+      for (const key of ['pierceShield', 'doubleCastNext', 'silence']) {
+        if (cardJson[key] === true) llmEffects[key] = true;
+      }
+      if (num(cardJson.invulnerableTurns, 3) > 0) llmEffects.invulnerableTurns = Math.round(num(cardJson.invulnerableTurns, 3));
+      if (cardJson.hpTarget === 'minion' || cardJson.hpTarget === 'body') llmEffects.hpTarget = cardJson.hpTarget;
+      const st = cardJson.statusEffect;
+      if (st && st.type && st.type !== 'none') {
+        llmEffects.statusEffect = {
+          type: String(st.type),
+          duration: Math.min(3, Math.max(1, parseInt(st.duration) || 1)),
+          value: Math.max(0, parseInt(st.value) || 0)
+        };
+      }
 
       if (cardJson.themeName) {
         themeObj = await registerNewArchetype({
@@ -702,6 +772,18 @@ Return ONLY JSON:
     condition: cardType === 'trap' ? (llmTrapCondition || undefined) : undefined,
     statusEffect: { type: 'none', duration: 0, value: 0 }
   };
+
+  // ⚙️ LLM이 정한 효과를 얹는다.
+  //    ⚠️ 위에서 굴린 damage는 **폴백**이다 — LLM이 damage를 줬으면 그쪽이 이긴다.
+  //    바닐라는 효과가 없는 게 정의이므로 건너뛴다.
+  //    예산 초과는 sanitizeAndClampCardData가 알아서 깎는다 (enforcePowerBudget).
+  if (llmEffects && !makeVanilla) {
+    Object.assign(skill, llmEffects);
+    // LLM이 피해를 안 줬으면 굴린 값을 남긴다 (효과가 하나도 없는 카드 방지)
+    if (!(skill.damage > 0) && Object.keys(llmEffects).length === 0) {
+      skill.damage = (cardType === 'spell' || cardType === 'trap') ? spellDmg : atk;
+    }
+  }
   // 🏷️ 타입에 안 맞는 이름 교정 — LLM이 규칙을 어겨도 여기서 막는다.
   //    (건축물인데 "심연의 그림자 암살자" 같은 소환수 이름이 나오던 문제)
   //    수식어는 살리고 끝 단어만 타입에 맞게 바꾼다.
@@ -999,7 +1081,7 @@ export function packModeDirective(packMode) {
     return `\n🌐 이 팩은 **범용 전용 팩**이다. 모든 카드를 범용으로 만들어라.
 - "themeId": null, "themeName": null 로 둘 것.
 - 특정 카드군에 얽매이지 않는 만능 도구 카드를 만들어라
-  (드로우, 제거, 방어막, 도발, 마나 수급, 실드 관통 등).
+  (드로우, 제거, 방어막, 마나 수급, 실드 관통 등).
 - ❌ 카드군을 새로 만들지 말 것.\n`;
   }
   if (packMode.mode === 'archetype') {

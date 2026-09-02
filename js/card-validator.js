@@ -20,8 +20,8 @@ const IMPLEMENTED_FIELDS = new Set([
   'name', 'description', 'cost', 'critMultiplier', 'reductionTurns',
   'targetSide', 'targetScope', 'targetCount', 'hpTarget', 'condition',
   // 🏛️ 건축물 패시브 — EFFECT_COSTS의 'aura'는 passiveEffect **안에** 들어가므로
-  //    스킬 최상위 키로는 나타나지 않는다. taunt도 예산에 있지만 별도 키다.
-  'passiveEffect', 'taunt',
+  //    스킬 최상위 키로는 나타나지 않는다.
+  'passiveEffect',
   // 🃏 바닐라 카드의 플레이버 텍스트 (효과가 없을 때 설명 슬롯에 들어간다)
   'flavorText', 'isVanilla',
   // 💫 본체 지정 상태이상 옵트인 (BODY_STATUS_COST_MULT 할증을 치른다)

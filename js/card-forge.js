@@ -207,7 +207,7 @@ ${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '
 모든 카드가 카드군에 속할 필요는 없다. 실제 TCG는 **범용 카드가 덱의 절반 가까이** 차지한다.
 - 약 **35~40%는 범용 카드**로 만들라. 범용은 "themeId": null, "themeName": null 로 둔다.
 - 범용 카드는 특정 카드군에 얽매이지 않는 대신 자체 스펙이 깔끔해야 한다
-  (드로우, 제거, 방어막, 도발, 마나 수급 같은 만능 도구).
+  (드로우, 제거, 방어막, 마나 수급 같은 만능 도구).
 - ✅ 좋은 범용 예: "결계 분쇄의 일격", "욕망의 항아리", "방랑 용병"
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
@@ -256,6 +256,8 @@ ${buildNamingRule(targetType)}
   damageReduction(피해 경감 %) · attackDown(공격력 약화) · silence(효과 무효화)
   maxHpGain(본체 최대 체력 증가 — 영구)
   statusEffect(stun/freeze/burn/shock/poison/vulnerable)
+  destroy(적 소환수 파괴 — 체력 무관, 1~3체) · searchDeck(덱에서 카드 서치, 1~3장)
+  summonToken(4/2/10 토큰 소환, 1~3체)
 
 💫 STATUS EFFECT 적용 범위 (중요):
 - **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
@@ -307,6 +309,9 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "damageReduction": 0-60,
     "attackDown": 0-9,
     "silence": false,
+    "destroy": 0-3,
+    "searchDeck": 0-3,
+    "summonToken": 0-3,
     "targetSide": "foe|ally|self|any",
     "targetScope": "single|multi|all|random",
     "targetCount": 1-3,
@@ -355,7 +360,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
 - 예산을 넘으면 시스템이 자동으로 범위를 좁히거나 효과를 지운다.
   낮은 등급에 "적 전체"를 붙이면 대부분 잘려 나간다.
 🎯 targetSide는 **누구를 겨냥하는가**다. 스킬 하나에 하나만 있다.
-- 공격·디버프(damage / attackDown / silence / statusEffect) → "foe"
+- 공격·디버프(damage / attackDown / silence / statusEffect / destroy) → "foe"
 - 남을 치유하거나 버프 → "ally"
 - 양쪽 다 고를 수 있게 하려면 → "any"
 - "self"는 **겨냥하는 효과가 하나도 없을 때만** 쓴다.
@@ -519,7 +524,6 @@ export function generatePromptSmartRandom(concept) {
         name: `${name} 공명`,
         description: describeStructurePassive(structPassive),
         cost: cost,
-        taunt: rarity === 'legendary' || rarity === 'epic',
         passiveEffect: structPassive
       }
     });

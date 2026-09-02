@@ -33,7 +33,7 @@ import {
   isPvpActive, sendPvpAction, endMyPvpTurn, getFoeName,
   registerPvpHandlers, slimCardForWire
 } from './pvp-battle.js';
-import { readTaunt, readDirectAttack } from './card-keywords.js';
+import { readDirectAttack } from './card-keywords.js';
 
 export const BATTLE_SLOTS = 4;
 export const BOSS_SLOTS = 3;
@@ -45,7 +45,7 @@ export const BOSS_SLOTS = 3;
 // ⚠️ `export { x } from '...'`는 **재수출일 뿐 지역 바인딩을 만들지 않는다.**
 //    그것만 두면 이 파일 안의 호출이 전부 ReferenceError가 난다.
 //    import와 re-export를 따로 쓴다.
-export { readTaunt, readDirectAttack } from './card-keywords.js';
+export { readDirectAttack } from './card-keywords.js';
 
 /**
  * 🏟️ **전장에 소환수가 있으면 본체를 직접 칠 수 없다** (유희왕식).
@@ -213,6 +213,12 @@ export const __test = {
     trapZones = { player: [], boss: [] };
     isPlayerTurn = true;
     bossPhase = 1;
+    // ⚠️ 대상 선택 모드도 반드시 끈다. 켜진 채로 남으면 다음 검사의
+    //    attackWithMinion이 "취소"로 해석해 곧바로 반환한다 —
+    //    기능이 고장난 것처럼 보이지만 실은 앞 검사가 남긴 찌꺼기다.
+    if (isTargeting()) cancelTargeting(false);
+    _pendingSummonSlot = null;
+    _pendingPicked = null;
   }
 };
 
@@ -503,7 +509,6 @@ export function renderBattleUI() {
               ${bm.defense ? `<span class="text-blue-400">🛡️${bm.defense}</span>` : ''}
             </div>
           </div>
-          ${bm.taunt ? '<span class="absolute -top-2 -right-1 px-1 bg-amber-500 text-black font-black text-[8px] rounded">도발</span>' : ''}
         `;
         // 상대 전장 카드도 상세를 볼 수 있어야 판단이 선다
         // (필드에 나와 있는 카드는 이미 공개된 정보다 — 손패와 다르다)
@@ -930,11 +935,8 @@ export function playCard(handIdx) {
     maxHp: card.hp || 30,
     currentHp: card.hp || 30,
     defense: card.defense || 0,
-    // 🛡️ 🐛 도발이 **플레이어에게만 전달되지 않았다.**
-    //    `taunt`는 카드가 아니라 **skill**에 있는데 여기서는 `{...card}` 스프레드만
-    //    했다. 보스 소환수는 data.js에 최상위 taunt가 있어 우연히 동작했고,
-    //    플레이어 소환수는 아무리 도발 카드를 내도 taunt가 undefined였다.
-    taunt: readTaunt(card),
+    // 🗑️ 도발은 제거됐다 — 전장에 있는 것만으로 이미 벽이다 (DECISIONS #84)
+    taunt: false,
     canAttack: false, // 소환 후유증
     // ⚠️ 이게 없으면 refreshMinions가 다음 턴에도 풀어주지 않는다 (영구 마비)
     summonedTurn: state.turnCount,
@@ -997,7 +999,8 @@ export function triggerBattlecry(card, picked = null) {
  *    읽히는데 실제로는 고를 수 없어 위화감이 컸다.
  *    이제 고를 수 있는 대상이 둘 이상이면 **대상 선택 모드**로 들어간다.
  *
- * 도발(taunt)이 있으면 도발만 유효 대상이다 — 규칙은 그대로다.
+ * 🗑️ 도발이 제거되면서 **상대 전장의 소환수는 전부 유효 대상**이 됐다.
+ *    누구를 먼저 칠지는 온전히 플레이어의 판단이다 (DECISIONS #84).
  * 고를 여지가 없으면(대상 1개) 예전처럼 즉시 처리한다.
  */
 export function attackWithMinion(slotIdx) {
@@ -1006,13 +1009,9 @@ export function attackWithMinion(slotIdx) {
   const entity = state.playerMinions[slotIdx];
   if (!entity || !entity.canAttack || entity.cardType === 'structure' || entity.frozen) return;
 
-  const alive = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
-  const taunts = alive.filter(m => m.taunt);
-  const pickable = taunts.length > 0 ? taunts : alive;
+  const pickable = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
 
   // 🏟️ 전장이 비어 있을 때만 본체를 노릴 수 있다 (directAttack은 예외).
-  //    ⚠️ 예전에는 "도발만 없으면" 본체를 칠 수 있었다(하스스톤식).
-  //       보스는 반대로 전장이 비었을 때만 쳤다(유희왕식). 규칙이 둘이었다.
   const keys = pickable.map(m => `foe:${state.bossMinions.indexOf(m)}`);
   if (canAttackFace(state.bossMinions, entity)) keys.push('face');
 
@@ -1036,43 +1035,15 @@ export function resolveMinionAttack(slotIdx, targetKey) {
   const entity = state.playerMinions[slotIdx];
   if (!entity || !entity.canAttack) return;
 
-  // 🛡️ 도발 규칙은 **여기서** 강제한다.
-  //    🐛 예전에는 attackWithMinion(UI에서 고를 목록을 만드는 곳)에만 있었다.
-  //       이 함수는 주는 대로 실행했으므로, 적에게 도발이 있어도
-  //       'face'나 비도발 소환수를 지정하면 그대로 통과했다 (실측 확인).
-  //       PvP 재생 경로도 이 함수를 쓰므로 상대가 도발을 넘어 때릴 수 있었다.
-  //    규칙은 **해결되는 지점**에서 지켜야 한다. UI는 편의일 뿐이다.
-  const aliveFoes = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
-
-  // 🏟️ 상대 전장에 소환수가 있으면 본체를 칠 수 없다 (directAttack 제외)
+  // 🏟️ 전투 규칙은 **해결되는 지점**에서 강제한다. UI 목록은 편의일 뿐이다.
+  //    (PvP 재생 경로도 이 함수를 지나므로 여기가 유일한 관문이다)
+  //
+  // 🗑️ 도발 리다이렉트는 제거됐다. 이제 상대 전장의 소환수는 전부 유효 대상이고,
+  //    막는 것은 오직 "전장이 비어야 본체를 칠 수 있다"뿐이다 → DECISIONS #84
   if (targetKey === 'face' && !canAttackFace(state.bossMinions, entity)) {
-    // selectFrontTarget이 도발 우선 규칙을 이미 담고 있다
     const redirect = selectFrontTarget(state.bossMinions);
     addBattleLog(`<span class="text-amber-300">🏟️ 상대 전장에 소환수가 있어 본체를 칠 수 없습니다 — [${escapeHtml(redirect.name)}]을(를) 먼저 처리하세요.</span>`);
     targetKey = `foe:${state.bossMinions.indexOf(redirect)}`;
-  }
-
-  // 🛡️ 도발은 **소환수를 노릴 때** "그중 누구인가"를 정하는 규칙이다.
-  //
-  // 🐛 예전에는 본체 지정까지 도발로 되돌렸다. 그러면 바로 위에서
-  //    canAttackFace가 "이 카드는 전장을 무시하고 본체를 칠 수 있다"고
-  //    통과시킨 directAttack 카드를 다음 줄이 곧바로 부정한다 —
-  //    같은 함수 안에서 규칙이 서로 모순됐고, 상대에게 도발이 하나라도
-  //    있으면 directAttack은 값을 치르고 산 능력인데 아무 일도 못 했다.
-  //    (건축물은 자동 도발이라 상대가 건축물만 세워도 무력화됐다)
-  if (targetKey !== 'face') {
-    const foeTaunts = aliveFoes.filter(m => m.taunt);
-    if (foeTaunts.length > 0) {
-      const idx = String(targetKey || '').startsWith('foe:')
-        ? parseInt(String(targetKey).split(':')[1], 10) : -1;
-      const picked = idx >= 0 ? state.bossMinions[idx] : null;
-      if (!picked || !picked.taunt) {
-        // 도발을 무시한 지정 — 도발 대상으로 되돌린다
-        const redirect = foeTaunts[0];
-        addBattleLog(`<span class="text-amber-300">🛡️ [${escapeHtml(redirect.name)}]의 도발 — 그쪽을 먼저 처리해야 합니다.</span>`);
-        targetKey = `foe:${state.bossMinions.indexOf(redirect)}`;
-      }
-    }
   }
 
   entity.canAttack = false;
@@ -1125,6 +1096,9 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   const bm = minion || (state.bossMinions || [])[slotIdx];
   if (!bm) return;
   if (state.playerHp <= 0) return;
+  // 🏛️ 건축물은 공격하지 않는다 — 플레이어 쪽과 같은 규칙(attackWithMinion).
+  //    벽으로서 전장을 막는 것이 건축물의 역할이다.
+  if (bm.cardType === 'structure' || !(bm.attack > 0)) return;
 
   // 💫 기절/빙결이면 이번 턴 공격하지 못한다.
   //    🐛 수정: 예전에는 상대 소환수에 기절을 걸어도 그대로 공격해 왔다.
@@ -1160,16 +1134,9 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   }
   if (targetKey && targetKey.startsWith('foe:')) {
     const i = parseInt(targetKey.split(':')[1], 10);
-    let t = state.playerMinions[i];
-    // 🛡️ 🐛 여기에는 도발 검사가 없었다. PvE는 targetKey를 안 넘겨서
-    //    아래 selectFrontTarget이 막아줬지만, **PvP 재생 경로는 상대가 보낸
-    //    `foe:N`을 그대로 실행**해 내 도발을 건너뛰고 뒷줄을 때릴 수 있었다.
-    //    규칙은 해결 지점에서, 양쪽 모두에 강제한다.
-    const myTaunts = (state.playerMinions || []).filter(m => m && m.currentHp > 0 && m.taunt);
-    if (myTaunts.length > 0 && (!t || !t.taunt)) {
-      t = myTaunts[0];
-      addBattleLog(`<span class="text-amber-300">🛡️ [${escapeHtml(t.name)}]의 도발이 공격을 대신 받습니다.</span>`);
-    }
+    // 🗑️ 도발이 사라져 상대가 내 전장의 누구를 고르든 그대로 맞는다.
+    //    (막는 규칙은 "내 전장이 비어야 본체를 칠 수 있다" 하나뿐이다)
+    const t = state.playerMinions[i];
     if (t) {
       hitPlayerMinion(t, bm, state.playerMinions.indexOf(t));
       return;
@@ -1178,9 +1145,7 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
 
   // 아군 소환수/건축물이 있으면 최전방 타겟 타격 (PvE 기본 동작)
   if (state.playerMinions.length > 0) {
-    // 🛡️ 🐛 예전에는 무조건 0번을 때렸다 — **플레이어의 도발을 완전히 무시**했다.
-    //    도발 소환수가 뒤에 있으면 앞줄이 맞았다. selectFrontTarget이
-    //    도발 우선 규칙(도발이 있으면 도발만)을 담고 있으므로 그걸 쓴다.
+    // 🎯 맨 앞이 먼저 맞는다 — 그래서 배치 순서가 전술이 된다.
     const target = selectFrontTarget(state.playerMinions);
     hitPlayerMinion(target, bm, state.playerMinions.indexOf(target));
   } else {
@@ -1638,14 +1603,20 @@ export async function playBossCard(card) {
   if (card.cardType === 'unit' || card.cardType === 'structure') {
     audio.playSummon();
     if (state.bossMinions.length < bossMinionCapThisTurn()) {
+      // 🐛 `attack: Math.max(8, card.attack || 12)`이었다. 건축물은 공격력이 0인데
+      //    바닥값 8이 그걸 덮어써서, 플레이어가 만든 **0공격 요새가 보스 손에서는
+      //    12공격 소환수**가 됐다 (실전에서 아이기스 철옹성이 15공으로 때렸다).
+      //    건축물은 공격하지 않는다 — 진영이 바뀌어도 마찬가지다.
+      const isStructure = card.cardType === 'structure';
       const minion = {
         name: card.name,
-        icon: elCfg.icon || '⚔️',
-        attack: Math.max(8, card.attack || 12),
+        icon: isStructure ? '🏛️' : (elCfg.icon || '⚔️'),
+        cardType: card.cardType || 'unit',
+        attack: isStructure ? 0 : Math.max(8, card.attack || 12),
         defense: card.defense || 4,
         maxHp: Math.max(16, card.hp || 20),
         currentHp: Math.max(16, card.hp || 20),
-        taunt: readTaunt(card),   // ⚠️ skill.taunt도 읽어야 한다 — readTaunt 주석 참고
+
         desc: card.skills && card.skills[0] ? card.skills[0].name : '소환수'
       };
       minion.canAttack = false;                  // 소환 후유증 — 플레이어 소환수와 같은 규칙
@@ -1680,13 +1651,38 @@ export async function playBossCard(card) {
  */
 function resolveBossSpell(card, skill) {
   if (skill.damage && skill.damage > 0) {
-    const dmg = skill.damage;
+    // 🐛 여기는 `skill.damage`만 읽고 **연타·치명타·처형·흡혈을 전부 무시**했다.
+    //    보스 덱에는 플레이어가 만든 카드가 섞이는데(buildBossTacticalDeck),
+    //    "3연타 총 54 피해"라고 적힌 카드가 보스 손에서는 18만 냈다.
+    //    같은 카드가 진영에 따라 3배 약해지면 카드 텍스트가 거짓이 된다.
+    //    순서는 applyPlayerSkillEffects와 같게 유지한다 — 안 그러면 또 갈라진다.
+    let dmg = skill.damage;
+    if (skill.multiHit > 1) dmg *= skill.multiHit;
+
+    if (skill.critChance > 0 && battleRng().chance(skill.critChance)) {
+      const mult = skill.critMultiplier || 1.8;
+      dmg = Math.floor(dmg * mult);
+      addBattleLog(`<span class="text-amber-300 font-bold">⚡ 보스의 치명타! 피해가 ${mult}배로 증폭됩니다. (${dmg})</span>`);
+    }
+    if (skill.executeThreshold > 0 && state.playerMaxHp > 0 &&
+        state.playerHp <= state.playerMaxHp * skill.executeThreshold) {
+      dmg = Math.floor(dmg * 2);
+      addBattleLog(`<span class="text-red-400 font-black">💀 처형! 빈사 상태를 노려 피해가 2배가 됩니다. (${dmg})</span>`);
+    }
+
     if (skill.isAoeSpell) {
+      // 🐛 예전에는 `m.currentHp -= dmg`로 직접 깎아 **수비력·취약·감전을 전부
+      //    무시**했다. 같은 주문이라도 단일 타격(strikeFrontLine → damageEntity)은
+      //    수비력을 적용하는데 광역만 안 했다 — 같은 카드 안에서 규칙이 둘이었다.
+      //    실전에서 22체력/8수비 건축물이 20 광역 한 방에 죽었고(정상이면 12),
+      //    그래서 전장이 비어 보스 소환수가 본체를 직격했다. 벽이 버그로 무너졌다.
+      //    플레이어의 광역은 이미 damageEntity를 지난다 — 비대칭이기도 했다.
+      //    → CLAUDE.md 금지사항 29
       state.playerMinions.forEach(m => {
-        m.currentHp -= dmg;
-        addBattleLog(`<span class="text-yellow-400">💥 보스 광역 주문: [${m.name}] -${dmg} HP</span>`);
+        const hit = damageEntity(m, dmg, { pierce: !!skill.pierceShield });
+        addBattleLog(`<span class="text-yellow-400">💥 보스 광역 주문: [${escapeHtml(m.name)}] -${hit.dealt} HP${describeDamageExtras(hit)}</span>`);
       });
-      state.playerMinions = state.playerMinions.filter(m => m.currentHp > 0);
+      state.playerMinions = removeDead(state.playerMinions);
       applyDirectDamageToPlayer(Math.floor(dmg * 0.7), skill.pierceShield);
     } else {
       const res = strikeFrontLine(state.playerMinions, dmg, {
@@ -1696,6 +1692,15 @@ function resolveBossSpell(card, skill) {
         onDirectHit: (d, pierce) => applyDirectDamageToPlayer(d, pierce)
       });
       state.playerMinions = res.minions;
+    }
+
+    // 🩸 흡혈 — 플레이어 경로에는 있는데 보스 경로에만 없었다
+    if (skill.lifestealPercent > 0) {
+      const healed = Math.floor(dmg * skill.lifestealPercent);
+      if (healed > 0) {
+        state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + healed);
+        addBattleLog(`<span class="text-rose-300 font-bold">🩸 보스가 흡혈로 체력 +${healed} 회복!</span>`);
+      }
     }
   }
 
@@ -1710,6 +1715,34 @@ function resolveBossSpell(card, skill) {
   if (skill.discardCard && state.playerHand.length > 0) {
     const discarded = discardRandom(sides.player, battleRng());
     addBattleLog(`<span class="text-purple-400 font-bold">🃏 [패 파괴] 보스의 [${card.name}] 으로 플레이어 손패 [${discarded.name}] 이(가) 파기되었습니다!</span>`);
+  }
+
+  // 🃏 드로우 — 없어서 **보스가 드로우 카드를 내면 아무 일도 일어나지 않았다.**
+  //    실전에서 보스가 [욕망의 비전 연성](드로우2 + 마나1)을 냈는데 로그가 비었다.
+  //    死카드는 함정에서 한 번 겪은 문제다 → DECISIONS #77
+  if (skill.drawCards > 0 && Array.isArray(state.bossDeck) && Array.isArray(state.bossHand)) {
+    let drawn = 0;
+    for (let i = 0; i < skill.drawCards && state.bossHand.length < 5 && state.bossDeck.length > 0; i++) {
+      state.bossHand.push(state.bossDeck.shift());
+      drawn++;
+    }
+    if (drawn > 0) addBattleLog(`<span class="text-purple-300">🃏 보스가 [${escapeHtml(card.name)}]으로 카드 ${drawn}장을 뽑았습니다.</span>`);
+  }
+  // ⚠️ manaGain은 의도적으로 무시한다 — 보스는 마나를 쓰지 않는다(foeVirtualMana 99).
+
+  // ⚔️ 약화 · 🚫 무효화 — 플레이어 소환수를 대상으로 한다.
+  //    (플레이어 경로는 지정이 없으면 상대 전장 첫 대상을 쓴다. 거울로 맞춘다)
+  const front = (state.playerMinions || []).find(m => m && m.currentHp > 0);
+  if (skill.attackDown > 0 && front) {
+    const before = front.attack || 0;
+    front.attack = Math.max(0, before - skill.attackDown);
+    addBattleLog(`<span class="text-orange-300">⚔️ [${escapeHtml(front.name)}] 공격력 ${before} → ${front.attack}</span>`);
+  }
+  if (skill.silence && front) {
+    front.skills = [];
+    front.silenced = true;
+    front.taunt = false;
+    addBattleLog(`<span class="text-purple-300 font-bold">🚫 [${escapeHtml(front.name)}]의 효과가 무효화되었습니다!</span>`);
   }
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
     const st = skill.statusEffect;
@@ -1802,12 +1835,14 @@ async function executeSingleBossStep(step) {
 
       if (step.isAoe) {
         // 광역 공격: 모든 아군 및 플레이어 피격
+        // 🐛 여기도 직접 차감이라 수비력을 무시했다 (위 resolveBossSpell과 같은 버그).
+        //    32체력/14수비 건축물이 28 광역 한 방에 4까지 깎였다 — 정상이면 14.
         state.playerMinions.forEach(m => {
-          m.currentHp -= hitDmg;
-          addBattleLog(`<span class="text-yellow-400">💥 광역 피해: [${m.name}] -${hitDmg} HP</span>`);
+          const hit = damageEntity(m, hitDmg, { pierce: !!step.pierceShield });
+          addBattleLog(`<span class="text-yellow-400">💥 광역 피해: [${escapeHtml(m.name)}] -${hit.dealt} HP${describeDamageExtras(hit)}</span>`);
         });
-        state.playerMinions = state.playerMinions.filter(m => m.currentHp > 0);
-        
+        state.playerMinions = removeDead(state.playerMinions);
+
         if (playerBuffs.invulnerable <= 0) {
           applyDirectDamageToPlayer(Math.floor(hitDmg * 0.7), step.pierceShield);
         }
@@ -2256,7 +2291,7 @@ export async function playFoeCardPvp(card, slot = null, picked = null) {
       maxHp: card.hp || 30,
       currentHp: card.hp || 30,
       defense: card.defense || 0,
-      taunt: readTaunt({ ...card, cardType }),   // ⚠️ skill.taunt도 읽어야 한다
+
       canAttack: false,
       summonedTurn: state.turnCount,
       frozen: false

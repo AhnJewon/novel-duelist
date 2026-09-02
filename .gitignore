@@ -30,3 +30,6 @@ secrets.*
 *.key
 .env
 .env.*
+
+# 검증용으로 불러온 유저 덱 내보내기 (개인 데이터 — 커밋하지 않는다)
+_verify/user-deck.json

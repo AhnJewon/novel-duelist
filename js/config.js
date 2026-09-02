@@ -158,6 +158,17 @@ export const EFFECT_COSTS = {
   executeThreshold:  { cost: 4, minRarity: 'epic',      label: '처형' },
   doubleCastNext:    { cost: 4, minRarity: 'epic',      label: '더블캐스트' },
 
+  // 🃏 카드가 자주 말하던 유희왕식 동작들 — 예전에는 **설명문에만 있었다.**
+  //    실팩 유저 덱에서 14종 중 6종이 이걸 주장하고 아무 일도 안 했다.
+  //    막는 대신 실제로 구현했다 → DECISIONS #85
+  //
+  // 💀 파괴 — 체력과 무관하게 없앤다. 큰 소환수일수록 이득이 커서 비싸다.
+  destroy:           { cost: 5, minRarity: 'epic',      label: '파괴' },
+  // 🔍 덱 서치 — 드로우보다 강하다(무엇이 올지 고를 수 있다)
+  searchDeck:        { cost: 3, minRarity: 'rare',      label: '덱 서치' },
+  // 👾 토큰 소환 — 전장을 채우고, 지금은 전장 자체가 벽이라 값이 크다
+  summonToken:       { cost: 3, minRarity: 'rare',      label: '토큰 소환' },
+
   // 🪤 함정 — 조건부 발동이라 즉발보다 싸다 (조건이 안 맞으면 아무 일도 없다)
   // 🪤 발동조건은 **제약이지 능력이 아니다.** 값을 매기지 않는다.
   //    🐛 예전에는 cost 1을 청구했다. 그러면 조건부 함정이 즉발 마법보다
@@ -207,6 +218,10 @@ export const EFFECT_MAGNITUDE = {
   attackDown:        { read: s => s.attackDown || 0,                              perUnit: 3 },
   damageReduction:   { read: s => s.damageReduction || 0,                         perUnit: 20 },
   drawCards:         { read: s => s.drawCards || 0,                               perUnit: 1.5 },
+  // 🃏 개수형 효과 — 1장/1체가 곧 1단위다
+  searchDeck:        { read: s => s.searchDeck || 0,                              perUnit: 1 },
+  summonToken:       { read: s => s.summonToken || 0,                             perUnit: 1 },
+  destroy:           { read: s => s.destroy || 0,                                 perUnit: 1 },
   manaGain:          { read: s => s.manaGain || 0,                                perUnit: 1.5 },
   invulnerableTurns: { read: s => s.invulnerableTurns || 0,                        perUnit: 1 },
   // 확률·비율 계열은 0~1로 저장된다. 100을 곱해 퍼센트로 읽는다.
@@ -447,7 +462,7 @@ export function affordablePower(rarity, cost, cardType = 'unit') {
  *    공격력 26이 6의 정확히 4.3배 값이 된다. 하지만 실제 가치는 선형보다
  *    빠르게 오른다 — 고타점은 **한 방에 상대 소환수를 정리하는 문턱**을
  *    넘기 때문이다. 공격력 10짜리 두 기와 20짜리 한 기는 총합이 같아도
- *    20짜리가 훨씬 강하다 (교환에서 이기고, 도발을 뚫고, 처형 사거리가 길다).
+ *    20짜리가 훨씬 강하다 (교환에서 이기고, 벽을 뚫고, 처형 사거리가 길다).
  *
  * 체력은 반대로 **체감**한다. 체력 40은 20의 두 배지만, 어차피 한 턴에
  * 여러 번 맞으면 죽고 방어막·회복으로 메울 수 있어 두 배만큼 강하지 않다.
@@ -1002,6 +1017,10 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   if (skill.maxHpGain > 0) parts.push(`본체 최대 체력 +${skill.maxHpGain}`);
   if (skill.manaGain > 0) parts.push(`마나 +${skill.manaGain}`);
   if (skill.drawCards > 0) parts.push(`카드 ${skill.drawCards}장 드로우`);
+  // 🆕 파괴·서치·토큰 소환 (DECISIONS #85)
+  if (skill.destroy > 0) parts.push(`${tgt} 파괴`);
+  if (skill.searchDeck > 0) parts.push(`덱에서 카드 ${skill.searchDeck}장 서치`);
+  if (skill.summonToken > 0) parts.push(`토큰 ${skill.summonToken}체 소환 (4/2/10)`);
   if (skill.doubleCastNext) parts.push('다음 카드 2연속 발동');
   if (skill.invulnerableTurns > 0) parts.push(`${skill.invulnerableTurns}턴간 무적`);
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
@@ -1031,7 +1050,6 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
     }
   }
   if (skill.directAttack) parts.push('직접 공격 — 상대 전장을 무시하고 본체를 친다');
-  if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
 
   // 🪤 함정은 **언제 터지는지**가 효과만큼 중요하다.
   //    조건 없이 "적 1체에게 12 피해"만 적으면 플레이어가 세트할 판단을 못 한다.
@@ -1240,12 +1258,63 @@ const EFFECT_DESC_PATTERNS = {
   silence:           /무효화|봉인|침묵/,
   passiveEffect:     /매\s*턴|턴\s*종료\s*시|턴\s*시작\s*시|패시브|지속/,
   statusEffect:      /화상|맹독|빙결|기절|출혈|중독|동상/,
-  taunt:             /도발/
+  // 🆕 DECISIONS #85 — 예전에는 설명문에만 있던 동작들. 이제 실제로 구현됐다.
+  destroy:           /파괴한다|파괴하고|파괴하며|파괴합니다|제거한다|제거하고|제거하며|제거합니다/,
+  searchDeck:        /서치|덱에서.{0,12}(찾|가져)/,
+  summonToken:       /소환한다|소환하고|소환하며|소환합니다|토큰/
 };
 
 function descMentionsEffect(desc = '', key) {
   const re = EFFECT_DESC_PATTERNS[key];
   return re ? re.test(desc) : false;
+}
+
+// ============================================================
+// 🚫 엔진에 **아예 없는** 동작 — LLM이 TCG 관용구로 자주 지어낸다
+// ------------------------------------------------------------
+// 🐛 실팩 20장짜리 유저 덱을 열어보니 **14종 중 6종(43%)이 거짓말**이었다:
+//      "상대 전장 소환수 1체를 제거하고 덱에서 1장을 드로우한다"  → 실제로는 14 피해뿐
+//      "손패에서 1장을 드로우한다"                              → 실제로는 7 피해뿐
+//      "손에서 [심연] 카드를 찾아 패로 소환한다"                → 실제로는 광역 18 피해뿐
+//
+//    card-describe.js에도 같은 검사가 있지만 그건 **2단계 LLM 경로에서만** 돈다.
+//    fastMode이거나 Ollama가 꺼져 있으면 그 경로를 통째로 건너뛰므로,
+//    1단계 LLM이 쓴 소설이 그대로 카드에 실린다.
+//    그래서 결정론적 관문을 sanitize에도 둔다 — 여기는 **항상** 지난다.
+//
+// ⚠️ 파괴·서치·소환은 이제 **진짜로 구현됐다**(DECISIONS #85). 그래서 여기가
+//    아니라 EFFECT_DESC_PATTERNS로 옮겼다 — "말했는데 필드가 없으면" 걸린다.
+//    아래는 **여전히 엔진에 개념 자체가 없는** 것들만 남긴다.
+//    (부활은 묘지가 없고, 강탈은 소유권 이전이 없고, 변신은 카드 교체가 없다)
+const PHANTOM_ACTION_PATTERNS = {
+  부활: /부활|되살/,
+  강탈: /훔치|훔친|빼앗|빼앗는/,
+  변신: /변신|둔갑/
+};
+
+/**
+ * 설명문이 **실제 스킬로 뒷받침되지 않는 주장**을 하는지 본다.
+ * @returns {string[]} 문제 목록. 비어 있으면 정상.
+ */
+function findDescriptionLies(desc, skill, cardType) {
+  const t = String(desc || '');
+  if (!t.trim()) return [];
+  const lies = [];
+
+  // 1) 엔진에 없는 동작 — 어떤 스킬로도 뒷받침될 수 없다
+  for (const [label, re] of Object.entries(PHANTOM_ACTION_PATTERNS)) {
+    if (re.test(t)) lies.push(`미구현 동작 주장: ${label}`);
+  }
+
+  // 2) 있는 척하는 효과 — 문장은 말하는데 스킬에는 없다
+  for (const [key, re] of Object.entries(EFFECT_DESC_PATTERNS)) {
+    if (!re.test(t)) continue;
+    const has = key === 'statusEffect'
+      ? !!(skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none')
+      : !!skill[key];
+    if (!has) lies.push(`없는 효과 주장: ${key}`);
+  }
+  return lies;
 }
 
 /**
@@ -1346,6 +1415,13 @@ export function sanitizeAndClampCardData(cardData) {
     console.log(`[Trap] "${cardData.name || '무명'}" 발동조건이 ${before ? `알 수 없는 값(${before})` : '없어'} → foePlaysUnit으로 지정 (조건 없는 함정은 발동하지 않는다)`);
   }
 
+  // 🗑️ 도발은 게임에서 제거됐다 (DECISIONS #84).
+  //    이미 만들어진 카드와 세이브에는 `taunt: true`가 남아 있으므로 여기서 지운다.
+  //    안 지우면 카드 데이터에는 있는데 엔진이 읽지 않는 **죽은 필드**가 되고,
+  //    "설명문이 거짓말하는" 이 프로젝트의 단골 버그가 또 생긴다.
+  if (skill.taunt !== undefined) delete skill.taunt;
+  if (cardData.taunt !== undefined) delete cardData.taunt;
+
   // 🛡️ 피해 경감 — 퍼센트. 100%(완전 무효)는 '무적'과 같아지므로 상한을 둔다.
   if (skill.damageReduction !== undefined && skill.damageReduction > 0) {
     skill.damageReduction = Math.min(60, Math.max(10, parseInt(skill.damageReduction) || 0));
@@ -1353,6 +1429,19 @@ export function sanitizeAndClampCardData(cardData) {
   // ⚔️ 공격력 약화 — 등급 버프 상한과 같은 범위를 쓴다 (대칭)
   if (skill.attackDown !== undefined && skill.attackDown > 0) {
     skill.attackDown = Math.min(caps.buffValue[1] * 3, Math.max(1, parseInt(skill.attackDown) || 0));
+  }
+
+  // 🆕 파괴 · 서치 · 토큰 소환 (DECISIONS #85) — 전부 "개수"다.
+  //    상한을 두지 않으면 LLM이 "적 전체 파괴 9체" 같은 걸 적는다.
+  //    ⚠️ 파괴 상한은 상대 전장 슬롯(3)을, 소환 상한은 내 슬롯(4)을 넘지 않는다.
+  if (skill.destroy !== undefined && skill.destroy > 0) {
+    skill.destroy = Math.min(3, Math.max(1, parseInt(skill.destroy) || 0));
+  }
+  if (skill.searchDeck !== undefined && skill.searchDeck > 0) {
+    skill.searchDeck = Math.min(3, Math.max(1, parseInt(skill.searchDeck) || 0));
+  }
+  if (skill.summonToken !== undefined && skill.summonToken > 0) {
+    skill.summonToken = Math.min(3, Math.max(1, parseInt(skill.summonToken) || 0));
   }
 
   // ❤️ 체력 대상 정규화 (본체 / 이 소환수).
@@ -1383,6 +1472,7 @@ export function sanitizeAndClampCardData(cardData) {
   //    내주므로, 플레이어에게 "내 소환수를 골라 때리라"고 요구한다.
   const harmfulEffect = (skill.damage || 0) > 0
     || (skill.attackDown || 0) > 0
+    || (skill.destroy || 0) > 0
     || !!skill.silence
     || (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none');
   const beneficialEffect = (skill.heal || 0) > 0 || (skill.shield || 0) > 0;
@@ -1565,6 +1655,27 @@ export function sanitizeAndClampCardData(cardData) {
       : defaultFlavorText(cardData.name, cardType);
   }
 
+  // 🚫 **거짓말 관문** — 설명문이 스킬로 뒷받침되지 않는 주장을 하면 통째로 버린다.
+  //
+  //    🐛 왜 여기여야 하나: 같은 검사가 card-describe.js에도 있지만 그건
+  //       **2단계 LLM 경로에서만** 돈다. fastMode이거나 Ollama가 꺼져 있으면
+  //       그 경로를 건너뛰므로 1단계 LLM이 쓴 소설이 그대로 카드가 된다.
+  //       실팩 유저 덱 14종 중 6종(43%)이 그 상태였다:
+  //         "소환수 1체를 제거하고 덱에서 1장 드로우" → 실제로는 14 피해뿐
+  //         "손패에서 1장을 드로우한다"              → 실제로는 7 피해뿐
+  //       sanitize는 **항상** 지나므로 여기가 최후의 관문이다.
+  //
+  //    ⚠️ 바닐라는 예외다 — 플레이버 텍스트는 효과를 주장하지 않는다.
+  if (!finalSkill.isVanilla) {
+    const lies = findDescriptionLies(finalSkill.description, finalSkill, cardType);
+    if (lies.length > 0) {
+      const before = finalSkill.description;
+      finalSkill.description = describeSkillFromData(finalSkill, cardType)
+        || defaultFlavorText(cardData.name, cardType);
+      console.warn(`[Balance] "${cardData.name || '무명'}" 설명문이 카드와 달라 교체했습니다 (${lies.join(', ')}): "${before}" → "${finalSkill.description}"`);
+    }
+  }
+
   // 🗡️ 마지막으로 **확정된 스탯**까지 설명문에 반영한다.
   //    3-E단계의 동기화는 예산 적용 **전**이라 깎인 공격력을 모른다.
   //    (실측: "15 공격을 가합니다"인데 실제 공격력은 11이었다)
@@ -1583,6 +1694,13 @@ export function sanitizeAndClampCardData(cardData) {
     defense: def,
     hp,
     skill: finalSkill,
+    // ⚠️ `skills` 배열도 **반드시 함께** 갱신한다.
+    //    🐛 예전에는 `...cardData`가 원본 `skills`를 그대로 흘려보내서
+    //       정리된 `skill`과 정리 안 된 `skills[0]`이 한 카드에 공존했다.
+    //       전투 엔진은 `skills[0]`을 읽으므로 **sanitize를 통과했는데도
+    //       옛 필드가 살아 있는** 카드가 나온다 (도발 제거에서 실제로 걸렸다).
+    //       호출부마다 `card.skills = [card.skill]`을 챙기게 두면 언젠가 빠뜨린다.
+    skills: [finalSkill],
     powerUsed: power.used,
     powerAffordable: power.affordable
   };

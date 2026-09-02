@@ -215,9 +215,8 @@ export const DEFAULT_STARTER_CARDS = [
     prompt: 'magnificent holy fortress castle, glowing golden barrier, heavenly citadel, fantasy stone stronghold',
     skills: [{
       name: '철옹성의 가호',
-      description: '[건축물 도발] 상대의 단일 공격을 최우선으로 흡수합니다. 매 턴 종료 시 본체 방어막 +8, 본체 체력 +4, 자신의 내구도를 수리합니다.',
+      description: '[건축물] 전장에 서서 상대의 본체 공격을 막습니다. 매 턴 종료 시 본체 방어막 +8, 본체 체력 +4, 자신의 내구도를 수리합니다.',
       cost: 3,
-      taunt: true,
       passiveEffect: {
         type: 'fortress_wall',
         endTurnAoeShield: 8,
@@ -317,10 +316,9 @@ export const DEFAULT_STARTER_CARDS = [
     imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
     prompt: 'giant ancient stone moss golem, glowing green core crystal, massive rock fists, protective guardian stance',
     skills: [{
-      name: '단단한 바위 도발',
-      description: '[범용 도발] 상대의 단일 공격을 최우선으로 흡수하며, 소환 시 본체 방어막 +8을 획득합니다.',
+      name: '단단한 바위 방벽',
+      description: '[범용 벽] 전장을 지켜 상대의 본체 공격을 막으며, 소환 시 본체 방어막 +8을 획득합니다.',
       cost: 2,
-      taunt: true,
       shield: 8
     }]
   }
@@ -536,34 +534,34 @@ export const BOSS_DATA = [
 // 🛡️ 6대 속성별 보스 소환수 (Minions) 풀
 export const ELEMENT_BOSS_MINIONS = {
   fire: [
-    { name: '화염의 저주 토템', icon: '🔥', attack: 8, defense: 0, maxHp: 20, currentHp: 20, taunt: false, desc: '지속: 매 턴 아군 전체에 화상' },
-    { name: '지옥불 사냥개', icon: '🐕', attack: 16, defense: 0, maxHp: 22, currentHp: 22, taunt: false, desc: '돌격: 매 턴 강력한 직접 타격' },
-    { name: '용암 골렘', icon: '🌋', attack: 10, defense: 14, maxHp: 32, currentHp: 32, taunt: true, desc: '도발: 보스 공격을 대신 흡수' }
+    { name: '화염의 저주 토템', icon: '🔥', attack: 8, defense: 0, maxHp: 20, currentHp: 20, desc: '지속: 매 턴 아군 전체에 화상' },
+    { name: '지옥불 사냥개', icon: '🐕', attack: 16, defense: 0, maxHp: 22, currentHp: 22, desc: '돌격: 매 턴 강력한 직접 타격' },
+    { name: '용암 골렘', icon: '🌋', attack: 10, defense: 14, maxHp: 32, currentHp: 32, desc: '단단한 벽 — 높은 수비력으로 버틴다' }
   ],
   water: [
-    { name: '서리 수정 골렘', icon: '⛄', attack: 8, defense: 16, maxHp: 34, currentHp: 34, taunt: true, desc: '도발: 공격자를 1턴간 빙결' },
-    { name: '빙하의 서리 정령', icon: '❄️', attack: 14, defense: 4, maxHp: 22, currentHp: 22, taunt: false, desc: '한파: 매 턴 플레이어 실드 삭감' },
-    { name: '눈보라 사령관', icon: '🧙‍♀️', attack: 12, defense: 8, maxHp: 26, currentHp: 26, taunt: false, desc: '지원: 매 턴 보스에게 빙벽 +10 부여' }
+    { name: '서리 수정 골렘', icon: '⛄', attack: 8, defense: 16, maxHp: 34, currentHp: 34, desc: '서리 방벽 — 공격자를 1턴간 빙결' },
+    { name: '빙하의 서리 정령', icon: '❄️', attack: 14, defense: 4, maxHp: 22, currentHp: 22, desc: '한파: 매 턴 플레이어 실드 삭감' },
+    { name: '눈보라 사령관', icon: '🧙‍♀️', attack: 12, defense: 8, maxHp: 26, currentHp: 26, desc: '지원: 매 턴 보스에게 빙벽 +10 부여' }
   ],
   lightning: [
-    { name: '초전도 충전탑', icon: '⚡', attack: 0, defense: 12, maxHp: 28, currentHp: 28, taunt: true, desc: '도발 & 매 턴 보스 공격력 +3 충전' },
-    { name: '번개 스파크 정령', icon: '🌩️', attack: 15, defense: 0, maxHp: 18, currentHp: 18, taunt: false, desc: '속공: 2회 연속 속공 타격' },
-    { name: '뇌전의 집행자', icon: '⚔️', attack: 18, defense: 6, maxHp: 24, currentHp: 24, taunt: false, desc: '감전: 플레이어 본체 집중 저격' }
+    { name: '초전도 충전탑', icon: '⚡', attack: 0, defense: 12, maxHp: 28, currentHp: 28, desc: '매 턴 보스 공격력 +3 충전' },
+    { name: '번개 스파크 정령', icon: '🌩️', attack: 15, defense: 0, maxHp: 18, currentHp: 18, desc: '속공: 2회 연속 속공 타격' },
+    { name: '뇌전의 집행자', icon: '⚔️', attack: 18, defense: 6, maxHp: 24, currentHp: 24, desc: '감전: 플레이어 본체 집중 저격' }
   ],
   holy: [
-    { name: '성역의 수호 천사', icon: '👼', attack: 6, defense: 18, maxHp: 36, currentHp: 36, taunt: true, desc: '도발 & 매 턴 보스 체력 +15 회복' },
-    { name: '빛의 심판 토템', icon: '✨', attack: 12, defense: 6, maxHp: 24, currentHp: 24, taunt: false, desc: '정화: 매 턴 플레이어 버프 해제' },
-    { name: '세라프 수호기사', icon: '🛡️', attack: 14, defense: 12, maxHp: 30, currentHp: 30, taunt: false, desc: '수호: 보스 받는 피해 30% 감소' }
+    { name: '성역의 수호 천사', icon: '👼', attack: 6, defense: 18, maxHp: 36, currentHp: 36, desc: '매 턴 보스 체력 +15 회복' },
+    { name: '빛의 심판 토템', icon: '✨', attack: 12, defense: 6, maxHp: 24, currentHp: 24, desc: '정화: 매 턴 플레이어 버프 해제' },
+    { name: '세라프 수호기사', icon: '🛡️', attack: 14, defense: 12, maxHp: 30, currentHp: 30, desc: '수호: 보스 받는 피해 30% 감소' }
   ],
   dark: [
-    { name: '심연의 방패병', icon: '🛡️', attack: 8, defense: 14, maxHp: 30, currentHp: 30, taunt: true, desc: '도발: 보스 공격을 대신 흡수' },
-    { name: '그림자 암살자', icon: '🗡️', attack: 18, defense: 0, maxHp: 18, currentHp: 18, taunt: false, desc: '치명: 플레이어 본체 관통 암살' },
-    { name: '암흑 사령술사', icon: '🔮', attack: 10, defense: 6, maxHp: 24, currentHp: 24, taunt: false, desc: '지원: 매 턴 아군에 저주 및 보스 흡혈' }
+    { name: '심연의 방패병', icon: '🛡️', attack: 8, defense: 14, maxHp: 30, currentHp: 30, desc: '단단한 벽 — 높은 수비력으로 버틴다' },
+    { name: '그림자 암살자', icon: '🗡️', attack: 18, defense: 0, maxHp: 18, currentHp: 18, desc: '치명: 플레이어 본체 관통 암살' },
+    { name: '암흑 사령술사', icon: '🔮', attack: 10, defense: 6, maxHp: 24, currentHp: 24, desc: '지원: 매 턴 아군에 저주 및 보스 흡혈' }
   ],
   nature: [
-    { name: '고대 세계수 엔트', icon: '🌲', attack: 8, defense: 16, maxHp: 38, currentHp: 38, taunt: true, desc: '도발 & 매 턴 체력 +8 자가 재생' },
-    { name: '맹독 포자 버섯', icon: '🍄', attack: 10, defense: 2, maxHp: 20, currentHp: 20, taunt: false, desc: '살포: 매 턴 적 전체에 맹독 누적' },
-    { name: '가시 덩굴 전사', icon: '🌿', attack: 14, defense: 8, maxHp: 25, currentHp: 25, taunt: false, desc: '반사: 피격 시 공격자에게 6 반사 피해' }
+    { name: '고대 세계수 엔트', icon: '🌲', attack: 8, defense: 16, maxHp: 38, currentHp: 38, desc: '매 턴 체력 +8 자가 재생' },
+    { name: '맹독 포자 버섯', icon: '🍄', attack: 10, defense: 2, maxHp: 20, currentHp: 20, desc: '살포: 매 턴 적 전체에 맹독 누적' },
+    { name: '가시 덩굴 전사', icon: '🌿', attack: 14, defense: 8, maxHp: 25, currentHp: 25, desc: '반사: 피격 시 공격자에게 6 반사 피해' }
   ]
 };
 
@@ -615,7 +613,6 @@ export const BOSS_POWER_CARDS = [
     attack: 0,
     defense: 12,
     hp: 26,
-    taunt: true,
     skills: [{ name: '빙벽 전개', shield: 20, description: '보스에게 20 방어막을 전개합니다.' }]
   },
   // Lightning
