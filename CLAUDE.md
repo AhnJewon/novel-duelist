@@ -95,6 +95,7 @@
 | 건축물 패시브 · 오라 | `js/config.js`의 `buildStructurePassive` + `js/battle-engine.js`의 오라 계산 |
 | 카드군 초기화 · 병합 · 보수 | `js/archetype-service.js` (콘솔에서 `resetArchetypes()`) |
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
+| 도발 판정 | `js/battle-engine.js`의 `readTaunt()` **한 곳** |
 | PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
 | 덱 마나 커브 (코스트 분포) | `js/config.js`의 `COST_CURVE_WEIGHTS` |
@@ -276,3 +277,12 @@
 47. **카드 텍스트에 엔진 키를 그대로 쓰지 마세요.** `st.type`을 찍어서 카드에
     "freeze"가 나왔습니다. `STATUS_EFFECTS[type].name`처럼 한국어 이름을 쓰세요.
     → [DECISIONS #79](docs/DECISIONS.md)
+
+48. **도발은 `readTaunt()`로만 판정하세요.** `taunt`가 카드 최상위와 `skill` 양쪽에
+    존재합니다. 한쪽만 읽으면 조용히 무효가 됩니다 — 실제로 플레이어는 도발을
+    **가질 수 없는** 상태였습니다. → [DECISIONS #80](docs/DECISIONS.md)
+
+49. **전투 규칙은 UI가 아니라 해결 지점에서 강제하세요.** 도발 검사가
+    `attackWithMinion`(목록 생성)에만 있어서 `resolveMinionAttack`은 주는 대로
+    실행했고, PvP에서 도발을 넘어 때릴 수 있었습니다.
+    → [DECISIONS #80](docs/DECISIONS.md)

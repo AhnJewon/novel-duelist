@@ -37,6 +37,24 @@ import {
 export const BATTLE_SLOTS = 4;
 export const BOSS_SLOTS = 3;
 
+/**
+ * 🛡️ 카드가 도발을 갖는가.
+ *
+ * ⚠️ `taunt`가 사는 곳이 두 군데다 — 이게 버그의 원인이었다.
+ *    · data.js의 보스 부하: **최상위** `taunt: true`
+ *    · LLM/팩 생성 카드:     **skill** 안의 `taunt: true`
+ *    한쪽만 읽으면 다른 쪽이 조용히 무효가 된다. 반드시 이 함수를 쓰세요.
+ *
+ * 건축물은 공격할 수 없으므로 자동으로 도발이다 — 그게 존재 이유다.
+ */
+export function readTaunt(card) {
+  if (!card) return false;
+  if (card.cardType === 'structure') return true;
+  if (card.taunt) return true;
+  const skill = card.skill || (Array.isArray(card.skills) && card.skills[0]);
+  return !!(skill && skill.taunt);
+}
+
 // ============================================================
 // 🐌 보스 공세 램프 — 초반 턴에는 보스도 천천히 전개한다
 // ------------------------------------------------------------
@@ -820,6 +838,11 @@ export function playCard(handIdx) {
     maxHp: card.hp || 30,
     currentHp: card.hp || 30,
     defense: card.defense || 0,
+    // 🛡️ 🐛 도발이 **플레이어에게만 전달되지 않았다.**
+    //    `taunt`는 카드가 아니라 **skill**에 있는데 여기서는 `{...card}` 스프레드만
+    //    했다. 보스 소환수는 data.js에 최상위 taunt가 있어 우연히 동작했고,
+    //    플레이어 소환수는 아무리 도발 카드를 내도 taunt가 undefined였다.
+    taunt: readTaunt(card),
     canAttack: false, // 소환 후유증
     // ⚠️ 이게 없으면 refreshMinions가 다음 턴에도 풀어주지 않는다 (영구 마비)
     summonedTurn: state.turnCount,
@@ -919,6 +942,26 @@ export function resolveMinionAttack(slotIdx, targetKey) {
   const entity = state.playerMinions[slotIdx];
   if (!entity || !entity.canAttack) return;
 
+  // 🛡️ 도발 규칙은 **여기서** 강제한다.
+  //    🐛 예전에는 attackWithMinion(UI에서 고를 목록을 만드는 곳)에만 있었다.
+  //       이 함수는 주는 대로 실행했으므로, 적에게 도발이 있어도
+  //       'face'나 비도발 소환수를 지정하면 그대로 통과했다 (실측 확인).
+  //       PvP 재생 경로도 이 함수를 쓰므로 상대가 도발을 넘어 때릴 수 있었다.
+  //    규칙은 **해결되는 지점**에서 지켜야 한다. UI는 편의일 뿐이다.
+  const aliveFoes = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
+  const foeTaunts = aliveFoes.filter(m => m.taunt);
+  if (foeTaunts.length > 0) {
+    const idx = String(targetKey || '').startsWith('foe:')
+      ? parseInt(String(targetKey).split(':')[1], 10) : -1;
+    const picked = idx >= 0 ? state.bossMinions[idx] : null;
+    if (!picked || !picked.taunt) {
+      // 도발을 무시한 지정 — 도발 대상으로 되돌린다
+      const redirect = foeTaunts[0];
+      addBattleLog(`<span class="text-amber-300">🛡️ [${escapeHtml(redirect.name)}]의 도발 — 그쪽을 먼저 처리해야 합니다.</span>`);
+      targetKey = `foe:${state.bossMinions.indexOf(redirect)}`;
+    }
+  }
+
   entity.canAttack = false;
   audio.playSlash();
 
@@ -1006,7 +1049,11 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
 
   // 아군 소환수/건축물이 있으면 최전방 타겟 타격 (PvE 기본 동작)
   if (state.playerMinions.length > 0) {
-    hitPlayerMinion(state.playerMinions[0], bm, 0);
+    // 🛡️ 🐛 예전에는 무조건 0번을 때렸다 — **플레이어의 도발을 완전히 무시**했다.
+    //    도발 소환수가 뒤에 있으면 앞줄이 맞았다. selectFrontTarget이
+    //    도발 우선 규칙(도발이 있으면 도발만)을 담고 있으므로 그걸 쓴다.
+    const target = selectFrontTarget(state.playerMinions);
+    hitPlayerMinion(target, bm, state.playerMinions.indexOf(target));
   } else {
     // 🐛 여기도 마찬가지로 직접 차감이었다. 무적만 보고 방어막·경감은 무시했다.
     addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
@@ -1469,7 +1516,7 @@ export async function playBossCard(card) {
         defense: card.defense || 4,
         maxHp: Math.max(16, card.hp || 20),
         currentHp: Math.max(16, card.hp || 20),
-        taunt: card.cardType === 'structure' || !!card.taunt,
+        taunt: readTaunt(card),   // ⚠️ skill.taunt도 읽어야 한다 — readTaunt 주석 참고
         desc: card.skills && card.skills[0] ? card.skills[0].name : '소환수'
       };
       minion.canAttack = false;                  // 소환 후유증 — 플레이어 소환수와 같은 규칙
@@ -2021,7 +2068,7 @@ export async function playFoeCardPvp(card, slot = null) {
       maxHp: card.hp || 30,
       currentHp: card.hp || 30,
       defense: card.defense || 0,
-      taunt: cardType === 'structure' || !!card.taunt,
+      taunt: readTaunt({ ...card, cardType }),   // ⚠️ skill.taunt도 읽어야 한다
       canAttack: false,
       summonedTurn: state.turnCount,
       frozen: false
