@@ -137,7 +137,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (324항목):
+전투 로직은 **하네스가 있습니다** (359항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -319,7 +319,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (324항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (359항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -455,3 +455,36 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     `themeId`가 실재하면 `proposeArchetype`을 **건너뛰세요.** 안 그러면 키워드를
     바꿨을 뿐인데 병합·재명명·`seeds` 오염으로 소속이 끌려갑니다.
     → [DECISIONS #92](docs/DECISIONS.md)
+
+87. **화면이 약속한 자리와 데이터가 넣는 자리가 다르면 화면을 고치세요.** 전장은
+    빈칸 없는 배열이라 누를 수 있는 빈 칸은 `length` 자리 **하나**뿐입니다. 배지는
+    실효값(`armedAt = min(무장, length)`)에 그리세요 — 배지가 뜬 칸 = 들어가는 칸.
+    → [DECISIONS #93](docs/DECISIONS.md)
+
+88. **소환 위치 무장은 소환에만 소모됩니다.** 주문·함정·시전 반려에서 풀지 마세요 —
+    반려됐다고 풀면 "지정했는데 뒤로 갔다"는 바로 그 놀람을 만듭니다. 무장은 늘
+    화면에 보이므로 숨은 상태가 아닙니다. 단 `initBattle`은 **반드시** 지웁니다.
+    → [DECISIONS #93](docs/DECISIONS.md)
+
+89. **전투 단위 상태는 `initBattle`에서 전부 초기화하세요.** `_pendingSummonSlot`·
+    `_pendingPicked`·대상 선택 모드가 빠져 있어 지난 전투의 무장이 새 전투로 샜습니다.
+    `__test.reset()`과 같은 목록이어야 합니다. → [DECISIONS #93](docs/DECISIONS.md)
+
+90. **겹친 컨트롤은 상위 모드를 먼저 봅니다.** 그립은 카드 왼쪽 10px를 덮고
+    `stopPropagation`을 하므로, 대상 선택 중에는 카드와 같게 `pickTarget`을 해야
+    합니다. 안 그러면 대상 지정 대신 무장이 됩니다. → [DECISIONS #93](docs/DECISIONS.md)
+
+91. **기획→저장 사이의 값은 DOM 밖에 살려두세요.** `completeForgedCard`가 마나·
+    공/방/체를 캡에서 **다시 굴려** 기획 화면의 카드와 저장된 카드가 달랐습니다.
+    `currentPlannedStats`(정산값) > 세부사항 지정값 > 추첨 순입니다. 미리보기도 같은
+    값을 보입니다. → [DECISIONS #93](docs/DECISIONS.md)
+
+92. **셀렉트를 만들면 읽는 코드도 만드세요. 라벨은 `ai-service.js`의 해상도 표와
+    맞추세요.** `#forge-resolution`은 아무 코드도 읽지 않았고(죽은 UI), 라벨은
+    `square-normal`을 1024라 적었습니다(실제 640 — 1024는 `square-large`).
+    해상도는 팩·연성·설정 모달이 **한 설정값**을 공유합니다. → [DECISIONS #93](docs/DECISIONS.md)
+
+93. **팩 프롬프트에 카드군 재사용 규칙과 창작 규칙을 함께 싣지 마세요.** 둘을 다
+    주면 4B 모델은 늘 재사용을 고릅니다 — 실제로 새 카드군이 한 번도 안 나왔습니다.
+    `PACK_NEW_ARCHETYPE_CHANCE`로 팩당 **한 슬롯만** 창작 규칙으로 바꿉니다.
+    범용 팩·카드군 집중 팩은 제외입니다. → [DECISIONS #93](docs/DECISIONS.md)

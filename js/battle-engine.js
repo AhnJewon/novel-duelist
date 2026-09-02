@@ -356,6 +356,12 @@ export function initBattle({ seed = null } = {}) {
   bossBuffs = createBuffs();
   sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs });
   trapZones = { player: [], boss: [] };
+  // 🎯 소환 위치 무장·효과 대상 선택도 전투 단위 상태다.
+  //    🐛 수정: 여기서 지우지 않아 지난 전투에서 눌러 둔 자리가 새 전투의 첫 소환에
+  //       그대로 적용됐다 — "지정 안 했는데 이상한 자리에 들어간다"의 원인 하나 (DECISIONS #93)
+  if (isTargeting()) cancelTargeting(false);
+  _pendingSummonSlot = null;
+  _pendingPicked = null;
 
   const activeDeckCards = getActiveDeckCards();
   state.playerDeck = battleRng().shuffle(activeDeckCards);
@@ -574,25 +580,39 @@ export function renderBattleUI() {
   const fieldContainer = document.getElementById('player-minions-field');
   if (fieldContainer) {
     fieldContainer.innerHTML = '';
+    // 🎯 무장 위치의 **실효값**. 전장은 빈칸 없는 배열이라 length를 넘는 지정은
+    //    playCard가 length로 눌러 맨 뒤에 붙인다 — 화면도 같은 값을 써야 배지가
+    //    실제로 들어갈 자리에 뜬다. (무장해 둔 뒤 소환수가 죽어 인덱스가 줄면 생긴다)
+    const armedAt = Number.isInteger(_pendingSummonSlot)
+      ? Math.min(_pendingSummonSlot, state.playerMinions.length) : null;
     for (let slot = 0; slot < BATTLE_SLOTS; slot++) {
       const entity = state.playerMinions[slot];
       if (entity) {
         fieldContainer.appendChild(createMinionFieldElement(entity, slot, synergyInfo));
       } else {
-        // 🎯 빈 슬롯을 눌러 두면 다음에 내는 소환수가 **그 자리**에 들어간다.
-        //    0번이 적의 공격을 먼저 받으므로 앞뒤 배치가 전술이 된다.
-        const armed = _pendingSummonSlot === slot;
+        // 🎯 빈 칸 중 누를 수 있는 것은 **바로 다음 자리(length)** 하나뿐이다.
+        //    🐛 수정: 예전엔 빈 칸 넷이 전부 눌렸고 "여기에 배치"까지 켜졌지만, 전장이
+        //       빈칸 없는 배열이라 playCard는 length로 눌러 **맨 앞/맨 뒤**에 넣었다.
+        //       (빈 전장에서 4번 칸을 누르면 배지는 4번, 실제는 1번) — 화면이 거짓 약속을
+        //       한 것이다. 앞자리에 끼우는 길은 소환수 카드의 왼쪽 띠(그립)다 → DECISIONS #93
+        const reachable = slot === state.playerMinions.length;
+        const armed = reachable && armedAt === slot;
         const emptySlot = document.createElement('div');
-        emptySlot.className = `h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center text-xs gap-1 transition cursor-pointer ${
-          armed ? 'border-amber-400 bg-amber-500/10 text-amber-300 ring-2 ring-amber-400/60'
-                : 'border-slate-700/60 bg-black/30 text-slate-600 hover:border-amber-500/60 hover:text-amber-400'}`;
-        emptySlot.innerHTML = `<i data-lucide="${armed ? 'target' : 'plus-circle'}" class="w-6 h-6 ${armed ? '' : 'opacity-40'}"></i>
-          <span>${armed ? '여기에 배치' : `슬롯 ${slot + 1}`}</span>`;
-        emptySlot.title = '이 자리를 지정한 뒤 카드를 내면 여기에 배치됩니다 (앞자리일수록 먼저 맞습니다)';
-        emptySlot.onclick = () => {
-          _pendingSummonSlot = (_pendingSummonSlot === slot) ? null : slot;
-          renderBattleUI();
-        };
+        emptySlot.className = `h-36 rounded-xl border-2 border-dashed flex flex-col items-center justify-center text-xs gap-1 transition ${
+          armed ? 'border-amber-400 bg-amber-500/10 text-amber-300 ring-2 ring-amber-400/60 cursor-pointer'
+          : reachable ? 'border-slate-700/60 bg-black/30 text-slate-500 hover:border-amber-500/60 hover:text-amber-400 cursor-pointer'
+          : 'border-slate-800/60 bg-black/20 text-slate-700 cursor-default'}`;
+        emptySlot.innerHTML = `<i data-lucide="${armed ? 'target' : reachable ? 'plus-circle' : 'minus'}" class="w-6 h-6 ${armed ? '' : 'opacity-40'}"></i>
+          <span>${armed ? '여기에 배치' : reachable ? '다음 소환 자리' : `슬롯 ${slot + 1}`}</span>`;
+        if (reachable) {
+          emptySlot.title = '다음 소환수는 기본으로 여기(맨 뒤)에 놓입니다. 앞자리에 끼워 넣으려면 소환수 카드의 왼쪽 띠를 누르세요.';
+          emptySlot.onclick = () => {
+            _pendingSummonSlot = armed ? null : slot;
+            renderBattleUI();
+          };
+        } else {
+          emptySlot.title = '전장은 앞에서부터 차례로 채워집니다 — 이 칸을 직접 지정할 수는 없습니다.';
+        }
         fieldContainer.appendChild(emptySlot);
       }
     }
@@ -768,6 +788,9 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
     grip.onclick = (e) => {
       e.stopPropagation();          // 공격 클릭과 섞이면 안 된다
       hideCardDetail();
+      // 🐛 수정: 그립이 카드 왼쪽 10px를 덮고 있어, 대상 선택 중에 카드의 왼쪽 끝을
+      //    누르면 대상 지정 대신 소환 위치가 무장됐다. 선택 중에는 카드와 같게 행동한다.
+      if (isTargeting()) { pickTarget(`ally:${slotIdx}`); return; }
       _pendingSummonSlot = armed ? null : slotIdx;
       renderBattleUI();
     };
@@ -975,8 +998,13 @@ export function playCard(handIdx) {
   };
 
   // 🎯 배치 위치. **맨 앞(0번)이 적의 공격을 먼저 받는다** — 위치가 곧 전술이다.
-  //    `_pendingSummonSlot`은 슬롯을 눌러 카드를 낸 경우에만 채워진다.
-  //    (그냥 카드를 클릭하면 예전처럼 맨 뒤에 붙는다 — 매번 묻지 않는다)
+  //    `_pendingSummonSlot`은 그립/다음 자리를 눌러 둔 경우에만 채워지고, **소환에만 소모된다.**
+  //    (주문·함정·시전 반려로는 풀리지 않는다 — 무장은 화면에 늘 보이므로 숨은 상태가
+  //     아니고, 반려됐다고 풀어 버리면 "지정했는데 뒤로 갔다"는 바로 그 놀람을 만든다.
+  //     그냥 카드를 클릭하면 예전처럼 맨 뒤에 붙는다 — 매번 묻지 않는다)
+  //    ⚠️ length로 누르는 것은 방어선이 아니라 **모델**이다: 전장은 빈칸 없는 배열이라
+  //       length 너머의 자리는 존재하지 않는다. 화면도 같은 값을 쓴다(renderBattleUI의
+  //       armedAt) → 배지가 뜬 자리 = 실제로 들어가는 자리. DECISIONS #93
   const at = Number.isInteger(_pendingSummonSlot)
     ? Math.max(0, Math.min(state.playerMinions.length, _pendingSummonSlot))
     : state.playerMinions.length;
@@ -2339,6 +2367,7 @@ export async function playFoeCardPvp(card, slot = null, picked = null) {
   audio.playSummon();
   if (state.bossMinions.length < BOSS_SLOTS) {
     // 상대가 고른 배치 위치를 그대로 재현한다 (안 그러면 전열이 어긋난다)
+    // length로 누르는 이유는 playCard와 같다 — 빈칸 없는 배열에 length 너머는 없다 (DECISIONS #93)
     const at = Number.isInteger(slot)
       ? Math.max(0, Math.min(state.bossMinions.length, slot))
       : state.bossMinions.length;

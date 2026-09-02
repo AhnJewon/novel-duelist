@@ -27,6 +27,23 @@ let currentCardTheme = null;
 //    기획하면 조용히 고정값으로 변했다 → DECISIONS #92
 let currentForgeRarity = null;
 
+// 📐 이번 카드의 **정산이 끝난** 수치(마나·공/방/체). 기획(applyGeneratedCardData)이
+//    채우고 저장(completeForgedCard)과 미리보기가 그대로 쓴다.
+//    🐛 수정: 예전에는 저장 직전에 등급 캡으로 **다시 굴렸다.** 기획→저장 사이를 살아남는
+//       값이 DOM의 이름·속성·등급과 스킬 데이터뿐이어서, 유저가 세부사항에 지정한 마나 2·
+//       공격력 9도, LLM이 설계한 스탯도 카드에 남지 않았다 → DECISIONS #93
+let currentPlannedStats = null;
+
+/** 카드 데이터에서 유한한 수치만 골라 담는다. 빠진 칸은 저장 때 캡에서 굴린다. */
+function pickPlannedStats(src) {
+  const out = {};
+  for (const k of ['cost', 'attack', 'defense', 'hp']) {
+    const v = Number(src && src[k]);
+    if (Number.isFinite(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /**
  * ⭐ 지금 쓸 등급 하나를 정한다. 저장·미리보기가 모두 여기를 통과한다.
  *
@@ -590,6 +607,8 @@ export async function applyGeneratedCardData(rawData) {
   // 🎛️ 사용자 지정 값을 먼저 덮어쓴 뒤 밸런스 검증(등급·마나 예산)을 태운다.
   //     순서가 반대면 사용자가 정한 수치가 검증을 건너뛴다.
   const data = sanitizeAndClampCardData(applyCustomOverrides(rawData, readCustomOverrides()));
+  // 📐 정산을 마친 수치를 기억한다 — 저장이 다시 굴리지 않고 이 값을 쓴다 (DECISIONS #93)
+  currentPlannedStats = pickPlannedStats(data);
   if (data.name) document.getElementById('forge-name').value = data.name;
   if (data.title) {
     const titleEl = document.getElementById('forge-title');
@@ -740,20 +759,30 @@ export function updateForgePromptPreview() {
   const element = document.getElementById('forge-element') ? document.getElementById('forge-element').value : 'fire';
   const rarity = forgeRarity();
   renderForgeRarityHint();
+  // 🖼️ 해상도 셀렉트는 설정값의 화면이다 (팩·설정 모달과 한 값을 공유한다).
+  //    onchange가 설정에 저장하므로 여기서 되읽는 것은 멱등하다.
+  const resSel = document.getElementById('forge-resolution');
+  if (resSel && state.settings.resolution && [...resSel.options].some(o => o.value === state.settings.resolution)) {
+    resSel.value = state.settings.resolution;
+  }
   const name = document.getElementById('forge-name') ? (document.getElementById('forge-name').value.trim() || '이름 없는 영웅') : '이름 없는 영웅';
   const prompt = document.getElementById('forge-prompt') ? (document.getElementById('forge-prompt').value.trim() || 'masterpiece, fantasy') : 'masterpiece, fantasy';
   const cardType = currentForgeCardType || 'unit';
 
+  // 📐 기획이 끝났으면 미리보기도 **정산된 수치**를 보인다. 등급 공식으로 그리면
+  //    미리보기(28/12/40)와 저장될 카드(14/6/26)가 다르다 — 화면이 거짓 약속을 한다.
+  const planned = currentPlannedStats || {};
+  const stat = (key, fallback) => Number.isFinite(planned[key]) ? planned[key] : fallback;
   const mockCard = {
     id: 'preview',
     cardType: cardType,
     name: name,
     element: element,
     rarity: rarity,
-    cost: cardType === 'spell' ? 2 : (rarity === 'legendary' ? 4 : (rarity === 'epic' ? 3 : 2)),
-    attack: cardType === 'spell' || cardType === 'structure' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 28 : (rarity === 'epic' ? 20 : 14)),
-    defense: cardType === 'spell' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 12 : 8),
-    hp: cardType === 'spell' || cardType === 'trap' ? 0 : (cardType === 'structure' ? 45 : (rarity === 'legendary' ? 40 : 30)),
+    cost: stat('cost', cardType === 'spell' ? 2 : (rarity === 'legendary' ? 4 : (rarity === 'epic' ? 3 : 2))),
+    attack: stat('attack', cardType === 'spell' || cardType === 'structure' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 28 : (rarity === 'epic' ? 20 : 14))),
+    defense: stat('defense', cardType === 'spell' || cardType === 'trap' ? 0 : (rarity === 'legendary' ? 12 : 8)),
+    hp: stat('hp', cardType === 'spell' || cardType === 'trap' ? 0 : (cardType === 'structure' ? 45 : (rarity === 'legendary' ? 40 : 30))),
     imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
     skills: [currentLLMSkillData || { name: `${name} 효과`, description: '효과를 발동합니다.' }]
   };
@@ -790,9 +819,13 @@ export async function generateAICard() {
       promptToSend = `solo, ${promptToSend}`;
     }
 
+    // 🖼️ 🐛 수정: #forge-resolution 셀렉트를 **아무 코드도 읽지 않았다.** 뭘 골라도 설정값이
+    //    쓰였고, 라벨은 square-normal을 1024x1024라 적어 두 번 거짓말했다 (실제 640).
+    //    팩(card-pack.js)과 같은 규칙으로 맞춘다: 화면의 셀렉트 > 설정값.
+    const resSel = document.getElementById('forge-resolution');
     const imageUrl = await generateNovelAIImage({
       prompt: promptToSend,
-      resolution: state.settings.resolution || 'portrait-small'
+      resolution: (resSel && resSel.value) || state.settings.resolution || 'square-normal'
     });
 
     await completeForgedCard(name, element, rarity, userPrompt, imageUrl);
@@ -835,11 +868,27 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const cardType = currentForgeCardType || 'unit';
   const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
 
-  const cost = rollCardCost(caps.costRange[1]);   // 💎 덱 커브 분포 (등급이 아니라 커브가 정한다)
-  let atk = caps.atkRange[0] + Math.floor(Math.random() * (caps.atkRange[1] - caps.atkRange[0] + 1));
-  let def = caps.defRange[0] + Math.floor(Math.random() * (caps.defRange[1] - caps.defRange[0] + 1));
-  let hp = caps.hpRange[0] + Math.floor(Math.random() * (caps.hpRange[1] - caps.hpRange[0] + 1));
-  const spellDmg = caps.spellDamage[0] + Math.floor(Math.random() * (caps.spellDamage[1] - caps.spellDamage[0] + 1));
+  // 📐 수치 우선순위: 기획이 정산한 값 > 세부사항에 유저가 직접 쓴 값 > 캡에서 추첨.
+  //    기획을 거쳤으면 planned에 유저 지정값이 이미 들어 있다(applyCustomOverrides → sanitize).
+  //    기획을 건너뛰고 바로 생성해도 세부사항 칸은 존중한다.
+  //    🐛 수정: 예전에는 무조건 캡에서 다시 굴려, 기획 화면의 카드와 저장된 카드가 달랐다.
+  //    마지막 sanitizeAndClampCardData가 어차피 캡으로 자르므로 여기서 캡을 다시 볼 필요는 없다.
+  const custom = readCustomOverrides();
+  const planned = currentPlannedStats || {};
+  const src = {};                                   // 수치 출처 — 건축물 보정은 추첨값에만 건다
+  const settle = (key, roll) => {
+    if (Number.isFinite(planned[key])) { src[key] = 'planned'; return planned[key]; }
+    if (custom[key] !== null && custom[key] !== undefined) { src[key] = 'custom'; return custom[key]; }
+    src[key] = 'roll'; return roll();
+  };
+  const rollIn = ([lo, hi]) => lo + Math.floor(Math.random() * (hi - lo + 1));
+
+  const cost = settle('cost', () => rollCardCost(caps.costRange[1]));   // 💎 덱 커브 분포 (등급이 아니라 커브가 정한다)
+  let atk = settle('attack', () => rollIn(caps.atkRange));
+  let def = settle('defense', () => rollIn(caps.defRange));
+  let hp = settle('hp', () => rollIn(caps.hpRange));
+  const spellDmg = rollIn(caps.spellDamage);
+  console.log(`[Forge] 수치 출처 cost=${src.cost} atk=${src.attack} def=${src.defense} hp=${src.hp}`);
 
   if (cardType === 'spell') {
     atk = 0;
@@ -847,8 +896,9 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     hp = 0;
   } else if (cardType === 'structure') {
     atk = 0;
-    def = Math.floor(def * 1.3);
-    hp = Math.floor(hp * 1.3);
+    // 건축물 보정(×1.3)은 **추첨값에만** — 기획·지정값은 이미 최종 수치다
+    if (src.defense === 'roll') def = Math.floor(def * 1.3);
+    if (src.hp === 'roll') hp = Math.floor(hp * 1.3);
   }
 
   const optimizedImg = await optimizeCardImage(imageUrl);

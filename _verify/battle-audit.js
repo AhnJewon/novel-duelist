@@ -1260,6 +1260,105 @@ function suitePlayCard() {
     }
   }
 
+  // 🎯 소환 위치 — 배지가 뜬 자리 = 실제로 들어가는 자리 (DECISIONS #93)
+  //    🐛 빈 칸 넷이 전부 눌렸고 "여기에 배치"까지 켜졌지만, 전장이 빈칸 없는 배열이라
+  //       playCard는 length로 눌렀다 (빈 전장에서 4번 칸 → 실제 1번). 위 검사는
+  //       "2기 + 그립"만 덮어 이걸 통과시켰다. 여기서는 빈 전장·인덱스 감소·전투 간 누수·
+  //       대상 선택 중 그립까지 **화면과 실제가 같은가**를 직접 잰다.
+  {
+    const 유닛 = (n) => card({ id: 'v' + n, name: 'V' + n, cost: 1, attack: 5, hp: 20, skills: [{}] });
+    const 칸들 = () => [...document.querySelectorAll('#player-minions-field > div')];
+    const 배지칸 = () => 칸들().findIndex(d => d.innerText.includes('여기'));   // 없으면 -1
+    const 이름들 = () => state.playerMinions.map(m => m.name).join(',');
+
+    // ① 빈 전장: 누를 수 있는 빈 칸은 첫 칸(length=0) 하나뿐
+    resetBoard({ playerMana: 20, turnCount: 3 });
+    state.playerMaxMana = 20;
+    state.playerHand = [유닛(0), 유닛(1), 유닛(2)];
+    BE.renderBattleUI();
+    const 빈 = 칸들();
+    check(S, '소환 위치: 빈 전장 — 누를 수 있는 빈 칸은 첫 칸 하나뿐',
+      빈.length === 4 && typeof 빈[0].onclick === 'function' && 빈.slice(1).every(d => !d.onclick),
+      `clickable=${빈.map(d => typeof d.onclick === 'function' ? 1 : 0).join('')}`);
+
+    // ② 닿지 않는 칸(3번)을 눌러도 배지가 켜지지 않는다 (예전: 배지 3번, 실제 1번)
+    빈[2].click(); BE.renderBattleUI();
+    check(S, '소환 위치: 닿지 않는 칸은 눌러도 무장되지 않는다', 배지칸() === -1, `배지=${배지칸()}`);
+
+    // ③ 불변식: 배지가 뜬 칸에 실제로 들어간다 (빈 전장)
+    칸들()[0].click(); BE.renderBattleUI();
+    const 배지A = 배지칸();
+    BE.playCard(0);
+    check(S, '소환 위치: 배지가 뜬 칸에 실제로 들어간다 (빈 전장)',
+      배지A === 0 && state.playerMinions.findIndex(m => m.name === 'V0') === 0,
+      `배지=${배지A} field=${이름들()}`);
+
+    // ④ 1기일 때 3번 칸은 눌러도 무장되지 않는다 (예전: 배지 3번, 실제 2번)
+    BE.renderBattleUI();
+    칸들()[2].click(); BE.renderBattleUI();
+    check(S, '소환 위치: 1기일 때 3번 칸은 눌러도 무장되지 않는다', 배지칸() === -1, `배지=${배지칸()}`);
+    BE.playCard(0);
+    check(S, '소환 위치: 무장 없이 내면 맨 뒤', 이름들() === 'V0,V1', 이름들());
+
+    // ⑤ 무장해 둔 뒤 소환수가 죽어 인덱스가 줄면, 배지도 실제로 들어갈 자리로 옮겨 간다
+    //    (2기 + 다음 자리(3번 칸) 무장 → 1기 사망 → length 1 → 배지 2번 칸, 소환도 2번)
+    BE.renderBattleUI();
+    칸들()[2].click(); BE.renderBattleUI();
+    check(S, '소환 위치: 다음 자리를 무장하면 배지는 그 칸', 배지칸() === 2, `배지=${배지칸()}`);
+    state.playerMinions.splice(0, 1);                 // V0 사망 — 전장은 빈칸 없이 당겨진다
+    BE.renderBattleUI();
+    const 배지B = 배지칸();
+    BE.playCard(0);                                   // V2
+    check(S, '소환 위치: 인덱스가 줄어도 배지 자리 = 실제 자리',
+      배지B === 1 && state.playerMinions.findIndex(m => m.name === 'V2') === 1,
+      `배지=${배지B} field=${이름들()}`);
+
+    // ⑥ 대상 선택 중에 그립(카드 왼쪽 띠)을 누르면 무장이 아니라 **대상 지정**이다
+    //    (그립이 카드 왼쪽 10px를 덮고 stopPropagation을 하므로 카드 onclick이 안 돈다)
+    resetBoard({ playerMana: 20, turnCount: 3, playerMinions: [minion({ name: '아군A' }), minion({ name: '아군B' })] });
+    state.playerMaxMana = 20;
+    BE.renderBattleUI();
+    let 골라진 = null;
+    const 시작 = beginTargeting({ kind: 'effect', valid: ['ally:0', 'ally:1'], need: 1, hint: '검사',
+      onProgress: () => {}, onPick: (first) => { 골라진 = first; }, onCancel: () => {} });
+    BE.renderBattleUI();
+    const 그립B = 칸들()[1] && 칸들()[1].querySelector('button');
+    if (시작 && 그립B) 그립B.click();
+    BE.renderBattleUI();
+    check(S, '소환 위치: 대상 선택 중 그립 클릭은 대상 지정이 된다',
+      시작 && !!그립B && 골라진 === 'ally:1' && 배지칸() === -1,
+      `started=${시작} grip=${!!그립B} picked=${골라진} 배지=${배지칸()}`);
+    cancelTargeting(false);
+
+    // ⑦ 전투 시작이 무장을 지운다 — 지난 전투의 배지가 새 전투에 남지 않는다
+    //    (빈 전장의 첫 소환은 어차피 0번이라 배치로는 안 보이고, **배지**로 드러난다)
+    resetBoard({ playerMana: 20, turnCount: 3, playerMinions: [minion({ name: '아군A' })] });
+    BE.renderBattleUI();
+    const 그립A = 칸들()[0] && 칸들()[0].querySelector('button');
+    if (그립A) 그립A.click();
+    BE.renderBattleUI();
+    const 무장됨 = 배지칸() === 0;
+    BE.initBattle({ seed: 1 });
+    check(S, '소환 위치: initBattle이 무장을 지운다 (전투 간 누수 없음)',
+      무장됨 && 배지칸() === -1, `armedBefore=${무장됨} 배지=${배지칸()}`);
+
+    // ⑧ 무장은 소환에만 소모된다 — 주문을 낸 뒤에도 남고, 다음 소환수가 그 자리에 들어간다
+    //    (반려·주문에서 풀어 버리면 "지정했는데 뒤로 갔다"는 놀람을 만든다. 배지는 늘 보인다)
+    resetBoard({ playerMana: 20, turnCount: 3,
+      playerMinions: [minion({ name: '아군A' }), minion({ name: '아군B' })], playerDeck: [card()] });
+    state.playerMaxMana = 20;
+    state.playerHand = [card({ name: '주문', cardType: 'spell', cost: 1, skills: [{ drawCards: 1 }] }), 유닛(9)];
+    BE.renderBattleUI();
+    칸들()[1].querySelector('button').click(); BE.renderBattleUI();   // 아군B 앞에 무장
+    BE.playCard(0);                                                     // 주문
+    BE.renderBattleUI();
+    const 주문뒤배지 = 배지칸();
+    BE.playCard(0);                                                     // V9
+    check(S, '소환 위치: 주문을 내도 무장은 남고, 배지 자리에 소환된다',
+      주문뒤배지 === 1 && 이름들() === '아군A,V9,아군B',
+      `배지=${주문뒤배지} field=${이름들()}`);
+  }
+
   // 전장이 가득 차면 소환 거부
   resetBoard({ playerMana: 5, playerMinions: [minion(), minion(), minion(), minion()] });
   state.playerHand = [card({ name: '추가병', cost: 1 })];

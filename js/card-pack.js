@@ -229,6 +229,16 @@ export async function openBoosterPack(fastMode = false) {
   const rawConcepts = THEME_CONCEPTS[currentPackTheme] || THEME_CONCEPTS.allround;
   const shuffledConcepts = [...rawConcepts].sort(() => 0.5 - Math.random());
 
+  // 🆕 이 팩에서 "새 카드군을 창작하라"는 지시를 받을 슬롯 (없으면 -1).
+  //    🐛 수정: 프롬프트의 ARCHETYPE REUSE RULE이 "조금이라도 겹치면 기존에 편입"을 최우선으로
+  //       두자, 4B 모델은 목록에 6개가 보이는 한 **한 번도** 새 카드군을 만들지 않았다
+  //       (유저 실측: 팩을 계속 뽑아도 카드군이 늘지 않는다). 난립을 막던 규칙이 정체를
+  //       만든 것이다. 규칙은 기본으로 두고, 확률적으로 **한 슬롯만** 지시를 뒤집는다 —
+  //       팩당 최대 1개라 난립으로 되돌아가지 않는다. 범용 팩·카드군 집중 팩은 제외한다
+  //       (둘 다 "새 카드군 금지"가 팩의 정의다) → DECISIONS #93
+  const newArchetypeSlot = (getSelectedPackMode().mode === 'random' && Math.random() < PACK_NEW_ARCHETYPE_CHANCE)
+    ? Math.floor(Math.random() * 5) : -1;
+
   for (let i = 0; i < 5; i++) {
     const slot = document.getElementById(`pack-slot-${i}`);
     const spinner = slot.querySelector('.slot-spinner');
@@ -266,7 +276,8 @@ export async function openBoosterPack(fastMode = false) {
     }
     if (progressBar) progressBar.style.width = `${((i + 0.3) / 5) * 100}%`;
 
-    const cardData = await generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, i, theme.name);
+    const cardData = await generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, i, theme.name,
+      { newArchetype: i === newArchetypeSlot });
 
     if (progressText) progressText.innerText = `[${i + 1}/5] ✨ [${cardData.rarity.toUpperCase()}] ${cardData.name} 완성!`;
     if (progressBar) progressBar.style.width = `${((i + 1) / 5) * 100}%`;
@@ -290,6 +301,13 @@ export async function openBoosterPack(fastMode = false) {
 
   isPackOpening = false;
 }
+
+/**
+ * 🆕 팩당 **한 슬롯**이 "새 카드군을 창작하라"는 지시를 받을 확률.
+ * 0이면 예전처럼 LLM이 알아서(= 거의 안 만든다), 1이면 매 팩마다 새 카드군 하나.
+ * 난립(DECISIONS #1)과 정체 사이의 다이얼이다 — 카드군이 충분히 쌓였으면 내리면 된다.
+ */
+const PACK_NEW_ARCHETYPE_CHANCE = 0.35;
 
 // 🤖 LLM (기획) + DanTagGen (태그 확장) + NovelAI (이미지 연성) 파이프라인
 /**
@@ -318,11 +336,13 @@ function duplicateFilter(element, packMode) {
   };
 }
 
-async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, cardIndex, packThemeName = 'Fantasy Pack') {
+async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, cardIndex, packThemeName = 'Fantasy Pack',
+  { newArchetype = false } = {}) {
 
   // 🔁 확률적으로 이미 가진 카드를 중복으로 뽑는다 — AI 호출을 건너뛰어 카드깡이 빨라진다
   const packMode = getSelectedPackMode();
-  if (battleRng().chance(duplicateChance())) {
+  // (새 카드군 창작 슬롯은 중복으로 대체하지 않는다 — 그러면 이 팩의 창작 기회가 사라진다)
+  if (!newArchetype && battleRng().chance(duplicateChance())) {
     const dup = pickExistingCardForDuplicate(battleRng(), duplicateFilter(element, packMode));
     if (dup) {
       if (loadingLabel) loadingLabel.innerText = `🔁 [${cardIndex + 1}/5] 중복 카드 발견 — 즉시 획득`;
@@ -375,7 +395,9 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   // 1단계: 카드 기획 (LLM 또는 스마트 폴백)
   if (!fastMode && ollamaOnline) {
     try {
-      if (loadingLabel) loadingLabel.innerText = `🤖 [${cardIndex + 1}/5] Ollama 기획 중...`;
+      if (loadingLabel) loadingLabel.innerText = newArchetype
+        ? `🆕 [${cardIndex + 1}/5] 새 카드군 창작 중...`
+        : `🤖 [${cardIndex + 1}/5] Ollama 기획 중...`;
       
       // 팩 테마와 의미가 가까운 카드군만 싣는다
       const packDirective = packModeDirective(packMode);
@@ -391,7 +413,21 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
       // 🎯 이 타입에만 해당하는 규칙만 싣는다. 네 타입 규칙을 다 보내면
       //    LLM이 타입 특징을 섞는다 (소환수에 함정식 효과, 함정에 소환수 문구 등).
       const typeRules = cardTypeRules(cardType);
-      const promptMsg = `Create 1 authentic anime TCG card for Pack Theme: "${packThemeName || 'Fantasy Card Pack'}", Element: "${element}", Type: "${cardType}", Rarity: "${rarity}", Mana Cost: ${cost} (고정).
+      // 🔴/🆕 카드군 규칙. 기본은 **재사용**(난립 방지)이고, 이 팩의 창작 슬롯만 뒤집는다.
+      //    같은 프롬프트에 둘을 다 실으면 4B 모델은 늘 재사용을 고른다 — 하나만 보낸다.
+      const archetypeRule = newArchetype
+        ? `🆕 NEW ARCHETYPE RULE (이 카드만 — 가장 중요, 반드시 지킬 것):
+- 이 카드는 **새 카드군을 창설**한다. 위 목록의 어떤 카드군에도 편입시키지 말 것.
+- "themeId": null 로 두고, 새 "themeName"과 "themeKeyword"(2~4글자 한국어 명사)를 지을 것.
+- 새 이름·키워드는 위 목록의 이름·키워드와 **겹치거나 변형이면 안 된다** (예: "홍련"이 있으면 "홍련 기사단"·"붉은 연꽃" 금지).
+- 컨셉은 위 목록과 뚜렷이 구별되는 새 세계관(종족·조직·현상·유물)으로 잡을 것.
+- "elementPolicy", "elements", "themePlaystyle", "themeComboAction", "themeComboDesc"를 모두 채울 것 (신규 카드군 필수 항목).`
+        : `🔴 ARCHETYPE REUSE RULE (가장 중요 — 반드시 지킬 것):
+- 위 목록에 이미 있는 카드군과 컨셉/속성/효과가 조금이라도 겹치면, 새로 만들지 말고 그 카드군의 id를 "themeId"에 그대로 복사하고 "themeName"에도 목록의 이름을 한 글자도 바꾸지 말고 그대로 쓸 것.
+- ❌ 절대 금지: 기존 "홍련의 검사단"이 있는데 "홍련 검사단", "홍련기사단", "붉은 연꽃 검사단" 같은 변형 이름을 새로 만드는 행위.
+- ✅ 진짜로 위 목록 어디에도 속하지 않는 완전히 새로운 컨셉일 때만 "themeId": null 로 두고 새 카드군을 창설할 것.
+- 카드군은 적을수록 좋다. 애매하면 무조건 기존 카드군에 편입시킬 것.`;
+      const promptMsg =`Create 1 authentic anime TCG card for Pack Theme: "${packThemeName || 'Fantasy Card Pack'}", Element: "${element}", Type: "${cardType}", Rarity: "${rarity}", Mana Cost: ${cost} (고정).
 
 💎 이 카드의 마나 코스트는 **${cost}**로 이미 정해져 있다. 바꾸지 마라.
 - **등급은 코스트를 정하지 않는다.** 등급이 정하는 건 그 코스트에서의 파워 밀도다.
@@ -405,11 +441,7 @@ Seed Nonce: ${nonce}
 Existing Archetypes list:
 ${knownThemes}
 
-🔴 ARCHETYPE REUSE RULE (가장 중요 — 반드시 지킬 것):
-- 위 목록에 이미 있는 카드군과 컨셉/속성/효과가 조금이라도 겹치면, 새로 만들지 말고 그 카드군의 id를 "themeId"에 그대로 복사하고 "themeName"에도 목록의 이름을 한 글자도 바꾸지 말고 그대로 쓸 것.
-- ❌ 절대 금지: 기존 "홍련의 검사단"이 있는데 "홍련 검사단", "홍련기사단", "붉은 연꽃 검사단" 같은 변형 이름을 새로 만드는 행위.
-- ✅ 진짜로 위 목록 어디에도 속하지 않는 완전히 새로운 컨셉일 때만 "themeId": null 로 두고 새 카드군을 창설할 것.
-- 카드군은 적을수록 좋다. 애매하면 무조건 기존 카드군에 편입시킬 것.
+${archetypeRule}
 
 
 🏷️ CARD NAME & KEYWORD FORMAT:

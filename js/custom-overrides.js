@@ -178,6 +178,11 @@ export function onCustomThemePick(archetypes = []) {
     return;
   }
   if (val === '__new__') {              // 자유 창작 — 직접 쓰게 둔다
+    // 🐛 수정: 직전에 고른 카드군의 이름·키워드가 채워진 채 "새 카드군 창작"으로 넘어왔다.
+    //    그대로 생성하면 새 카드군이 아니라 그 카드군에 흡수된다. **자동으로 채운 값만**
+    //    비운다 — 유저가 직접 쓴 글은 남긴다.
+    if (archetypes.some(a => a && a.name === nameEl.value)) nameEl.value = '';
+    if (archetypes.some(a => a && a.keyword && a.keyword === kwEl.value)) kwEl.value = '';
     nameEl.readOnly = false;
     nameEl.classList.remove('opacity-60');
     nameEl.focus();

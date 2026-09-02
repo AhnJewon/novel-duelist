@@ -743,11 +743,18 @@
                 <span>이미지 비율</span>
                 <span class="text-[10px] text-emerald-400">🛡️ 0 Anlas</span>
               </label>
-              <select id="forge-resolution" class="w-full bg-[#191d33] border border-brand-border text-emerald-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
-                <option value="square-normal" selected>⬛ 정사각형 (1:1 / 1024x1024)</option>
+              <!-- 🐛 수정: 이 셀렉트를 읽는 코드가 없었다 (뭘 골라도 설정값이 쓰였다). 팩과 같은 핸들러로
+                   설정에 저장하고, updateForgePromptPreview가 설정값을 되읽어 셀렉트를 맞춘다 -->
+              <select id="forge-resolution" onchange="onPackResolutionChange(this.value)" class="w-full bg-[#191d33] border border-brand-border text-emerald-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <!-- 라벨은 ai-service.js의 해상도 표와 같아야 한다.
+                     🐛 수정: square-normal을 1024x1024라 적어 놨지만 실제는 640이었다 (1024는 square-large) -->
+                <option value="square-normal" selected>⬛ 정사각형 (1:1 / 640x640)</option>
+                <option value="square-large">⬛ 고화질 정사각형 (1:1 / 1024x1024)</option>
                 <option value="portrait-normal">📱 세로형 (2:3 / 832x1216)</option>
                 <option value="portrait-small">📱 소형 세로 (2:3 / 512x768)</option>
-                <option value="square-small">⬛ 소형 정사각 (1:1 / 640x640)</option>
+                <option value="square-small">⬛ 소형 정사각 (1:1 / 512x512)</option>
+                <option value="landscape-normal">🌄 가로형 (3:2 / 1216x832)</option>
+                <option value="landscape-small">🌄 소형 가로 (3:2 / 768x512)</option>
               </select>
             </div>
           </div>
@@ -919,6 +926,8 @@
             </span>
             <select id="pack-resolution-select" onchange="onPackResolutionChange(this.value)" class="bg-black/90 border border-slate-700 text-emerald-300 font-bold rounded-xl px-2.5 py-1.5 outline-none cursor-pointer">
               <option value="square-normal" selected>정사각형 1:1 (640x640 · 0 Anlas)</option>
+              <!-- 1024² = 1,048,576px — Opus 무료 상한 정확히 그 값이라 0 Anlas다 -->
+              <option value="square-large">고화질 정사각형 1:1 (1024x1024 · 0 Anlas)</option>
               <option value="portrait-normal">고화질 세로 2:3 (832x1216 · 0 Anlas)</option>
               <option value="landscape-normal">고화질 가로 3:2 (1216x832 · 0 Anlas)</option>
               <option value="portrait-small">소형 세로 (512x768 · 0 Anlas)</option>
@@ -1296,6 +1305,7 @@
           <option value="portrait-small">소형 세로 (512 x 768) - 🛡️ 0 Anlas (가장 빠름)</option>
           <option value="portrait-normal">고화질 세로 (832 x 1216) - 🛡️ 0 Anlas</option>
           <option value="square-normal">정사각형 (640 x 640) - 🛡️ 0 Anlas</option>
+          <option value="square-large">고화질 정사각형 (1024 x 1024) - 🛡️ 0 Anlas</option>
           <option value="landscape-small">소형 가로 (768 x 512) - 🛡️ 0 Anlas</option>
           <option value="landscape-normal">고화질 가로 (1216 x 832) - 🛡️ 0 Anlas</option>
         </select>
