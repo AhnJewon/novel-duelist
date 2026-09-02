@@ -24,6 +24,7 @@ import * as BE from '/js/battle-engine.js';
 import { COMBO_TRIGGERS, COMBO_SCALINGS, COMBO_SCOPES, SCOPE_POWER_MULT,
          selfView, foeView, HAND_CAP } from '/js/archetype-identity.js';
 import { ARCHETYPE_COMBO_ACTIONS, runArchetypeCombo, belongsToTheme } from '/js/archetype-combos.js';
+import { triggerArchetypeCombo } from '/js/archetype-service.js';
 import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          collectDamageOverTime, decayStatuses, consumeBlockingStatus,
          getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
@@ -880,7 +881,7 @@ function themeOf(over = {}) {
   }, over);
 }
 
-function suiteCombos() {
+async function suiteCombos() {
   const S = '연계';
 
   // ── 14개 액션 × 2 진영이 모두 상태를 바꾸는가
@@ -900,11 +901,13 @@ function suiteCombos() {
         bossDeck: [card({ themeId: 'th-test', themeName: '검증군' }), card()]
       });
       state.playerMaxMana = 5;
+      state.bossMana = 2; state.bossMaxMana = 5;   // 상대도 manaCharge가 바꿀 여지가 있어야 한다
       const src = card({ name: '발동카드', themeId: 'th-test', themeName: '검증군', instanceId: 'src#1' });
       const before = snapshot();
       const beforeBuffs = JSON.stringify(BE.__test.buffs());
-      const out = runArchetypeCombo(side, themeOf({ comboAction: action }), src, state,
-        side === 'boss' ? BE.__test.bossHelpers() : BE.__test.helpers());
+      // 상대 진영은 거울 뷰 + 진영 상대적 헬퍼로 **같은 구현**을 돈다 (DECISIONS #94)
+      const out = runArchetypeCombo(themeOf({ comboAction: action }), src,
+        side === 'boss' ? BE.__test.foeGame() : state, BE.__test.helpers(side));
       const changed = snapshot() !== before || JSON.stringify(BE.__test.buffs()) !== beforeBuffs;
       check(S, `${action} / ${side} — 실제로 상태를 바꾼다`, !!out && changed,
         out ? (changed ? '' : '반환은 했으나 상태 변화 없음') : '발동하지 않음(null)');
@@ -946,8 +949,8 @@ function suiteCombos() {
         });
         const src = card({ name: '발동카드', themeId: 'th-test', themeName: '검증군', instanceId: 'src#1' });
         // 항상 상태를 바꾸는 액션으로 고정 (조건 판정만 보기 위해)
-        return runArchetypeCombo(side, themeOf({ comboAction: 'chainDamage', comboTrigger: trigger }),
-          src, state, side === 'boss' ? BE.__test.bossHelpers() : BE.__test.helpers());
+        return runArchetypeCombo(themeOf({ comboAction: 'chainDamage', comboTrigger: trigger }),
+          src, side === 'boss' ? BE.__test.foeGame() : state, BE.__test.helpers(side));
       };
       const passed = !!run(passCfg);
       const blocked = blockCfg === null ? true : !run(blockCfg);
@@ -973,8 +976,8 @@ function suiteCombos() {
         });
         const src = card({ name: '발동카드', themeId: 'th-test', themeName: '검증군', instanceId: 'src#1' });
         const beforeHp = side === 'boss' ? state.playerHp : state.currentBoss.currentHp;
-        runArchetypeCombo(side, themeOf({ comboAction: 'chainDamage', comboScaling: scaling }),
-          src, state, side === 'boss' ? BE.__test.bossHelpers() : BE.__test.helpers());
+        runArchetypeCombo(themeOf({ comboAction: 'chainDamage', comboScaling: scaling }),
+          src, side === 'boss' ? BE.__test.foeGame() : state, BE.__test.helpers(side));
         const afterHp = side === 'boss' ? state.playerHp : state.currentBoss.currentHp;
         return beforeHp - afterHp;
       };
@@ -989,7 +992,7 @@ function suiteCombos() {
   for (const scope of Object.keys(COMBO_SCOPES)) {
     resetBoard({ boss: { maxHp: 999, currentHp: 999, shield: 0 }, turnCount: 1 });
     const src = card({ name: '발동카드', themeId: 'th-test', themeName: '검증군', instanceId: 'src#1' });
-    runArchetypeCombo('player', themeOf({ comboAction: 'chainDamage', comboScope: scope, comboScopeValue: 'unit' }),
+    runArchetypeCombo(themeOf({ comboAction: 'chainDamage', comboScope: scope, comboScopeValue: 'unit' }),
       src, state, BE.__test.helpers());
     const dmg = 999 - state.currentBoss.currentHp;
     const want = Math.max(1, Math.round(6 * SCOPE_POWER_MULT[scope]));
@@ -1013,8 +1016,9 @@ function suiteCombos() {
   resetBoard({ playerHp: 30, playerMaxHp: 50, playerMaxShield: 7,
                boss: { maxHp: 300, currentHp: 120, shield: 9 },
                playerHand: [card(), card()], bossHand: [card()] });
-  const pv = selfView({ game: state, side: 'player' });
-  const bv = selfView({ game: state, side: 'boss' });
+  // 진영은 게임 뷰가 정한다: 상대 연계는 거울 뷰를 받는다 (ctx.side는 사라졌다 — DECISIONS #94)
+  const pv = selfView({ game: state });
+  const bv = selfView({ game: BE.__test.foeGame() });
   check(S, 'selfView(player) = 플레이어 상태',
     pv.hp === 30 && pv.maxHp === 50 && pv.shield === 7 && pv.hand.length === 2 && pv.handCap === 7,
     JSON.stringify({ hp: pv.hp, sh: pv.shield, hand: pv.hand.length }));
@@ -1023,11 +1027,39 @@ function suiteCombos() {
     bv.hp === 120 && bv.maxHp === 300 && bv.shield === 9 && bv.hand.length === 1 && bv.handCap === 7,
     JSON.stringify({ hp: bv.hp, sh: bv.shield, hand: bv.hand.length }));
   check(S, 'foeView는 정확히 반대',
-    JSON.stringify(foeView({ game: state, side: 'boss' }).hp) === JSON.stringify(pv.hp) &&
-    foeView({ game: state, side: 'player' }).hp === bv.hp);
+    foeView({ game: BE.__test.foeGame() }).hp === pv.hp && foeView({ game: state }).hp === bv.hp);
   check(S, 'turnCount가 없어도 NaN이 안 샌다',
-    Number.isFinite(COMBO_SCALINGS.perTurn.value(6, { game: {}, side: 'player' })) &&
-    COMBO_TRIGGERS.lateGame.test({ game: {}, side: 'player' }) === false);
+    Number.isFinite(COMBO_SCALINGS.perTurn.value(6, { game: {} })) &&
+    COMBO_TRIGGERS.lateGame.test({ game: {} }) === false);
+
+  // ── 한 벌 구현 (DECISIONS #94) — 수정 전엔 player/boss 두 벌이었고 서로 달랐다
+  check(S, '연계 액션마다 구현은 run 하나뿐',
+    Object.values(ARCHETYPE_COMBO_ACTIONS).every(a => typeof a.run === 'function' && !a.player && !a.boss));
+
+  // 보스 카드의 manaCharge는 이제 **마나**를 준다 (예전 보스 구현: 방어막 +10)
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  state.bossMana = 2; state.bossMaxMana = 5;
+  state.archetypesList = [themeOf({ comboAction: 'manaCharge' })];
+  await BE.playBossCard(card({ name: '상대공명', cardType: 'spell', cost: 0, themeId: 'th-test', themeName: '검증군', skills: [{}] }));
+  check(S, '상대 manaCharge는 마나 +1 (예전: 방어막)',
+    state.bossMana === 3 && state.currentBoss.shield === 0, `mana=${state.bossMana} shield=${state.currentBoss.shield}`);
+
+  // 보스 카드의 draw는 플레이어처럼 덱 **끝**에서 뽑는다 (예전: shift로 앞에서)
+  resetBoard({ bossHand: [], bossDeck: [card({ name: '앞' }), card({ name: '중간' }), card({ name: '끝' })] });
+  state.archetypesList = [themeOf({ comboAction: 'draw' })];
+  await BE.playBossCard(card({ name: '상대회수', cardType: 'spell', cost: 0, themeId: 'th-test', themeName: '검증군', skills: [{}] }));
+  check(S, '상대 draw 연계는 덱 끝에서 뽑는다 (예전: 앞)',
+    state.bossHand.length === 1 && state.bossHand[0].name === '끝', state.bossHand.map(c => c.name).join(','));
+
+  // 특수 소환 토큰에 소환 후유증·statuses·instanceId가 있다 (예전 플레이어 토큰엔 없었다)
+  resetBoard({ turnCount: 4 });
+  state.archetypesList = [themeOf({ comboAction: 'specialSummon' })];
+  triggerArchetypeCombo(card({ name: '정령술', themeId: 'th-test', themeName: '검증군' }), state, BE.__test.helpers());
+  const tok = state.playerMinions[0];
+  check(S, '특수 소환 토큰: summonedTurn·statuses·instanceId 보유',
+    !!tok && tok.summonedTurn === 4 && tok.canAttack === false && typeof tok.statuses === 'object' && !!tok.instanceId,
+    tok ? JSON.stringify({ st: tok.summonedTurn, s: !!tok.statuses, id: !!tok.instanceId }) : '토큰 없음');
+  state.archetypesList = [];
 }
 
 // ============================================================

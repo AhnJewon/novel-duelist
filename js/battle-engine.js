@@ -8,7 +8,7 @@ import { triggerLiveBossReaction } from './boss-forge.js';
 import { BOSS_DATA, BOSS_ADD_POOL, ELEMENT_BOSS_MINIONS, BOSS_POWER_CARDS } from './data.js';
 import {
   evaluateFieldSynergy, findSynergyForEntity,
-  triggerArchetypeCombo, triggerBossArchetypeCombo
+  triggerArchetypeCombo
 } from './archetype-service.js';
 import {
   STATUS_EFFECTS, createStatusState, applyStatus, consumeBlockingStatus, isEntityOnly,
@@ -153,7 +153,7 @@ function viewFor(side) {
  *    makeBossComboHelpers(보스 전용 구현). 키가 서로 달라 한쪽에만 있는 헬퍼를 부르면
  *    TypeError가 runArchetypeCombo의 try/catch에 삼켜져 조용히 아무 일도 안 일어났다
  *    (DECISIONS #82). 거울은 drawCards의 n을 무시하고 1장만 뽑았다.
- *    보스 전용 연계 구현이 사라지는 2단계까지 makeBossComboHelpers만 잠시 남는다 → DECISIONS #94
+ *    보스 전용 연계 구현(ARCHETYPE_COMBO_ACTIONS[*].boss)은 한 벌로 합쳐져 사라졌다 → DECISIONS #94
  */
 function helpersFor(side) {
   const other = sides[opponentOf(side.key)];
@@ -175,34 +175,15 @@ function helpersFor(side) {
     setPlayerStatus: (type, turns, value, allowBody = false) =>
       applyStatusRespectingScope(side.statuses, side.minions, labelOf(side), type, turns, value, allowBody),
     setPlayerBuff: (type, val) => { side.buffs[type] = val; },
-    // 로그는 늘 **내 화면** 기준이다 — 상대 카드가 "적"을 치면 그건 나다
+    // 로그는 늘 **내 화면** 기준이다 — 상대 카드가 "적"을 치면 그건 나다.
+    //    selfLabel은 연계 배지에 "누구의 연계인가"를 붙인다 (내 것이면 비운다).
     foeLabel: mine ? other.name : '나',
+    selfLabel: mine ? '' : side.name,
     onShielded: () => triggerTraps(side.key, 'shielded', null),
     foeHp: () => other.hp,
     foeMaxHp: () => other.maxHp,
     // 상대 손패 무작위 파기 — 반드시 battleRng를 거쳐야 PvP가 어긋나지 않는다
     discardFromBoss: () => discardRandom(other, battleRng())
-  };
-}
-
-/**
- * 보스 전용 연계 구현(ARCHETYPE_COMBO_ACTIONS[*].boss)이 쓰는 헬퍼 묶음.
- * ⚠️ 2단계(연계 한 벌)에서 그 구현과 함께 삭제된다. 새 코드는 helpersFor(side)를 쓰세요.
- */
-function makeBossComboHelpers() {
-  return {
-    addBattleLog,
-    audio,
-    applyDirectDamageToPlayer,
-    // 보스가 플레이어 손패를 파기할 때 — 반드시 battleRng를 거쳐야 PvP가 어긋나지 않는다
-    discardFromPlayer: () => discardRandom(sides.player, battleRng()),
-    // 보스가 자기 진영에 거는 예약 버프 (과충전 등)
-    setFoeBuff: (type, val) => { bossBuffs[type] = val; },
-    // 상태이상 관문 — 소환수 전용 계열은 최전방 소환수로 돌아간다
-    setPlayerStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(playerStatus, state.playerMinions, '내', type, turns, value, allowBody),
-    setBossStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(bossStatus, state.bossMinions, '상대', type, turns, value, allowBody)
   };
 }
 
@@ -222,7 +203,6 @@ export const __test = {
   helpers: (key = SIDE_PLAYER) => helpersFor(sides[key]),
   /** 상대 진영의 게임 뷰 (거울) */
   foeGame: () => viewFor(sides[SIDE_BOSS]),
-  bossHelpers: () => makeBossComboHelpers(),
   buffs: () => ({ player: playerBuffs, boss: bossBuffs }),
   statuses: () => ({ player: playerStatus, boss: bossStatus }),
   traps: () => trapZones,
@@ -1708,7 +1688,8 @@ export async function playBossCard(card) {
   // 🪤 보스가 카드를 내면 플레이어가 세트한 함정이 반응한다
   triggerTraps('boss', 'playCard', card);
 
-  triggerBossArchetypeCombo(card, state, makeBossComboHelpers());
+  // 🎴 카드군 연계 — 플레이어와 **같은 구현**을 거울 뷰·상대 헬퍼로 돌린다 (DECISIONS #94)
+  triggerArchetypeCombo(card, viewFor(sides.boss), helpersFor(sides.boss));
 
   if (card.cardType === 'unit' || card.cardType === 'structure') {
     audio.playSummon();
@@ -2238,7 +2219,7 @@ registerPvpHandlers({
 // 일부러 다르게 만들어져 있다:
 //   · 소환수의 전투의 함성을 발동하지 않는다
 //   · 주문 피해에 ×0.7 감산이 붙는다
-//   · 보스 전용 콤보(triggerBossArchetypeCombo)를 쓴다
+//   · (예전) 보스 전용 콤보 구현을 썼다 — 지금은 거울 뷰로 같은 구현을 돈다 (DECISIONS #94)
 //
 // PvP에서 이 경로를 쓰면 같은 카드가 양쪽 화면에서 다르게 해석돼
 // 락스텝이 깨진다. 실제로 "내 화면 40 피해 / 상대 화면 8 피해"가 나왔다.

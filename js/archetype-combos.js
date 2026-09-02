@@ -3,8 +3,16 @@
 // 이전에는 triggerArchetypeCombo / triggerBossArchetypeCombo 두 함수가
 // 각각 8개의 if 분기를 통째로 들고 있었고(약 280줄), 액션 별칭 검사
 // (action === 'search' || action === 'hero_search')가 16번 반복됐다.
-// 액션 하나를 추가하려면 두 함수를 모두 고쳐야 했다.
-// 여기서는 액션 1개 = 엔트리 1개로 정의하고, player/boss 구현만 나란히 둔다.
+// 그 뒤 액션 1개 = 엔트리 1개가 됐지만 player/boss 구현이 **두 벌**로 나란히 있었다.
+//
+// 🐛 두 벌은 이미 갈라져 있었다 (DECISIONS #94): manaCharge.boss는 마나 대신 방어막을 줬고,
+//    보스 draw는 덱 **앞**에서 뽑았고(플레이어는 뒤), 손패 상한 5 vs 7, 슬롯 3 vs 4,
+//    토큰 모양도 달랐다. 같은 카드군 설명이 한쪽에서는 거짓말이었다.
+//
+// 이제 액션마다 구현은 **하나**(`run`)다. 상대 진영은 진영을 뒤집은 게임 뷰와 진영 상대적
+// 헬퍼(battle-engine의 viewFor / helpersFor)로 같은 구현을 돌린다 — PvP 거울이 이미 그렇게 했다.
+// 구현 안의 `game.playerHp`는 "발동한 진영 자신", `game.bossMinions`는 "그 상대"다.
+// 이름은 유산이고 의미는 self/foe다.
 //
 // ⚠️ 설계 원칙: **콤보 하나는 효과 하나만 한다.**
 //    예전에는 draw 콤보가 '드로우 + 실드 관통'을, shieldHeal이 '무적 + 방어막'을
@@ -15,6 +23,7 @@
 import { applyStatus } from './status-effects.js';
 import { escapeHtml } from './dom-utils.js';
 import { checkTrigger, applyScaling, matchesScope, scopeAdjustedBase, describeScope } from './archetype-identity.js';
+import { SLOT_CAP, HAND_CAP } from './battle-rules.js';
 
 // 기본 테마가 쓰던 예전 액션명 -> 정규 액션명
 export const COMBO_ACTION_ALIASES = {
@@ -42,12 +51,16 @@ const LOG_TONES = {
 /**
  * 로그에서 "상대"를 뭐라고 부를지.
  *
- * PvE는 늘 "보스"였지만 PvP에서는 사람이다. 게다가 상대 카드를 내 화면에서
- * 거울로 재생할 때는 **피해를 받는 쪽이 나**라서 "보스를 동결시켰습니다"가
- * 정반대로 읽힌다. 그래서 호출부가 라벨을 넘기게 했다.
+ * 로그는 늘 **내 화면** 기준이다. 상대 카드를 거울로 재생할 때는 피해를 받는 쪽이 나라서
+ * 헬퍼가 '나'를 넘긴다. PvE는 보스 이름, PvP는 상대 이름이 온다. 호출부가 넘기는 값이 우선이다.
  */
 function foeLabel(helpers) {
-  return (helpers && helpers.foeLabel) || '보스';
+  return (helpers && helpers.foeLabel) || '상대';
+}
+
+/** 배지에 찍을 "누구의 연계인가". 내 연계면 카드군 이름만, 상대 연계면 이름 앞에 상대를 붙인다. */
+function who(theme, helpers) {
+  return helpers && helpers.selfLabel ? `${helpers.selfLabel} ${theme.name}` : theme.name;
 }
 
 function comboLog(tone, badge, body) {
@@ -59,7 +72,6 @@ function comboLog(tone, badge, body) {
   `;
 }
 
-// 카드가 이 카드군에 속하는지 (id / 이름 / 이름 속 키워드)
 /**
  * 카드가 이 카드군의 **연계 대상**인가.
  *
@@ -73,182 +85,119 @@ export function belongsToTheme(card, theme) {
   return matchesScope(card, theme);
 }
 
+// 액션 1개 = 구현 1개(run). ctx = { theme, card, game, helpers, allies, scale }
 export const ARCHETYPE_COMBO_ACTIONS = {
   // 덱에서 같은 카드군 카드를 패로 서치 — 그것만 한다.
   search: {
     label: '덱 서치', tier: 2,
-    player({ theme, game, helpers }) {
+    run({ theme, game, helpers }) {
       const { addBattleLog, audio } = helpers;
-      if (game.playerHand.length >= 7) return null;
+      if (game.playerHand.length >= HAND_CAP) return null;
       const idx = (game.playerDeck || []).findIndex(c => belongsToTheme(c, theme));
       if (idx === -1) return null;
 
       const searched = game.playerDeck.splice(idx, 1)[0];
       game.playerHand.push(searched);
-      addBattleLog(comboLog('amber', `⚜️ [${escapeHtml(theme.name)} 덱 서치]`,
+      addBattleLog(comboLog('amber', `⚜️ [${escapeHtml(who(theme, helpers))} 덱 서치]`,
         `덱에서 <b>[${escapeHtml(searched.name)}]</b> 카드를 패로 가져왔습니다.`));
       audio.playDraw();
       return { name: `${theme.name} 덱 서치`, triggered: true };
-    },
-    boss({ theme, game, helpers }) {
-      const { addBattleLog, audio } = helpers;
-      if (!game.bossDeck || !game.bossHand || game.bossHand.length >= 5) return null;
-      const idx = game.bossDeck.findIndex(c => belongsToTheme(c, theme));
-      if (idx === -1) return null;
-
-      const searched = game.bossDeck.splice(idx, 1)[0];
-      game.bossHand.push(searched);
-      addBattleLog(comboLog('red', `👹 [보스 ${escapeHtml(theme.name)} 덱 서치]`,
-        `${foeLabel(helpers)}이(가) 덱에서 <b>[${escapeHtml(searched.name)}]</b> 카드를 가져왔습니다.`));
-      audio.playDraw();
-      return { name: `보스 ${theme.name} 서치`, triggered: true };
     }
   },
 
   // 마나 충전 — 그것만 한다.
+  // 🐛 예전 보스 구현은 "보스는 마나를 쓰지 않는다"며 방어막을 줬다. 보스도 마나를 쓴다.
   manaCharge: {
     label: '마력 공명', tier: 1,
-    player({ theme, game, helpers }) {
+    run({ theme, game, helpers }) {
       const { addBattleLog, audio } = helpers;
       if (game.playerMana >= game.playerMaxMana) return null;
       game.playerMana = Math.min(game.playerMaxMana, game.playerMana + 1);
       audio.playShield();
-      addBattleLog(comboLog('cyan', `💎 [${escapeHtml(theme.name)} 마력 공명]`, '마나 +1 충전.'));
+      addBattleLog(comboLog('cyan', `💎 [${escapeHtml(who(theme, helpers))} 마력 공명]`, '마나 +1 충전.'));
       return { name: `${theme.name} 마력 공명`, triggered: true };
-    },
-    // 보스는 마나를 쓰지 않는다(foeVirtualMana). 같은 자리를 방어막이 대신한다.
-    boss({ theme, game, helpers, scale }) {
-      const { addBattleLog, audio } = helpers;
-      const amount = scale(10);
-      game.currentBoss.shield = (game.currentBoss.shield || 0) + amount;
-      audio.playShield();
-      addBattleLog(comboLog('cyan', `💎 [보스 ${escapeHtml(theme.name)} 마력 공명]`, `보스 방어막 +${amount}.`));
-      return { name: `보스 ${theme.name} 마력 공명`, triggered: true };
     }
   },
 
   // 연계 피해 — 위력 증가 방식은 카드군마다 다르다
   chainDamage: {
     label: '연쇄 폭격', tier: 1,
-    player({ theme, game, helpers, allies, scale }) {
+    run({ theme, helpers, allies, scale }) {
       const { addBattleLog, audio, dealDamageToBoss } = helpers;
       const dmg = scale(6);
       dealDamageToBoss(dmg, `${theme.name} 연계`);
       audio.playSlash();
-      addBattleLog(comboLog('red', `🔥 [${escapeHtml(theme.name)} 연쇄]`,
+      addBattleLog(comboLog('red', `🔥 [${escapeHtml(who(theme, helpers))} 연쇄]`,
         `${foeLabel(helpers)}에게 ${dmg} 연계 피해. (같은 카드군 전개 ${allies + 1}장)`));
       return { name: `${theme.name} 연쇄`, triggered: true };
-    },
-    boss({ theme, helpers, allies, scale }) {
-      const { addBattleLog, audio, applyDirectDamageToPlayer } = helpers;
-      const dmg = scale(6);
-      applyDirectDamageToPlayer(dmg);
-      audio.playSlash();
-      addBattleLog(comboLog('red', `🔥 [보스 ${escapeHtml(theme.name)} 연쇄]`,
-        `플레이어에게 ${dmg} 연계 피해. (같은 카드군 전개 ${allies + 1}장)`));
-      return { name: `보스 ${theme.name} 연쇄`, triggered: true };
     }
   },
 
   // 결빙 — 행동 봉쇄만. 드로우는 draw 카드군의 몫이다.
+  // 상태이상 관문이 상대 **최전방 소환수**에 건다 (본체는 행동 봉쇄 면역). 상대 전장이 비면 불발.
   freeze: {
     label: '결빙', tier: 3,
-    player({ theme, helpers }) {
+    run({ theme, helpers }) {
       const { addBattleLog, audio, setBossStatus } = helpers;
-      setBossStatus('freeze', 1);
-      audio.playMagic();
-      addBattleLog(comboLog('blue', `❄️ [${escapeHtml(theme.name)} 결빙]`, `${foeLabel(helpers)}을(를) 1턴간 동결시켰습니다.`));
-      return { name: `${theme.name} 결빙`, triggered: true };
-    },
-    // 🐛 예전에는 `front.frozen = true; front.canAttack = false`로 직접 플래그를
-    //    세웠다. 상태이상 시스템을 거치지 않으니 턴 시작의 refreshMinions가
-    //    `m.frozen = !!m.blockedBy && ...`로 **그대로 지워버렸다** —
-    //    보스의 결빙은 완전히 무효과였다. 플레이어 쪽과 같은 관문을 쓴다.
-    boss({ theme, helpers }) {
-      const { addBattleLog, audio, setPlayerStatus } = helpers;
-      const applied = setPlayerStatus('freeze', 1);
+      const applied = setBossStatus('freeze', 1);
       if (!applied) return null;
       audio.playMagic();
-      addBattleLog(comboLog('blue', `❄️ [보스 ${escapeHtml(theme.name)} 결빙]`,
-        '아군 최전방 소환수를 1턴간 동결시켰습니다.'));
-      return { name: `보스 ${theme.name} 결빙`, triggered: true };
+      addBattleLog(comboLog('blue', `❄️ [${escapeHtml(who(theme, helpers))} 결빙]`,
+        `${foeLabel(helpers)} 최전방 소환수를 1턴간 동결시켰습니다.`));
+      return { name: `${theme.name} 결빙`, triggered: true };
     }
   },
 
   // 더블캐스트 예약 — 그것만 한다. (감전 부여 제거)
   doubleCast: {
     label: '과충전', tier: 4,
-    player({ theme, helpers }) {
+    run({ theme, helpers }) {
       const { addBattleLog, audio, setPlayerBuff } = helpers;
       setPlayerBuff('doubleCast', true);
       audio.playCrit();
-      addBattleLog(comboLog('yellow', `⚡ [${escapeHtml(theme.name)} 과충전]`,
+      addBattleLog(comboLog('yellow', `⚡ [${escapeHtml(who(theme, helpers))} 과충전]`,
         '다음 카드가 2연속 발동됩니다.'));
       return { name: `${theme.name} 과충전`, triggered: true };
-    },
-    // 🐛 예전에는 "8 피해"라는 **완전히 다른 효과**였다. 같은 연계가 진영에
-    //    따라 다른 일을 하면 카드군 설명이 한쪽에서는 거짓말이 된다.
-    //    이제 보스도 같은 예약 버프를 쓴다 (playBossCard가 읽는다).
-    boss({ theme, helpers }) {
-      const { addBattleLog, audio, setFoeBuff } = helpers;
-      setFoeBuff('doubleCast', true);
-      audio.playCrit();
-      addBattleLog(comboLog('yellow', `⚡ [보스 ${escapeHtml(theme.name)} 과충전]`,
-        '보스의 다음 카드가 2연속 발동됩니다.'));
-      return { name: `보스 ${theme.name} 과충전`, triggered: true };
     }
   },
 
   // 방어막 전개 — 무적은 제거. 매 턴 터지는 콤보에 무적은 과했다.
   shieldHeal: {
     label: '수호 결계', tier: 1,
-    player({ theme, game, helpers, scale }) {
+    run({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
       const amount = scale(10);
       game.playerMaxShield += amount;
       audio.playShield();
-      addBattleLog(comboLog('amber', `✨ [${escapeHtml(theme.name)} 수호 결계]`, `방어막 +${amount} 전개.`));
+      addBattleLog(comboLog('amber', `✨ [${escapeHtml(who(theme, helpers))} 수호 결계]`, `방어막 +${amount} 전개.`));
       return { name: `${theme.name} 수호 결계`, triggered: true };
-    },
-    boss({ theme, game, helpers, scale }) {
-      const { addBattleLog, audio } = helpers;
-      const amount = scale(10);
-      game.currentBoss.shield = (game.currentBoss.shield || 0) + amount;
-      audio.playShield();
-      addBattleLog(comboLog('amber', `✨ [보스 ${escapeHtml(theme.name)} 수호 결계]`, `보스 방어막 +${amount}.`));
-      return { name: `보스 ${theme.name} 수호 결계`, triggered: true };
     }
   },
 
   // 드로우 — 그것만 한다. (실드 관통 제거)
+  // 🐛 예전 보스 구현은 덱 **앞**(shift)에서 뽑아 같은 덱이라도 플레이어와 순서가 달랐다.
   draw: {
     label: '영혼 회수', tier: 2,
-    player({ theme, game, helpers }) {
+    run({ theme, game, helpers }) {
       const { addBattleLog, audio, drawCards } = helpers;
-      if (game.playerHand.length >= 7) return null;
+      if (game.playerHand.length >= HAND_CAP) return null;
       drawCards(1);
       audio.playMagic();
-      addBattleLog(comboLog('purple', `🌑 [${escapeHtml(theme.name)} 영혼 회수]`, '카드 1장 드로우.'));
+      addBattleLog(comboLog('purple', `🌑 [${escapeHtml(who(theme, helpers))} 영혼 회수]`, '카드 1장 드로우.'));
       return { name: `${theme.name} 영혼 회수`, triggered: true };
-    },
-    boss({ theme, game, helpers }) {
-      const { addBattleLog, audio } = helpers;
-      if (!game.bossDeck || !game.bossHand || game.bossHand.length >= 5) return null;
-      game.bossHand.push(game.bossDeck.shift());
-      audio.playMagic();
-      addBattleLog(comboLog('purple', `🌑 [보스 ${escapeHtml(theme.name)} 영혼 회수]`, '보스가 카드 1장 드로우.'));
-      return { name: `보스 ${theme.name} 영혼 회수`, triggered: true };
     }
   },
 
   // 토큰 특수 소환 — 그것만 한다. (체력 회복 제거)
   specialSummon: {
     label: '특수 소환', tier: 3,
-    player({ theme, card, game, helpers }) {
+    run({ theme, card, game, helpers }) {
       const { addBattleLog, audio } = helpers;
-      if (game.playerMinions.length >= 4) return null;
+      if (game.playerMinions.length >= SLOT_CAP) return null;
+      const id = `token-${theme.id}-${game.turnCount}-${game.playerMinions.length}`;
       game.playerMinions.push({
-        id: `token-${theme.id}-${game.turnCount}-${game.playerMinions.length}`,
+        id,
+        instanceId: id,
         name: `${theme.name}의 정령`,
         cardType: 'unit',
         element: card.element || 'nature',
@@ -260,68 +209,36 @@ export const ARCHETYPE_COMBO_ACTIONS = {
         maxHp: 14,
         currentHp: 14,
         canAttack: false,
+        // ⚠️ 소환 후유증. 없으면 상대 진영에서 이번 턴 합동 공격에 곧바로 낀다
+        //    (예전에는 보스 토큰에만 있고 플레이어 토큰에는 없던 안전장치다).
+        summonedTurn: game.turnCount,
+        statuses: {},
         isToken: true,
         imageUrl: card.imageUrl
       });
       audio.playSummon();
-      addBattleLog(comboLog('emerald', `🌿 [${escapeHtml(theme.name)} 특수 소환]`,
+      addBattleLog(comboLog('emerald', `🌿 [${escapeHtml(who(theme, helpers))} 특수 소환]`,
         `[${escapeHtml(theme.name)}의 정령] 소환. (5/3/14)`));
       return { name: `${theme.name} 특수 소환`, triggered: true };
-    },
-    boss({ theme, game, helpers }) {
-      const { addBattleLog, audio } = helpers;
-      if (game.bossMinions.length >= 3) return null;
-      game.bossMinions.push({
-        name: `${theme.name}의 심복`,
-        icon: '👾',
-        // 플레이어 토큰과 같은 스탯. 예전에는 공격력만 7이라 같은 연계가
-        // 보스 쪽에서 40% 더 셌다.
-        attack: 5,
-        defense: 3,
-        maxHp: 14,
-        currentHp: 14,
-        taunt: false,
-        themeId: theme.id,
-        themeName: theme.name,
-        // ⚠️ 소환 후유증. 없으면 이번 턴 합동 공격에 곧바로 끼어든다.
-        canAttack: false,
-        summonedTurn: game.turnCount,
-        desc: `${theme.name} 소환수`
-      });
-      audio.playSummon();
-      addBattleLog(comboLog('emerald', `🌿 [보스 ${escapeHtml(theme.name)} 특수 소환]`,
-        `[${escapeHtml(theme.name)}의 심복] 소환. (5/3/14)`));
-      return { name: `보스 ${theme.name} 특수 소환`, triggered: true };
     }
   },
 
-  // ── 신규: 카드군을 한정하는 특수 연계 ──────────────────────
+  // ── 카드군을 한정하는 특수 연계 ──────────────────────────────
 
   // 같은 카드군 소환수 전체를 강화 (이 카드군에만 적용 — 범용 버프가 아니다)
   archetypeRally: {
     label: '카드군 결집',
     tier: 2,
-    player({ theme, game, helpers, allies, scale }) {
+    run({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
       const targets = (game.playerMinions || []).filter(m => belongsToTheme(m, theme));
       if (targets.length === 0) return null;
       const amount = scale(2);
       targets.forEach(m => { m.attack += amount; });
       audio.playSummon();
-      addBattleLog(comboLog('amber', `⚜️ [${escapeHtml(theme.name)} 결집]`,
+      addBattleLog(comboLog('amber', `⚜️ [${escapeHtml(who(theme, helpers))} 결집]`,
         `[${escapeHtml(theme.name)}] 소환수 ${targets.length}체의 공격력 +${amount}. (이 카드군 전용)`));
       return { name: `${theme.name} 결집`, triggered: true };
-    },
-    boss({ theme, game, helpers, scale }) {
-      const { addBattleLog, audio } = helpers;
-      const targets = (game.bossMinions || []).filter(m => belongsToTheme(m, theme));
-      if (targets.length === 0) return null;
-      const amount = scale(2);
-      targets.forEach(m => { m.attack += amount; });
-      audio.playSummon();
-      addBattleLog(comboLog('red', `⚜️ [보스 ${escapeHtml(theme.name)} 결집]`,
-        `부하 ${targets.length}체 공격력 +${amount}.`));
-      return { name: `보스 ${theme.name} 결집`, triggered: true };
     }
   },
 
@@ -329,28 +246,18 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   archetypeSalvage: {
     label: '카드군 회수',
     tier: 3,
-    player({ theme, game, helpers }) {
+    run({ theme, game, helpers }) {
       const { addBattleLog, audio } = helpers;
-      if (game.playerHand.length >= 7) return null;
+      if (game.playerHand.length >= HAND_CAP) return null;
       // 덱 아래쪽(이미 지나간 영역)에서 같은 카드군을 찾아 되살린다
       const idx = (game.playerDeck || []).findIndex(c => belongsToTheme(c, theme));
       if (idx === -1) return null;
       const revived = game.playerDeck.splice(idx, 1)[0];
       game.playerHand.push(revived);
       audio.playMagic();
-      addBattleLog(comboLog('purple', `🪦 [${escapeHtml(theme.name)} 회수]`,
+      addBattleLog(comboLog('purple', `🪦 [${escapeHtml(who(theme, helpers))} 회수]`,
         `[${escapeHtml(revived.name)}]을(를) 되살렸습니다. (같은 카드군만 가능)`));
       return { name: `${theme.name} 회수`, triggered: true };
-    },
-    boss({ theme, game, helpers }) {
-      const { addBattleLog, audio } = helpers;
-      if (!game.bossDeck || !game.bossHand || game.bossHand.length >= 5) return null;
-      const idx = game.bossDeck.findIndex(c => belongsToTheme(c, theme));
-      if (idx === -1) return null;
-      game.bossHand.push(game.bossDeck.splice(idx, 1)[0]);
-      audio.playMagic();
-      addBattleLog(comboLog('purple', `🪦 [보스 ${escapeHtml(theme.name)} 회수]`, '보스가 카드군 카드를 회수했습니다.'));
-      return { name: `보스 ${theme.name} 회수`, triggered: true };
     }
   },
 
@@ -362,82 +269,53 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   archetypeGuard: {
     label: '카드군 수호',
     tier: 2,
-    player({ theme, game, helpers, scale }) {
+    run({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
       const targets = (game.playerMinions || []).filter(m => belongsToTheme(m, theme));
       if (targets.length === 0) return null;
       const bonus = scale(4);
       targets.forEach(m => { m.defense = (m.defense || 0) + bonus; });
       audio.playShield();
-      addBattleLog(comboLog('blue', `🛡️ [${escapeHtml(theme.name)} 수호]`,
+      addBattleLog(comboLog('blue', `🛡️ [${escapeHtml(who(theme, helpers))} 수호]`,
         `[${escapeHtml(theme.name)}] ${targets.length}체의 방어력 +${bonus}.`));
       return { name: `${theme.name} 수호`, triggered: true };
-    },
-    boss({ theme, game, helpers, scale }) {
-      const { addBattleLog, audio } = helpers;
-      const targets = (game.bossMinions || []).filter(m => belongsToTheme(m, theme));
-      if (targets.length === 0) return null;
-      // 🐛 방어력 보너스가 빠져 있었다 — 같은 연계인데 보스 쪽만 절반이었다.
-      const bonus = scale(4);
-      targets.forEach(m => { m.defense = (m.defense || 0) + bonus; });
-      audio.playShield();
-      addBattleLog(comboLog('blue', `🛡️ [보스 ${escapeHtml(theme.name)} 수호]`,
-        `부하 ${targets.length}체의 방어력 +${bonus}.`));
-      return { name: `보스 ${theme.name} 수호`, triggered: true };
     }
   },
 
   // 상대 방어막을 깎는다 — 방어 카드군 카운터
+  // `game.currentBoss`는 뷰에서 "상대 본체"다 — 거울에서는 내 본체(playerMaxShield)로 이어진다.
   shieldBreak: {
     label: '결계 파쇄',
     tier: 3,
-    player({ theme, game, helpers, scale }) {
+    run({ theme, game, helpers, scale }) {
       const { addBattleLog, audio } = helpers;
-      const boss = game.currentBoss;
-      if (!boss || !boss.shield) return null;
+      const foe = game.currentBoss;
+      if (!foe || !foe.shield) return null;
       const amount = scale(12);
-      const broken = Math.min(boss.shield, amount);
-      boss.shield -= broken;
+      const broken = Math.min(foe.shield, amount);
+      foe.shield -= broken;
       audio.playCrit();
-      addBattleLog(comboLog('yellow', `💥 [${escapeHtml(theme.name)} 결계 파쇄]`,
-        `보스 방어막 ${broken} 파괴. (잔여 ${boss.shield})`));
+      addBattleLog(comboLog('yellow', `💥 [${escapeHtml(who(theme, helpers))} 결계 파쇄]`,
+        `${foeLabel(helpers)} 방어막 ${broken} 파괴. (잔여 ${foe.shield})`));
       return { name: `${theme.name} 결계 파쇄`, triggered: true };
-    },
-    boss({ theme, game, helpers, scale }) {
-      const { addBattleLog, audio } = helpers;
-      if (game.playerMaxShield <= 0) return null;
-      const broken = Math.min(game.playerMaxShield, scale(12));
-      game.playerMaxShield -= broken;
-      audio.playCrit();
-      addBattleLog(comboLog('yellow', `💥 [보스 ${escapeHtml(theme.name)} 결계 파쇄]`,
-        `아군 방어막 ${broken} 파괴.`));
-      return { name: `보스 ${theme.name} 결계 파쇄`, triggered: true };
     }
   },
 
   // 상대 손패를 파기 — 자원 압박 카드군
+  // 🐛 예전 플레이어 구현은 헬퍼가 없으면 `bossHand.pop()`(결정적), 보스 구현은 무작위였다.
+  //    이제 한 구현이고, 무작위는 반드시 battleRng를 거치는 헬퍼(discardFromBoss)가 한다.
   handDisrupt: {
     label: '패 교란',
     tier: 3,
-    player({ theme, game, helpers }) {
+    run({ theme, game, helpers }) {
       const { addBattleLog, audio, discardFromBoss } = helpers;
       if (!game.bossHand || game.bossHand.length === 0) return null;
       const discarded = typeof discardFromBoss === 'function' ? discardFromBoss() : game.bossHand.pop();
       if (!discarded) return null;
       audio.playSlash();
-      addBattleLog(comboLog('purple', `🃏 [${escapeHtml(theme.name)} 패 교란]`,
-        `보스의 손패 [${escapeHtml(discarded.name)}]을(를) 파기했습니다.`));
+      addBattleLog(comboLog('purple', `🃏 [${escapeHtml(who(theme, helpers))} 패 교란]`,
+        `${foeLabel(helpers)}의 손패 [${escapeHtml(discarded.name)}]을(를) 파기했습니다.`));
       return { name: `${theme.name} 패 교란`, triggered: true };
-    },
-    boss({ theme, game, helpers }) {
-      const { addBattleLog, audio, discardFromPlayer } = helpers;
-      if (!game.playerHand || game.playerHand.length === 0) return null;
-      const discarded = typeof discardFromPlayer === 'function' ? discardFromPlayer() : game.playerHand.pop();
-      if (!discarded) return null;
-      audio.playSlash();
-      addBattleLog(comboLog('purple', `🃏 [보스 ${escapeHtml(theme.name)} 패 교란]`,
-        `손패 [${escapeHtml(discarded.name)}]이(가) 파기되었습니다.`));
-      return { name: `보스 ${theme.name} 패 교란`, triggered: true };
     }
   },
 
@@ -445,31 +323,19 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   sacrificeStrike: {
     label: '제물 강타',
     tier: 4,
-    player({ theme, card, game, helpers, scale }) {
+    run({ theme, card, game, helpers, scale }) {
       const { addBattleLog, audio, dealDamageToBoss } = helpers;
-      const fodder = (game.playerMinions || []).find(m => (m.instanceId || m.id) !== (card.instanceId || card.id) && belongsToTheme(m, theme));
+      // 방금 낸 카드 자신은 제물이 될 수 없다. id가 없는 토큰·보스 소환수는 이름으로 가른다.
+      const keyOf = (c) => c.instanceId || c.id || c.name;
+      const fodder = (game.playerMinions || []).find(m => keyOf(m) !== keyOf(card) && belongsToTheme(m, theme));
       if (!fodder) return null;
       const dmg = scale(14) + (fodder.attack || 0);
       game.playerMinions = game.playerMinions.filter(m => m !== fodder);
       dealDamageToBoss(dmg, `${theme.name} 제물 강타`);
       audio.playCrit();
-      addBattleLog(comboLog('red', `🔥 [${escapeHtml(theme.name)} 제물 강타]`,
+      addBattleLog(comboLog('red', `🔥 [${escapeHtml(who(theme, helpers))} 제물 강타]`,
         `[${escapeHtml(fodder.name)}]을(를) 제물로 바쳐 ${dmg} 피해!`));
       return { name: `${theme.name} 제물 강타`, triggered: true };
-    },
-    boss({ theme, card, game, helpers, scale }) {
-      const { addBattleLog, audio, applyDirectDamageToPlayer } = helpers;
-      // 방금 낸 카드 자신은 제물이 될 수 없다 (플레이어 쪽과 같은 규칙)
-      const fodder = (game.bossMinions || []).find(m =>
-        (m.instanceId || m.id || m.name) !== (card.instanceId || card.id || card.name) && belongsToTheme(m, theme));
-      if (!fodder) return null;
-      const dmg = scale(14) + (fodder.attack || 0);
-      game.bossMinions = game.bossMinions.filter(m => m !== fodder);
-      applyDirectDamageToPlayer(dmg);
-      audio.playCrit();
-      addBattleLog(comboLog('red', `🔥 [보스 ${escapeHtml(theme.name)} 제물 강타]`,
-        `[${escapeHtml(fodder.name)}]을(를) 제물로 ${dmg} 피해!`));
-      return { name: `보스 ${theme.name} 제물 강타`, triggered: true };
     }
   }
 };
@@ -534,37 +400,38 @@ export function inferComboActionFromText(text = '') {
   return 'chainDamage';
 }
 
-// 실제 콤보 실행. side는 'player' | 'boss'.
-// 실제 콤보 실행. side는 'player' | 'boss'.
-//
-// 카드군마다 "언제 터지는가(trigger)"와 "얼마나 세지는가(scaling)"가 다르다.
-// 조건이 안 맞으면 발동하지 않는다 — 이게 덱 빌딩의 재미를 만든다.
-export function runArchetypeCombo(side, theme, card, game, helpers) {
+/**
+ * 실제 콤보 실행.
+ *
+ * 진영은 인자가 아니라 **게임 뷰**가 정한다. 플레이어 카드는 state를, 상대 카드는
+ * 진영을 뒤집은 거울 뷰를 받고, 헬퍼도 그 진영 기준으로 만든 것을 받는다
+ * (battle-engine의 viewFor / helpersFor). 그래서 구현은 한 벌이다.
+ *
+ * 🐛 예전엔 `side` 인자로 두 벌 중 하나를 골랐고, 보스 구현은 raw state를 읽었다.
+ *    두 벌은 서로 달라졌고 발동조건은 한동안 플레이어만 검사했다 (DECISIONS #94).
+ *
+ * 카드군마다 "언제 터지는가(trigger)"와 "얼마나 세지는가(scaling)"가 다르다.
+ * 조건이 안 맞으면 발동하지 않는다 — 이게 덱 빌딩의 재미를 만든다.
+ */
+export function runArchetypeCombo(theme, card, game, helpers) {
   const rawAction = theme.comboAction || (theme.synergy && theme.synergy.type);
   const action = normalizeComboAction(rawAction);
   if (!action) return null;
 
-  const impl = ARCHETYPE_COMBO_ACTIONS[action][side];
+  const impl = ARCHETYPE_COMBO_ACTIONS[action].run;
   if (typeof impl !== 'function') return null;
 
-  // 같은 카드군 아군 수 (트리거·스케일링 양쪽이 쓴다)
-  const field = side === 'boss' ? (game.bossMinions || []) : (game.playerMinions || []);
+  // 같은 카드군 아군 수 (트리거·스케일링 양쪽이 쓴다). "내 전장"은 뷰의 playerMinions다.
+  const field = game.playerMinions || [];
   const allies = field.filter(m => m !== card && (m.instanceId || m.id) !== (card.instanceId || card.id) && belongsToTheme(m, theme)).length;
-  const ctx = { theme, card, game, helpers, allies, side };
+  const ctx = { theme, card, game, helpers, allies };
 
-  // 🔁 발동 조건은 **양 진영에 똑같이** 적용된다.
-  //
-  // 🐛 예전에는 `side === 'player'`일 때만 검사했다. 보스가 조건 없이 매번
-  //    터뜨리니 카드군의 성격("체력이 절반 이하일 때 강해진다")이 보스에게는
-  //    아무 의미가 없었고, 플레이어만 조건을 지키는 판이 됐다.
-  //    COMBO_TRIGGERS가 진영 시점을 갖게 되면서(selfView/foeView) 같은 조건을
-  //    보스 기준으로도 판정할 수 있다.
+  // 🔁 발동 조건은 **양 진영에 똑같이** 적용된다 — 같은 코드, 뒤집힌 뷰.
   const trig = checkTrigger(theme, ctx);
   if (!trig.passed) {
-    const who = side === 'boss' ? `보스 ${theme.name}` : theme.name;
     helpers.addBattleLog(
       `<div class="p-1 rounded-lg bg-slate-900/80 border border-slate-700 text-[10.5px] text-slate-400 my-0.5">` +
-      `⚜️ [${escapeHtml(who)}] 연계 대기 — 조건: ${trig.spec.label}</div>`
+      `⚜️ [${escapeHtml(who(theme, helpers))}] 연계 대기 — 조건: ${trig.spec.label}</div>`
     );
     return null;
   }
@@ -572,7 +439,7 @@ export function runArchetypeCombo(side, theme, card, game, helpers) {
   try {
     return impl({ ...ctx, scale: (base) => applyScaling(theme, scopeAdjustedBase(theme, tierAdjustedBase(action, base)), ctx) });
   } catch (e) {
-    console.warn(`[Archetype Combo] '${action}' (${side}) 실행 중 오류:`, e);
+    console.warn(`[Archetype Combo] '${action}' 실행 중 오류:`, e);
     return null;
   }
 }

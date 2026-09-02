@@ -501,18 +501,18 @@ function resolveThemeForCard(card, gameState) {
     || null;
 }
 
+/**
+ * 카드를 낸 진영의 카드군 연계를 발동한다.
+ *
+ * 진영은 인자가 아니라 **게임 뷰**가 정한다 — 플레이어 카드는 state, 상대 카드는
+ * 진영을 뒤집은 거울 뷰(battle-engine의 viewFor)와 그 진영의 헬퍼(helpersFor)를 넘긴다.
+ * 🐛 예전엔 triggerBossArchetypeCombo가 따로 있어 보스 전용 구현 한 벌을 태웠다 (DECISIONS #94).
+ */
 export function triggerArchetypeCombo(card, gameState, helpers) {
   if (!card) return null;
   const theme = resolveThemeForCard(card, gameState);
   if (!theme) return null;
-  return runArchetypeCombo('player', theme, card, gameState, helpers);
-}
-
-export function triggerBossArchetypeCombo(card, gameState, helpers) {
-  if (!card) return null;
-  const theme = resolveThemeForCard(card, gameState);
-  if (!theme) return null;
-  return runArchetypeCombo('boss', theme, card, gameState, helpers);
+  return runArchetypeCombo(theme, card, gameState, helpers);
 }
 
 // LLM 프롬프트용 카드군 목록 문자열 생성

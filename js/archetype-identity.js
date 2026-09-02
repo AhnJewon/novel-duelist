@@ -123,14 +123,17 @@ export function coerceCardElement(theme, requestedElement) {
 // 조건이 안 맞으면 콤보는 발동하지 않는다 — 이게 덱 빌딩의 재미를 만든다.
 
 // ── 진영 시점 ────────────────────────────────────────────────
-// 발동조건과 증가방식은 "나"와 "상대"를 본다. 보스가 쓸 때는 그 둘이 뒤집힌다.
+// 발동조건과 증가방식은 "나"와 "상대"를 본다. 누가 "나"인지는 **게임 뷰**가 정한다:
+// 플레이어 카드는 state를, 상대 카드는 진영을 뒤집은 거울 뷰를 받는다
+// (battle-engine의 viewFor). 그래서 `playerHp`가 곧 자기, `currentBoss`가 곧 상대다.
 //
 // 🐛 예전에는 전부 game.playerHp / game.currentBoss를 직접 읽었다. 그래서
 //    보스에게 조건을 걸 수가 없었고(플레이어 기준으로 판정됐다),
 //    runArchetypeCombo가 `side === 'player'`일 때만 검사하는 비대칭이 남았다.
-//    이제 시점을 뒤집을 수 있으므로 **양 진영이 같은 규칙**을 쓴다.
+//    그 뒤 `ctx.side`로 분기해 보스 전용 구현이 raw state를 읽게 했지만, 그 구현이
+//    사라지면서(DECISIONS #94) 분기도 사라졌다 — 뷰 하나면 양 진영이 같은 규칙을 쓴다.
 //
-// ⚠️ game 필드를 직접 읽지 말고 이 뷰를 쓰세요. 직접 읽으면 보스 경로와
+// ⚠️ game 필드를 직접 읽지 말고 이 뷰를 쓰세요. 직접 읽으면 PvE 봇 경로와
 //    PvP 거울 경로에서 조용히 틀린 진영을 봅니다.
 
 /**
@@ -143,9 +146,8 @@ export const HAND_CAP = { player: HAND_LIMIT, boss: HAND_LIMIT };
 
 function viewOf(ctx, who) {
   const g = (ctx && ctx.game) || {};
-  const mine = (ctx && ctx.side) === 'boss' ? 'boss' : 'player';
-  const key = who === 'self' ? mine : (mine === 'boss' ? 'player' : 'boss');
-  if (key === 'boss') {
+  // 뷰의 player* 필드 = 발동한 진영 자신, currentBoss/boss* = 그 상대 (이름은 유산, 의미는 self/foe)
+  if (who === 'foe') {
     const b = g.currentBoss || {};
     return {
       hp: b.currentHp || 0, maxHp: b.maxHp || 0, shield: b.shield || 0,
