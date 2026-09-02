@@ -33,7 +33,7 @@ import { readTargetSpec, needsTargetPick, collectTargetKeys, resolveTargetKey,
 import { TRAP_TRIGGERS, checkTraps, normalizeTrapTrigger } from '/js/trap-system.js';
 import { refreshMinions, createSides, createBuffs, canPlayCard } from '/js/combat-side.js';
 import { seedBattleRng } from '/js/rng.js';
-import { isValidTarget, cancelTargeting } from '/js/targeting.js';
+import { isValidTarget, cancelTargeting, beginTargeting } from '/js/targeting.js';
 import { getSkillBadgesHtml } from '/js/card-renderer.js';
 import { KEYWORD_DEFINITIONS } from '/js/keyword-service.js';
 import { describeSkillFromData, sanitizeAndClampCardData, evaluateCardPower,
@@ -311,6 +311,42 @@ function suiteTargets() {
   for (const k of anyKeys) dom[k] = !!document.querySelector(`[data-target-key="${k}"]`);
   check(S, '모든 대상 키에 클릭 가능한 DOM이 존재',
     Object.values(dom).every(Boolean), JSON.stringify(dom));
+
+  // ⭐ 🖱️ **DOM 클릭 한 번은 반드시 선택 한 번**이어야 한다 (DECISIONS #89)
+  //
+  //    🐛 상대 소환수 목록(#boss-minions-field)이 본체 클릭 영역(#boss-container)
+  //       **안에** 있는데 stopPropagation이 없었다. 그래서 소환수를 한 번 누르면
+  //       클릭이 부모로 올라가 **소환수 + 본체가 함께 지정**됐다.
+  //       "적 2체" 카드가 한 번 누르자마자 끝나 버렸다.
+  //    ⚠️ API(pickTarget)로만 검사하면 절대 못 잡는다 — 반드시 .click()으로 본다.
+  for (const [라벨, 준비, 키] of [
+    ['상대 소환수', () => resetBoard({ bossMinions: [minion({ name: 'A' }), minion({ name: 'B' })] }), 'foe:0'],
+    ['아군 소환수', () => resetBoard({ playerMinions: [minion({ name: 'A' }), minion({ name: 'B' })] }), 'ally:0']
+  ]) {
+    준비();
+    BE.renderBattleUI();
+    const 고른것 = [];
+    const started = beginTargeting({
+      kind: 'effect',
+      valid: ['foe:0', 'foe:1', 'ally:0', 'ally:1', 'face', 'self-face'],
+      need: 3,
+      onProgress: (all) => { 고른것.length = 0; 고른것.push(...all); },
+      onPick: (_f, all) => { 고른것.length = 0; 고른것.push(...all); }
+    });
+    const el = document.querySelector(`[data-target-key="${키}"]`);
+    if (el) el.click();
+    const 소비 = 고른것.length;
+    cancelTargeting(false);
+    check(S, `${라벨} 클릭 1회 = 선택 1회 (부모로 전파되지 않는다)`,
+      started && 소비 === 1, `선택 ${소비}회: ${고른것.join(',')}`);
+  }
+
+  // ⚠️ 위 검사가 판을 바꿨다 — 아래 키 해석 검사가 쓰는 판으로 되돌린다.
+  //    (검사끼리 판을 물려 쓰면 뒤 검사가 엉뚱한 이유로 깨진다)
+  resetBoard({
+    playerMinions: [minion({ name: 'A' }), minion({ name: 'B' })],
+    bossMinions: [minion({ name: 'X' })]
+  });
 
   // 키 해석
   check(S, "resolveTargetKey 'face'", resolveTargetKey(state, 'face').kind === 'foeFace');
@@ -1774,6 +1810,38 @@ function suiteKeywordDisplay() {
     check(S, '거짓말 관문: 진짜로 구현된 파괴·서치는 통과',
       real.skills[0].description.includes('파괴') && real.skills[0].description.includes('서치'),
       real.skills[0].description);
+  }
+
+  // ♻️ sanitize는 **멱등**해야 한다 (DECISIONS #89)
+  //    카드 연성은 기획 때 한 번, 이미지 생성/저장 때 한 번 총 **두 번** 돌린다.
+  //    멱등하지 않으면 유저가 확인한 카드가 저장 시점에 조용히 달라진다.
+  {
+    const 원안들 = [
+      ['예산 초과 소환수', { name: 'A', cardType: 'unit', rarity: 'epic', cost: 4, costLocked: true,
+        attack: 16, defense: 6, hp: 30,
+        skills: [{ name: '효과', damage: 18, multiHit: 2, drawCards: 1, shield: 10, description: '피해와 방어막.' }] }],
+      ['예산 초과 주문', { name: 'B', cardType: 'spell', rarity: 'rare', cost: 2,
+        skills: [{ name: '효과', damage: 20, heal: 12, drawCards: 2, description: '피해와 회복.' }] }],
+      ['건축물', { name: 'C', cardType: 'structure', rarity: 'epic', cost: 3, attack: 0, defense: 10, hp: 34,
+        skills: [{ name: '효과', passiveEffect: { endTurnShield: 8, manaPerTurn: 1 }, description: '패시브.' }] }],
+      ['함정', { name: 'D', cardType: 'trap', rarity: 'rare', cost: 2,
+        skills: [{ name: '효과', damage: 14, trapTrigger: 'foeAttacks', description: '반격.' }] }],
+      ['여유 있는 카드', { name: 'E', cardType: 'unit', rarity: 'common', cost: 3, attack: 8, defense: 2, hp: 20,
+        skills: [{ name: '효과', damage: 6, description: '적 1체에게 6 피해.' }] }]
+    ];
+    const 지문 = (c) => {
+      const s = (c.skills && c.skills[0]) || {};
+      return JSON.stringify({ cost: c.cost, a: c.attack, d: c.defense, h: c.hp,
+        skill: Object.keys(s).sort().reduce((o, k) => (o[k] = s[k], o), {}) });
+    };
+    for (const [라벨, 원안] of 원안들) {
+      const 일차 = sanitizeAndClampCardData(원안);
+      const 이차 = sanitizeAndClampCardData(일차);
+      const 삼차 = sanitizeAndClampCardData(이차);
+      check(S, `sanitize 멱등: ${라벨}`,
+        지문(일차) === 지문(이차) && 지문(이차) === 지문(삼차),
+        `1차 ${지문(일차)}\n2차 ${지문(이차)}`);
+    }
   }
 
   // sanitize가 기존 카드의 죽은 taunt 필드를 지우는가

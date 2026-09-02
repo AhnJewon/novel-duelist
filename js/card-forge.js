@@ -804,14 +804,16 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
 
   const optimizedImg = await optimizeCardImage(imageUrl);
 
+  // ⚠️ 이미 예산 정산을 통과한 스킬(currentLLMSkillData)은 **그대로 쓴다.**
+  //    🐛 예전에는 `damage: atk` 같은 기본값 위에 스프레드했다. 정산이 피해를
+  //       지운 카드(damage 키 자체가 사라진 경우)에서는 그 기본값이 살아남아
+  //       **공격력이 피해로 다시 주입되고**, 저장 시점 재검사에서 또 잘렸다.
+  //       "기획 때 통과한 카드가 이미지 생성에서 망가진다"의 원인 중 하나다.
   const skillObj = currentLLMSkillData ? {
+    ...currentLLMSkillData,
     name: currentLLMSkillData.name || `${name}의 비기`,
     description: currentLLMSkillData.description || `${name}의 효과를 발동합니다.`,
-    cost: cost,
-    value: cardType === 'spell' ? spellDmg : atk,
-    damage: cardType === 'spell' ? spellDmg : atk,
-    effectType: element === 'holy' ? 'shield' : 'damage',
-    ...currentLLMSkillData
+    cost: cost
   } : {
     name: `${name}의 비기`,
     description: `${name}의 효과를 발동합니다.`,

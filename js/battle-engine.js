@@ -496,7 +496,15 @@ export function renderBattleUI() {
         bmEl.className = 'relative flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-950/80 border border-red-500/70 text-xs shadow-md animate-card-draw transition';
         // 🎯 공격 대상 선택에 쓰인다 (targeting.js가 이 속성을 보고 표시를 입힌다)
         bmEl.setAttribute('data-target-key', `foe:${bmIdx}`);
-        bmEl.onclick = () => {
+        // 🐛 `stopPropagation`이 없어서 **소환수를 한 번 누르면 두 번 선택됐다.**
+        //    상대 소환수 목록(#boss-minions-field)은 본체 클릭 영역
+        //    (#boss-container) **안에** 있다. 그래서 클릭이 부모로 올라가
+        //    소환수 + 본체가 함께 지정됐다.
+        //    실측: "적 2체" 카드로 소환수 하나를 눌렀더니
+        //          적0 30→20 **그리고** 보스 130→120, 선택 모드 즉시 종료.
+        //    플레이어에게는 "하나만 고르고 끝난다"로 보인다.
+        bmEl.onclick = (e) => {
+          e.stopPropagation();
           if (isTargeting()) { hideCardDetail(); pickTarget(`foe:${bmIdx}`); }
         };
         bmEl.innerHTML = `
@@ -731,7 +739,10 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   div.setAttribute('data-target-key', `ally:${slotIdx}`);
 
   // 대상 선택 중에는 공격보다 **지정**이 우선이다 (건축물·행동불가도 고를 수 있어야 한다)
-  div.onclick = () => {
+  // ⚠️ stopPropagation 필수 — 대상 선택 영역이 겹쳐 있으면 한 번의 클릭이
+  //    두 번 선택된다 (상대 소환수에서 실제로 그랬다).
+  div.onclick = (e) => {
+    e.stopPropagation();
     hideCardDetail();
     if (isTargeting()) { pickTarget(`ally:${slotIdx}`); return; }
     if (canAtk) attackWithMinion(slotIdx);

@@ -1307,6 +1307,41 @@ function descMentionsEffect(desc = '', key) {
   return re ? re.test(desc) : false;
 }
 
+/**
+ * 🎯 효과의 성격에 맞게 `targetSide`를 교정한다. **스킬을 제자리에서 고친다.**
+ *
+ * ⚠️ 예산 정산 **전후로 두 번** 불러야 한다.
+ *    🐛 예전에는 정산 전에 한 번만 불렀다. 그런데 정산이 피해를 잘라내면
+ *       "해로운 효과"가 사라지는데 `targetSide`는 'foe'로 남는다.
+ *       그 카드를 **다시 sanitize하면 그제야** 'ally'로 바뀐다 —
+ *       즉 sanitize가 멱등하지 않았다.
+ *       카드 연성은 기획 때 한 번, 이미지 생성/저장 때 한 번 총 두 번 돌리므로
+ *       **유저가 이미 확인한 카드가 저장 시점에 조용히 달라졌다.**
+ *
+ * @returns {{reason: string|null}} 바뀌었으면 사유
+ */
+function fixTargetSide(skill) {
+  const harmful = (skill.damage || 0) > 0
+    || (skill.attackDown || 0) > 0
+    || (skill.destroy || 0) > 0
+    || !!skill.silence
+    || (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none');
+  const beneficial = (skill.heal || 0) > 0 || (skill.shield || 0) > 0;
+
+  if (harmful && (skill.targetSide === 'self' || skill.targetSide === 'ally')) {
+    const was = skill.targetSide;
+    skill.targetSide = 'foe';
+    return { reason: `공격 효과의 대상이 '${was}'였다 → 'foe' (자기/아군 피해 메커니즘이 없다)` };
+  }
+  if (!harmful && beneficial && skill.targetSide === 'foe') {
+    // 회복·방어막은 엔진이 **무조건 내 쪽에** 적용한다. 'foe'로 두면 설명이 거짓이 되고
+    // 대상 선택이 상대 전장을 가리킨다.
+    skill.targetSide = 'ally';
+    return { reason: `이로운 효과의 대상이 'foe'였다 → 'ally'` };
+  }
+  return { reason: null };
+}
+
 // ============================================================
 // 🚫 엔진에 **아예 없는** 동작 — LLM이 TCG 관용구로 자주 지어낸다
 // ------------------------------------------------------------
@@ -1511,23 +1546,8 @@ export function sanitizeAndClampCardData(cardData) {
   //
   //    ally도 같은 문제인데 **더 나쁘다.** collectTargetKeys가 아군을 대상으로
   //    내주므로, 플레이어에게 "내 소환수를 골라 때리라"고 요구한다.
-  const harmfulEffect = (skill.damage || 0) > 0
-    || (skill.attackDown || 0) > 0
-    || (skill.destroy || 0) > 0
-    || !!skill.silence
-    || (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none');
-  const beneficialEffect = (skill.heal || 0) > 0 || (skill.shield || 0) > 0;
-
-  let sideFixReason = null;
-  if (harmfulEffect && (skill.targetSide === 'self' || skill.targetSide === 'ally')) {
-    sideFixReason = `공격 효과의 대상이 '${skill.targetSide}'였다 → 'foe' (자기/아군 피해 메커니즘이 없다)`;
-    skill.targetSide = 'foe';
-  } else if (!harmfulEffect && beneficialEffect && skill.targetSide === 'foe') {
-    // 회복·방어막은 엔진이 **무조건 내 쪽에** 적용한다. 'foe'로 두면 설명이 거짓이 되고
-    // 대상 선택이 상대 전장을 가리킨다.
-    sideFixReason = `이로운 효과의 대상이 'foe'였다 → 'ally'`;
-    skill.targetSide = 'ally';
-  }
+  const sideFix = fixTargetSide(skill);
+  let sideFixReason = sideFix.reason;
 
   if (sideFixReason) {
     console.log(`[Target] "${cardData.name || '무명'}" ${sideFixReason}`);
@@ -1694,6 +1714,25 @@ export function sanitizeAndClampCardData(cardData) {
     finalSkill.description = cardType === 'trap'
       ? '조건 충족 시 발동합니다.'
       : defaultFlavorText(cardData.name, cardType);
+  }
+
+  // 🎯 예산이 효과를 잘라냈으면 **대상 진영을 다시 판정한다.**
+  //    🐛 안 하면 피해가 잘려 나갔는데도 targetSide가 'foe'로 남고, 그 카드를
+  //       다시 sanitize할 때 비로소 'ally'로 바뀐다 (= 멱등하지 않다).
+  //       연성은 기획 때 한 번, 저장 때 한 번 총 두 번 돌리므로
+  //       **유저가 확인한 카드가 저장 시점에 조용히 달라졌다.**
+  {
+    const post = fixTargetSide(finalSkill);
+    if (post.reason) {
+      console.log(`[Target] "${cardData.name || '무명'}" (예산 정산 후) ${post.reason}`);
+      finalSkill.description = describeSkillFromData(finalSkill, cardType) || finalSkill.description;
+    }
+    // 💥 피해가 사라졌으면 피해 관련 부속 필드도 함께 정리한다.
+    //    (damage 없이 남은 multiHit·damageTarget은 예산만 먹는 유령이다)
+    if (!(finalSkill.damage > 0)) {
+      if (finalSkill.multiHit > 1) finalSkill.multiHit = 1;
+      if (finalSkill.damageTarget !== undefined) delete finalSkill.damageTarget;
+    }
   }
 
   // 🚫 **거짓말 관문** — 설명문이 스킬로 뒷받침되지 않는 주장을 하면 통째로 버린다.

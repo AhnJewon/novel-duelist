@@ -396,3 +396,19 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 73. **자동 플레이 측정 스크립트는 대상 선택을 처리해야 합니다.** `playCard`는
     대상 지정이 필요하면 카드를 손에 남기고 반환합니다 — 안 고르면 그 카드들이
     통째로 빠져 딜 측정이 낮게 나옵니다. → [DECISIONS #88](docs/DECISIONS.md)
+
+74. **겹친 클릭 영역에는 `stopPropagation`을 넣으세요.** 상대 소환수는 본체 클릭
+    영역 안에 있어서, 한 번의 클릭이 소환수와 본체를 **함께** 지정했습니다.
+    → [DECISIONS #89](docs/DECISIONS.md)
+
+75. **UI 동작은 `.click()`으로 검증하세요.** `pickTarget()` 같은 API를 직접 부르면
+    DOM 이벤트 전파 버그를 통째로 놓칩니다 (실제로 한 번 놓쳤습니다).
+    → [DECISIONS #89](docs/DECISIONS.md)
+
+76. **`sanitizeAndClampCardData`는 멱등해야 합니다.** 카드 연성은 기획 때·저장 때
+    두 번 돌립니다 — 멱등하지 않으면 유저가 확인한 카드가 저장 시점에 달라집니다.
+    새 교정을 추가하면 **예산 정산 뒤에도** 성립하는지 확인하세요.
+    → [DECISIONS #89](docs/DECISIONS.md)
+
+77. **정산을 통과한 스킬을 저장 경로에서 다시 조립하지 마세요.** 기본값 위에
+    스프레드하면 정산이 지운 효과가 되살아납니다. → [DECISIONS #89](docs/DECISIONS.md)
