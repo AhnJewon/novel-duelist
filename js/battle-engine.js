@@ -672,8 +672,16 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   // 같은 카드군이 전개돼 있으면 테두리로만 표시해 연계 가능 상태임을 알린다.
   const inArchetypePlay = !!findSynergyForEntity(synergyInfo, entity);
   // 🏛️ 표시값도 오라를 반영한다. 안 하면 카드에 12라 적혀 있는데 15가 나간다.
+  // 🏛️ 표시값도 오라를 반영한다. 안 하면 카드에 12라 적혀 있는데 15가 나간다.
+  //    🐛 공격력만 반영하고 **방어력 오라는 빠져 있었다.** 실측에서
+  //       "방어 6"이라 적힌 소환수가 12 공격을 4로 받았다(실제 방어 8) —
+  //       오라가 동작하는데도 플레이어는 적용됐는지 알 수가 없었다.
   const auraAtk = auraAttackBonus(entity);
+  const auraDef = auraDefenseBonus(entity);
   const displayAtk = entity.attack + auraAtk;
+  const displayDef = (entity.defense || 0) + auraDef;
+  // 오라로 올라간 값은 색을 바꿔 **왜 다른지** 보이게 한다
+  const buffed = (has) => has ? 'text-emerald-300' : '';
 
   div.className = `relative h-36 rounded-xl p-2 bg-gradient-to-b ${isStructure ? 'from-amber-950/90 via-stone-900 to-black border-amber-600/70' : elCfg.bg + ' ' + elCfg.border} border-2 ${inArchetypePlay ? 'ring-1 ring-amber-500/60' : ''} ${canAtk ? 'border-amber-400 shadow-lg shadow-amber-500/40 cursor-pointer animate-pulse' : ''} flex flex-col justify-between overflow-hidden select-none transition hover:scale-105`;
 
@@ -707,8 +715,10 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
       ${isStructure ? '<div class="absolute bottom-0 inset-x-0 bg-black/70 text-[8px] text-amber-300 font-bold text-center">매 턴 패시브</div>' : ''}
     </div>
     <div class="flex items-center justify-between text-xs font-black px-1 z-10">
-      ${isStructure ? '<span class="text-amber-400 flex items-center gap-0.5">🏛️ 성물</span>' : `<span class="text-red-400 flex items-center gap-0.5">⚔️ ${displayAtk}</span>`}
-      <span class="text-blue-400 flex items-center gap-0.5">🛡️ ${entity.defense || 0}</span>
+      ${isStructure
+        ? '<span class="text-amber-400 flex items-center gap-0.5">🏛️ 성물</span>'
+        : `<span class="flex items-center gap-0.5 ${auraAtk > 0 ? buffed(true) : 'text-red-400'}" title="${auraAtk > 0 ? `기본 ${entity.attack} + 건축물 오라 ${auraAtk}` : ''}">⚔️ ${displayAtk}${auraAtk > 0 ? `<span class="text-[8px]">+${auraAtk}</span>` : ''}</span>`}
+      <span class="flex items-center gap-0.5 ${auraDef > 0 ? buffed(true) : 'text-blue-400'}" title="${auraDef > 0 ? `기본 ${entity.defense || 0} + 건축물 오라 ${auraDef}` : ''}">🛡️ ${displayDef}${auraDef > 0 ? `<span class="text-[8px]">+${auraDef}</span>` : ''}</span>
       <span class="text-emerald-400 flex items-center gap-0.5">❤️ ${entity.currentHp}/${entity.maxHp}</span>
     </div>
   `;
@@ -733,9 +743,17 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   if (state.playerMinions.length < BATTLE_SLOTS) {
     const armed = _pendingSummonSlot === slotIdx;
     const grip = document.createElement('button');
-    grip.className = `absolute left-0 inset-y-0 w-2.5 z-30 rounded-l-xl transition ${
-      armed ? 'bg-amber-400/90' : 'bg-amber-400/0 hover:bg-amber-400/60'}`;
-    grip.title = `여기(앞)에 다음 소환수를 배치 — ${slotIdx + 1}번 자리`;
+    // 🐛 예전에는 폭 2.5px짜리 색 띠가 전부였다. 눌러도 **아무 일도 안 일어난 것처럼**
+    //    보여서 "소환 위치 기능이 동작 안 한다"는 오해를 샀다 (배치는 정상이었다).
+    //    무장 상태를 눈에 띄게 만든다: 띠를 넓히고 라벨과 테두리를 붙인다.
+    grip.className = `absolute left-0 inset-y-0 z-30 rounded-l-xl transition flex items-center justify-center ${
+      armed
+        ? 'w-6 bg-amber-400 text-black font-black text-[9px] ring-2 ring-amber-300 shadow-lg'
+        : 'w-2.5 bg-amber-400/0 hover:bg-amber-400/60 hover:w-4'}`;
+    grip.innerHTML = armed ? '<span class="-rotate-90 whitespace-nowrap">여기</span>' : '';
+    grip.title = armed
+      ? `다음 소환수를 여기(${slotIdx + 1}번 앞)에 배치합니다 — 다시 누르면 해제`
+      : `여기(앞)에 다음 소환수를 배치 — ${slotIdx + 1}번 자리`;
     grip.onclick = (e) => {
       e.stopPropagation();          // 공격 클릭과 섞이면 안 된다
       hideCardDetail();
@@ -743,6 +761,8 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
       renderBattleUI();
     };
     div.appendChild(grip);
+    // 무장된 카드 자체에도 테두리를 준다 — 띠만으로는 작은 화면에서 안 보인다
+    if (armed) div.classList.add('ring-2', 'ring-amber-400');
   }
 
   // 슬롯이 작아 스킬 설명이 안 들어간다.

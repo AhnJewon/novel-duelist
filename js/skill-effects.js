@@ -214,6 +214,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     }
 
     // 🎯 대상 해석은 resolveEffectTargets 한 곳이 맡는다 (지정 / 전체 / 무작위)
+    const spec = readTargetSpec(skill);
     const T0 = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
 
     // 💥 피해 대상 강제 — 카드가 "본체만" / "기물만"이라고 선언했으면 그대로 지킨다.
@@ -239,7 +240,20 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       }
       game.bossMinions = removeDead(game.bossMinions);
       game.playerMinions = removeDead(game.playerMinions);
-      if (T.foeFace) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+
+      // 💥 다중 대상인데 **고를 대상이 모자랐으면 남은 타수를 본체로** 보낸다.
+      //
+      // 🐛 예전에는 그냥 사라졌다. "적 2체에게 10 피해"(총 20어치 값을 치른 카드)를
+      //    상대 전장이 빈 상태에서 내면 고를 곳이 본체뿐이라 **10만** 들어갔다.
+      //    (targeting은 같은 대상을 두 번 고르지 못하게 막는다 — 그건 옳다.
+      //     대신 남은 타수를 여기서 본체에 얹는다)
+      //    ⚠️ 기물 전용(field)과 아군 대상은 제외 — 본체를 때리면 안 된다.
+      let faceHits = T.foeFace ? 1 : 0;
+      if (spec.scope === 'multi' && spec.side !== 'ally' && dt !== 'field') {
+        const landed = T.minions.length + faceHits;
+        if (landed < spec.count) faceHits += (spec.count - landed);
+      }
+      for (let i = 0; i < faceHits; i++) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
       // ⚠️ selfFace(내 본체)에 피해를 넣는 경로는 일부러 없다. 자해 메커니즘이
       //    없으므로 sanitize가 해로운 효과의 대상을 foe로 교정한다 → DECISIONS #74
     } else if (allowAoe && skill.isAoeSpell) {
@@ -250,6 +264,18 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       });
       game.bossMinions = removeDead(game.bossMinions);
       dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+    } else if (dt === 'field') {
+      // 🐛 지정이 없을 때의 폴백이 **damageTarget을 무시하고 본체를 쳤다.**
+      //    "전장의 기물만 때린다"고 적힌 카드가 보스 본체를 때렸다.
+      //    기물 전용은 최전방을 치고, 전장이 비면 불발한다 — 그게 이 카드의 값이다.
+      const front = selectFrontTarget(game.bossMinions);
+      if (front) {
+        const hit = damageEntity(front, dmg, { pierce: !!skill.pierceShield });
+        addBattleLog(`<span class="text-red-300">💥 [${cardName}] ➔ [${escapeHtml(front.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
+        game.bossMinions = removeDead(game.bossMinions);
+      } else {
+        addBattleLog(`<span class="text-slate-400">전장에 때릴 기물이 없어 불발했습니다.</span>`);
+      }
     } else {
       dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
     }

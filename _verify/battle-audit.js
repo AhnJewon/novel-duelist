@@ -497,6 +497,36 @@ function suiteEffects() {
     state.bossMinions[0].skills.length === 0 &&
     state.bossMinions[0].attack === 10 && state.bossMinions[0].silenced === true);
 
+  // 💥 다중 대상인데 고를 대상이 모자라면 남은 타수가 본체로 간다 (DECISIONS #88)
+  //    "적 2체에게 10 피해"는 총 20어치 값을 치른 카드다. 전장이 비었다고
+  //    10만 들어가면 카드가 값을 못 한다.
+  const 다중 = { damage: 10, targetScope: 'multi', targetCount: 2 };
+  resetBoard({ bossMinions: [] });
+  fireSkill(다중, { picked: ['face'] });
+  check(S, '다중 2체 / 상대 전장 0기 → 본체에 20',
+    state.currentBoss.currentHp === 280, `${state.currentBoss.currentHp}`);
+
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
+  fireSkill(다중, { picked: ['foe:0', 'face'] });
+  check(S, '다중 2체 / 기물 1 + 본체 1 → 각각 10',
+    state.bossMinions[0].currentHp === 30 && state.currentBoss.currentHp === 290,
+    `기물=${state.bossMinions[0].currentHp} 보스=${state.currentBoss.currentHp}`);
+
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 }), minion({ name: 'Y', currentHp: 40 })] });
+  fireSkill(다중, { picked: ['foe:0', 'foe:1'] });
+  check(S, '다중 2체 / 기물 둘 → 본체는 안 맞는다',
+    state.bossMinions.every(m => m.currentHp === 30) && state.currentBoss.currentHp === 300,
+    `${state.bossMinions.map(m => m.currentHp)} 보스=${state.currentBoss.currentHp}`);
+
+  resetBoard({ bossMinions: [] });
+  fireSkill({ damage: 10, targetScope: 'multi', targetCount: 3, damageTarget: 'field' }, { picked: [] });
+  check(S, '기물 전용(field)은 남은 타수를 본체로 보내지 않는다',
+    state.currentBoss.currentHp === 300, `${state.currentBoss.currentHp}`);
+
+  resetBoard({ bossMinions: [] });
+  fireSkill({ damage: 10 }, { picked: ['face'] });
+  check(S, '단일 대상은 그대로 1회', state.currentBoss.currentHp === 290, `${state.currentBoss.currentHp}`);
+
   // 💥 피해 대상 분리 — 본체용 / 기물용 (DECISIONS #87)
   resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
   fireSkill({ damage: 12, damageTarget: 'body' }, { picked: ['foe:0'] });
@@ -1024,6 +1054,22 @@ function suiteStructures() {
   resetBoard({ playerMinions: [aura('all'), minion({ name: '아무나', themeId: 'zz', element: 'water' })] });
   check(S, '오라 all: 전부', BE.auraAttackBonus(state.playerMinions[1]) === 3);
 
+  // 🖥️ 오라가 **화면에도** 보이는가 (DECISIONS #88)
+  //    🐛 공격력 오라만 표시에 반영되고 방어력 오라는 빠져 있었다.
+  //       동작은 하는데 카드에는 안 보여서 적용됐는지 알 수 없었다.
+  resetBoard({ playerMinions: [
+    minion({ name: '오라탑', cardType: 'structure', currentHp: 20, themeId: 'th-A',
+      skills: [{ passiveEffect: { aura: { scope: 'all', attackBonus: 3, defenseBonus: 2 } } }] }),
+    minion({ name: '수혜자', attack: 10, defense: 4 })] });
+  BE.renderBattleUI();
+  {
+    const 카드 = [...document.querySelectorAll('#player-minions-field > div')]
+      .find(d => d.innerText.includes('수혜자')) || { innerText: '' };
+    const txt = 카드.innerText.replace(/\s+/g, ' ');
+    check(S, '오라 공격력이 화면에 반영 (10+3=13)', txt.includes('13'), txt);
+    check(S, '오라 방어력이 화면에 반영 (4+2=6)', txt.includes('6'), txt);
+  }
+
   // 오라 방어력이 방어 시 적용되는가
   resetBoard({ playerMinions: [
     minion({ name: '방어탑', cardType: 'structure', currentHp: 20,
@@ -1149,6 +1195,33 @@ function suitePlayCard() {
   BE.playCard(0);
   check(S, '마나 부족이면 시전되지 않는다',
     state.playerHand.length === 1 && state.playerMinions.length === 0 && state.playerMana === 1);
+
+  // 🎯 소환 위치 지정 (DECISIONS #88)
+  //    배치 로직은 원래 정상이었지만 **무장 표시가 폭 2.5px 색 띠뿐**이라
+  //    눌러도 아무 일 없는 것처럼 보였다.
+  {
+    const 유닛 = (n) => card({ id: 'u' + n, name: 'U' + n, cost: 1, attack: 5, hp: 20, skills: [{}] });
+    resetBoard({ playerMana: 20, turnCount: 3 });
+    state.playerMaxMana = 20;
+    state.playerHand = [유닛(0), 유닛(1), 유닛(2)];
+    BE.playCard(0); BE.playCard(0);
+    BE.renderBattleUI();
+    const 첫카드 = [...document.querySelectorAll('#player-minions-field > div')][0];
+    const grip = 첫카드 && 첫카드.querySelector('button');
+    check(S, '소환 위치: 카드 앞 그립 버튼이 존재한다', !!grip);
+    if (grip) {
+      grip.click();
+      BE.renderBattleUI();
+      const 무장카드 = [...document.querySelectorAll('#player-minions-field > div')][0];
+      check(S, '소환 위치: 무장하면 눈에 보이는 표시가 생긴다',
+        무장카드.innerText.includes('여기') || 무장카드.className.includes('ring-amber-400'),
+        `text="${무장카드.innerText.replace(/\s+/g, ' ').slice(0, 40)}" cls=${무장카드.className.includes('ring-amber-400')}`);
+      BE.playCard(0);
+      check(S, '소환 위치: 지정한 자리(맨 앞)에 배치된다',
+        state.playerMinions.map(m => m.name).join(',') === 'U2,U0,U1',
+        state.playerMinions.map(m => m.name).join(','));
+    }
+  }
 
   // 전장이 가득 차면 소환 거부
   resetBoard({ playerMana: 5, playerMinions: [minion(), minion(), minion(), minion()] });
