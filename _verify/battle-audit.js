@@ -1523,6 +1523,64 @@ function suiteFaceDamage() {
 }
 
 // ============================================================
+// 9d. 공격 대칭 — 소환수 공격 해결이 양 진영 한 함수 (DECISIONS #94)
+// ------------------------------------------------------------
+// 🐛 상대 쪽은 canAttack을 지우지 않았고(한 턴 여러 번), 공격 오라를 안 받았고, 기본 대상에서
+//    directAttack을 무시했으며, PvP 재생 핸들러는 targetKey를 버렸다(상대가 누굴 골랐든 내 최전방).
+// ============================================================
+async function suiteAttackSymmetry() {
+  const S = '공격 대칭';
+
+  // 공격하면 canAttack=false — 한 턴에 두 번 못 친다
+  resetBoard({ playerHp: 50, playerMinions: [], bossMinions: [minion({ name: '상대병', attack: 5 })] });
+  BE.foeMinionAttack(0);
+  const after1 = state.playerHp;
+  BE.foeMinionAttack(0);
+  check(S, '상대 소환수도 공격하면 canAttack=false, 한 턴 두 번 못 친다 (예전: 무제한)',
+    state.bossMinions[0].canAttack === false && after1 === 45 && state.playerHp === 45,
+    `canAttack=${state.bossMinions[0].canAttack} php=${state.playerHp}`);
+
+  // directAttack 상대 소환수는 내 전장을 넘어 본체를 친다
+  resetBoard({ playerHp: 50, playerMinions: [minion({ name: '내벽', currentHp: 30 })],
+    bossMinions: [minion({ name: '상대암살자', attack: 7, directAttack: true })] });
+  BE.foeMinionAttack(0);
+  check(S, 'directAttack 상대 소환수는 내 전장을 넘어 본체 (예전: 기본 대상에서 무시)',
+    state.playerHp === 43 && state.playerMinions[0].currentHp === 30,
+    `php=${state.playerHp} wall=${state.playerMinions[0].currentHp}`);
+
+  // 상대 건축물의 공격 오라가 상대 소환수 공격에 붙는다
+  resetBoard({ playerHp: 50, playerMinions: [], bossMinions: [
+    minion({ name: '상대병', attack: 5 }),
+    minion({ name: '상대탑', cardType: 'structure', skills: [{ passiveEffect: { aura: { scope: 'all', attackBonus: 3 } } }] })] });
+  BE.foeMinionAttack(0);
+  check(S, '상대 건축물 공격 오라 +3이 상대 소환수 공격에 붙는다 (5+3=8)', state.playerHp === 42, `php=${state.playerHp}`);
+
+  // 내가 상대 소환수를 칠 때 상대 건축물의 방어 오라가 붙는다
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10 })], bossMinions: [
+    minion({ name: '적', currentHp: 30, defense: 0 }),
+    minion({ name: '상대성벽', cardType: 'structure', skills: [{ passiveEffect: { aura: { scope: 'all', defenseBonus: 4 } } }] })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '상대 건축물 방어 오라 +4가 상대 소환수를 지킨다 (10-4=6)', state.bossMinions[0].currentHp === 24,
+    `${state.bossMinions[0].currentHp}`);
+
+  // PvP attack 재생이 targetKey를 존중한다 (더미 세션)
+  {
+    const dummy = { sendAction() {} };
+    try {
+      attachPvpSession(dummy, { foeName: '검증상대', isHost: true });
+      resetBoard({ playerMinions: [minion({ name: '내A', currentHp: 30 }), minion({ name: '내B', currentHp: 30 })],
+        bossMinions: [minion({ name: '상대병', attack: 12 })] });
+      await handleRemoteAction({ kind: 'attack', slotIdx: 0, targetKey: 'foe:1' });
+      check(S, 'PvP attack 재생이 상대가 고른 대상(foe:1)을 친다 (예전: targetKey 유실 → 최전방)',
+        state.playerMinions[0].currentHp === 30 && state.playerMinions[1].currentHp === 18,
+        `${state.playerMinions.map(m => m.currentHp)}`);
+    } finally {
+      detachPvpSession();
+    }
+  }
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -2281,7 +2339,7 @@ export async function runAll() {
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
-    ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['공격 대칭', suiteAttackSymmetry], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];

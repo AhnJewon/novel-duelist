@@ -1128,129 +1128,104 @@ export function attackWithMinion(slotIdx) {
   resolveMinionAttack(slotIdx, keys[0] || 'face');
 }
 
-/** 대상이 정해진 뒤의 실제 공격 처리 */
-export function resolveMinionAttack(slotIdx, targetKey) {
-  const entity = state.playerMinions[slotIdx];
-  if (!entity || !entity.canAttack) return;
+/**
+ * 소환수 공격 해결 — **양 진영 공용.** 사람(UI)·PvE 봇·PvP 재생이 전부 여기를 지난다.
+ *
+ * 🏟️ 전투 규칙은 **해결되는 지점**에서 강제한다 (DECISIONS #80/#81). UI 목록은 편의일 뿐이다.
+ *   · 행동 가능(canAttack)·봉쇄·건축물·공격력 0 — 양 진영 같은 거부 조건
+ *   · 전장이 비어야 본체 — directAttack만 예외 (canAttackFace)
+ *   · 공격 진영 건축물의 공격 오라 + **방어 진영** 건축물의 방어 오라 — 양쪽 다
+ *   · 본체 피해는 dealFaceDamage 한 곳, 소환수 피해는 damageEntity 한 곳
+ *   · 공격하면 canAttack=false — 한 턴에 두 번 못 친다 (PvP 중복 재생 방어)
+ *
+ * 🐛 예전엔 두 벌이었다 (resolveMinionAttack / foeMinionAttack + hitPlayerMinion): 상대 쪽은
+ *    canAttack을 지우지 않았고, 공격 오라를 안 받았고, 기본 대상에서 directAttack을 무시했으며,
+ *    방어 오라는 플레이어 소환수에만 붙었다 (DECISIONS #94).
+ *
+ * @param side      공격하는 진영(Side)
+ * @param slotIdx   그 진영 전장의 슬롯 번호
+ * @param targetKey 'face' | 'foe:N' | null(규칙대로 — 전장이 비면 본체, 아니면 최전방)
+ * @param opts.attacker 전장에 없는 임시 공격자 (하네스용). 없으면 슬롯에서 찾는다.
+ * @returns {boolean} 실제로 공격했는가
+ */
+export function resolveAttack(side, slotIdx, targetKey = null, { attacker = null } = {}) {
+  const foe = sides[opponentOf(side.key)];
+  const entity = attacker || (side.minions || [])[slotIdx];
+  if (!entity) return false;
+  if (side.hp <= 0 || foe.hp <= 0) return false;
+  // 🏛️ 건축물은 공격하지 않는다 — 벽으로서 전장을 막는 것이 역할이다. 공격력 0도 마찬가지.
+  if (entity.cardType === 'structure' || !(entity.attack > 0)) return false;
+  // 💫 봉쇄(기절·빙결) — **플래그만 읽는다.** 소모는 tickMinionStatuses가 턴 시작에 한 번만 한다.
+  if (entity.blockedBy) {
+    const spec = STATUS_EFFECTS[entity.blockedBy];
+    addBattleLog(`<span class="${spec ? spec.color : 'text-slate-400'} font-bold">${spec ? spec.icon : '💫'} [${escapeHtml(entity.name)}]이(가) ${spec ? spec.name : '행동 불가'} 상태로 공격하지 못합니다!</span>`);
+    return false;
+  }
+  if (!entity.canAttack) return false;
 
-  // 🏟️ 전투 규칙은 **해결되는 지점**에서 강제한다. UI 목록은 편의일 뿐이다.
-  //    (PvP 재생 경로도 이 함수를 지나므로 여기가 유일한 관문이다)
-  //
-  // 🗑️ 도발 리다이렉트는 제거됐다. 이제 상대 전장의 소환수는 전부 유효 대상이고,
-  //    막는 것은 오직 "전장이 비어야 본체를 칠 수 있다"뿐이다 → DECISIONS #84
-  if (targetKey === 'face' && !canAttackFace(state.bossMinions, entity)) {
-    const redirect = selectFrontTarget(state.bossMinions);
-    addBattleLog(`<span class="text-amber-300">🏟️ 상대 전장에 소환수가 있어 본체를 칠 수 없습니다 — [${escapeHtml(redirect.name)}]을(를) 먼저 처리하세요.</span>`);
-    targetKey = `foe:${state.bossMinions.indexOf(redirect)}`;
+  // 🏟️ 전장이 비어야 본체 — 양 진영에 강제. 🗑️ 도발 리다이렉트는 없다 (DECISIONS #84).
+  if (targetKey === 'face' && !canAttackFace(foe.minions, entity)) {
+    const redirect = selectFrontTarget(foe.minions);
+    if (redirect) {
+      if (side.key === SIDE_PLAYER) {
+        addBattleLog(`<span class="text-amber-300">🏟️ 상대 전장에 소환수가 있어 본체를 칠 수 없습니다 — [${escapeHtml(redirect.name)}]을(를) 먼저 처리하세요.</span>`);
+      }
+      targetKey = `foe:${foe.minions.indexOf(redirect)}`;
+    }
+  }
+  // 대상 미지정 — 규칙대로: 본체를 칠 수 있으면(전장 비었거나 directAttack) 본체, 아니면 최전방
+  if (!targetKey) {
+    const front = selectFrontTarget(foe.minions);
+    targetKey = (front && !canAttackFace(foe.minions, entity)) ? `foe:${foe.minions.indexOf(front)}` : 'face';
   }
 
   entity.canAttack = false;
   audio.playSlash();
 
-  // 🌐 PvP: 고른 **대상까지** 보내야 상대 화면에서 같은 결과가 나온다.
-  //    대상을 빼면 상대는 자기 기준 최전방을 때려 판이 어긋난다.
-  if (isPvpActive()) sendPvpAction({ kind: 'attack', slotIdx, targetKey });
+  // 🌐 PvP: 내 공격은 고른 **대상까지** 보낸다 — 상대 화면이 같은 결과를 내려면 대상이 필요하다.
+  if (side.key === SIDE_PLAYER && isPvpActive()) sendPvpAction({ kind: 'attack', slotIdx, targetKey });
 
-  // 🪤 공격에 반응하는 함정
-  triggerTraps('player', 'attack', entity);
+  // 🪤 공격에 반응하는 상대 함정
+  triggerTraps(side.key, 'attack', entity);
+  if (side.hp <= 0 || foe.hp <= 0) return true;   // 함정이 판을 끝냈을 수 있다
 
   // 🏛️ 전장 오라 보정 — 읽는 시점에 계산한다 (저장하면 건축물이 죽어도 남는다)
-  const finalAtk = entity.attack + auraAttackBonus(entity);
+  const finalAtk = entity.attack + auraAttackBonus(entity, side);
 
   if (targetKey === 'face') {
-    dealDamageToBoss(finalAtk, entity.name);
+    dealFaceDamage(foe, finalAtk, { source: entity.name, attacker: side });
   } else {
     const idx = parseInt(String(targetKey).split(':')[1], 10);
-    // 고른 뒤 함정 등으로 판이 바뀌었을 수 있다 — 없으면 규칙대로 최전방
-    const target = (state.bossMinions || [])[idx] || selectFrontTarget(state.bossMinions);
+    // 고른 뒤 함정 등으로 판이 바뀌었을 수 있다 — 없으면 규칙대로 최전방, 그것도 없으면 본체
+    const target = (foe.minions || [])[idx] || selectFrontTarget(foe.minions);
     if (!target) {
-      dealDamageToBoss(finalAtk, entity.name);
+      dealFaceDamage(foe, finalAtk, { source: entity.name, attacker: side });
     } else {
-      const hit = damageEntity(target, finalAtk);
-      const { died, dealt } = hit;
-      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${dealt} 피해)${describeDamageExtras(hit)}</span>`);
-      if (died) {
+      const hit = damageEntity(target, finalAtk, { defBonus: auraDefenseBonus(target, foe) });
+      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${hit.dealt} 피해)${describeDamageExtras(hit)}</span>`);
+      if (hit.died) {
         addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(target.name)}] 처치!</span>`);
-        state.bossMinions = removeDead(state.bossMinions);
+        foe.minions = removeDead(foe.minions);
       }
     }
   }
 
   renderBattleUI();
   checkBattleStatus();
+  return true;
+}
+
+/** 대상이 정해진 뒤의 플레이어 공격 처리 — resolveAttack(sides.player, …)의 옛 이름 */
+export function resolveMinionAttack(slotIdx, targetKey) {
+  return resolveAttack(sides.player, slotIdx, targetKey);
 }
 
 /**
- * 상대 진영 하수인 한 기의 공격.
- *
- * PvE에서는 보스 턴에 전 하수인이 이걸 순서대로 부르고,
- * PvP에서는 상대의 `attack` 행동 하나를 재생할 때 부른다.
- * (예전에는 executeBossTurn 안에 forEach로 박혀 있어 한 기만 따로 부를 수 없었다)
- *
- * @param slotIdx  상대 전장 슬롯 번호
- * @param minion   이미 알고 있으면 전달 (없으면 슬롯에서 찾는다)
+ * 상대 소환수 한 기의 공격 — resolveAttack(sides.boss, …)의 옛 이름.
+ * @param minion 전장에 없는 임시 공격자 (하네스용). 없으면 슬롯에서 찾는다.
  */
 export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
-  const bm = minion || (state.bossMinions || [])[slotIdx];
-  if (!bm) return;
-  if (state.playerHp <= 0) return;
-  // 🏛️ 건축물은 공격하지 않는다 — 플레이어 쪽과 같은 규칙(attackWithMinion).
-  //    벽으로서 전장을 막는 것이 건축물의 역할이다.
-  if (bm.cardType === 'structure' || !(bm.attack > 0)) return;
-
-  // 💫 기절/빙결이면 이번 턴 공격하지 못한다.
-  //    🐛 수정: 예전에는 상대 소환수에 기절을 걸어도 그대로 공격해 왔다.
-  //    ⚠️ 소모는 tickMinionStatuses가 턴 시작에 한 번만 한다. 여기서 또
-  //       소모하면 기절이 절반 턴만 유지된다 — **플래그만 읽는다.**
-  if (bm.blockedBy) {
-    const spec = STATUS_EFFECTS[bm.blockedBy];
-    addBattleLog(`<span class="${spec ? spec.color : 'text-slate-400'} font-bold">${spec ? spec.icon : '💫'} [${escapeHtml(bm.name)}]이(가) ${spec ? spec.name : '행동 불가'} 상태로 공격하지 못합니다!</span>`);
-    return;
-  }
-
-  // 🐛 상대 공격이 내 함정을 발동시키지 않고 있었다.
-  //    `attack` 이벤트를 플레이어 공격에서만 쏘고 있어서
-  //    "상대가 공격할 때" 함정이 PvE에서 영영 터지지 않았다.
-  triggerTraps('boss', 'attack', bm);
-  if (state.playerHp <= 0) return;   // 함정이 판을 끝냈을 수 있다
-
-  // 🌐 PvP: 상대가 고른 대상을 그대로 재생한다.
-  //    상대 화면 기준의 `foe:N`은 내 화면에서는 **내 전장의 N번**이다.
-  // 🏟️ 내 전장에 소환수가 있으면 상대도 본체를 칠 수 없다.
-  //    🐛 PvP 재생 경로는 `face`를 그대로 실행했다 — 상대가 내 전장을 무시하고
-  //       본체를 때릴 수 있었다. 규칙은 해결 지점에서 양쪽 모두에 강제한다.
-  if (targetKey === 'face' && !canAttackFace(state.playerMinions, bm)) {
-    targetKey = null;   // 아래 최전방 타격 경로로 떨어뜨린다
-  }
-
-  if (targetKey === 'face') {
-    // 🐛 예전에는 state.playerHp를 직접 깎아 **방어막·피해 경감·취약을 전부 우회**했다.
-    //    본체가 맞는 경로는 반드시 applyDirectDamageToPlayer 하나로 모은다.
-    addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
-    applyDirectDamageToPlayer(bm.attack, false);
-    return;
-  }
-  if (targetKey && targetKey.startsWith('foe:')) {
-    const i = parseInt(targetKey.split(':')[1], 10);
-    // 🗑️ 도발이 사라져 상대가 내 전장의 누구를 고르든 그대로 맞는다.
-    //    (막는 규칙은 "내 전장이 비어야 본체를 칠 수 있다" 하나뿐이다)
-    const t = state.playerMinions[i];
-    if (t) {
-      hitPlayerMinion(t, bm, state.playerMinions.indexOf(t));
-      return;
-    }
-  }
-
-  // 아군 소환수/건축물이 있으면 최전방 타겟 타격 (PvE 기본 동작)
-  if (state.playerMinions.length > 0) {
-    // 🎯 맨 앞이 먼저 맞는다 — 그래서 배치 순서가 전술이 된다.
-    const target = selectFrontTarget(state.playerMinions);
-    hitPlayerMinion(target, bm, state.playerMinions.indexOf(target));
-  } else {
-    // 🐛 여기도 마찬가지로 직접 차감이었다. 무적만 보고 방어막·경감은 무시했다.
-    addBattleLog(`<span class="text-red-400">🗡️ [${escapeHtml(bm.name)}] 본체 직격!</span>`);
-    applyDirectDamageToPlayer(bm.attack, false);
-  }
+  return resolveAttack(sides.boss, slotIdx, targetKey, { attacker: minion });
 }
 
 /**
@@ -1491,26 +1466,6 @@ export function describeActiveAuras(side = sides.player) {
   }));
 }
 
-/**
- * 상대 소환수가 **내 소환수를** 때린다.
- *
- * 🐛 수정: 예전에는 `t.currentHp -= bm.attack`로 직접 깎았다. 그래서
- *    내 소환수가 방어할 때는 **수비력이 아무 일도 하지 않았다.**
- *    (내가 공격할 때는 damageEntity가 수비력을 적용했으니 비대칭이었다)
- *    이제 양방향 모두 damageEntity를 지나고, 건축물 오라 방어력도 함께 붙는다.
- */
-function hitPlayerMinion(target, attacker, idx) {
-  if (!target) return;
-  const defBonus = auraDefenseBonus(target);
-  const hit = damageEntity(target, attacker.attack, { defBonus });
-  const { died, dealt } = hit;
-  addBattleLog(`<span class="text-slate-400">🗡️ [${escapeHtml(attacker.name)}] ➔ [${escapeHtml(target.name)}] 공격! (-${dealt} HP)${describeDamageExtras(hit)}</span>`);
-  if (died) {
-    addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(target.name)}] 파괴!</span>`);
-    state.playerMinions.splice(idx, 1);
-  }
-}
-
 // ============================================================
 // 💫 소환수 상태이상 처리 — 한 진영의 턴이 시작될 때 한 번
 // ------------------------------------------------------------
@@ -1720,14 +1675,16 @@ export async function executeBossTurn({ handOff = true } = {}) {
   //    ⚠️ canAttack을 반드시 본다. 예전에는 검사가 없어서 **이번 턴에 소환된
   //       소환수까지 같은 턴에 공격**했다 (스텝1 소환 → 스텝4 공격).
   //       플레이어 소환수는 소환 후유증이 있으므로 그쪽만 불리한 비대칭이었다.
-  if (state.playerHp > 0 && state.currentBoss.currentHp > 0) {
-    state.bossMinions.forEach((bm, idx) => {
-      if (bm && bm.canAttack === false) {
-        addBattleLog(`<span class="text-slate-500">💤 [${escapeHtml(bm.name)}]은(는) 소환된 턴이라 공격하지 못합니다.</span>`);
-        return;
-      }
-      foeMinionAttack(idx, bm);
-    });
+  //    슬롯 **스냅샷**으로 순회한다 — 함정이 도중에 전장을 바꿔도 인덱스가 밀리지 않는다.
+  for (const bm of [...state.bossMinions]) {
+    if (state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
+    const idx = state.bossMinions.indexOf(bm);
+    if (idx < 0) continue;                          // 함정 등으로 이미 사라졌다
+    if (bm.canAttack === false) {
+      addBattleLog(`<span class="text-slate-500">💤 [${escapeHtml(bm.name)}]은(는) 소환된 턴이라 공격하지 못합니다.</span>`);
+      continue;
+    }
+    resolveAttack(bossSide, idx);
   }
 
 
@@ -2251,8 +2208,9 @@ registerPvpHandlers({
   // 상대가 낸 카드 = 내 화면에서는 보스가 내는 카드
   playFoeCard: (card, slot, picked) => playFoeCardPvp(card, slot, picked),
 
-  // 상대 하수인 한 기의 공격
-  foeMinionAttack: (slotIdx) => foeMinionAttack(slotIdx),
+  // 상대 하수인 한 기의 공격 — 상대가 고른 대상까지 그대로 재생한다.
+  //    🐛 예전엔 targetKey를 여기서 버려 상대가 어떤 소환수를 골랐든 내 최전방이 맞았다 (판 어긋남).
+  foeMinionAttack: (slotIdx, _minion, targetKey) => resolveAttack(sides.boss, slotIdx, targetKey || null),
 
   // 상대 턴이 끝났다 → 상대의 턴 종료(건축물 패시브)를 내 화면에서도 돌리고 내 턴 시작
   beginMyTurn: () => { endTurn(sides.boss); startPlayerTurn(); },
