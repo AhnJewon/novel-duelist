@@ -358,3 +358,14 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     다음 검사의 `attackWithMinion`이 "취소"로 해석해 즉시 반환합니다 —
     기능이 고장난 것처럼 보입니다. `__test.reset()`이 꺼줍니다.
     → [DECISIONS #85](docs/DECISIONS.md)
+
+64. **보스도 마나를 씁니다** (`foeUsesMana: true`). 카드 선택은 반드시
+    `canPlayCard`를 통과한 후보 안에서만 하세요. → [DECISIONS #86](docs/DECISIONS.md)
+
+65. **보스 콤보의 `attack`/`magic` 스텝은 마나 제한을 받지 않습니다.** 보스 공세를
+    조정할 때 카드 수만 만지면 효과가 없습니다 — 지배적인 변수는 이 스텝입니다.
+    → [DECISIONS #86](docs/DECISIONS.md)
+
+66. **보스 생성기를 추가하면 `saveAndFightBoss`가 유일한 관문입니다.** 카드군
+    선택(`readBossTheme`)을 생성기마다 붙이지 마세요 — 실제로 두 경로가
+    빠뜨려서 UI 선택이 무시됐습니다. → [DECISIONS #86](docs/DECISIONS.md)

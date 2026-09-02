@@ -1480,34 +1480,53 @@ export async function executeBossTurn() {
     setTimeout(() => startPlayerTurn(), 250);
     return;
   }
-  // 2. 🎴 보스 전술 카드 플레이 단계 (적극적 2~3연속 카드 체인 시전!)
+  // 2. 🎴 보스 전술 카드 플레이 단계
+  //
+  // 💎 보스도 **마나를 쓴다.** 플레이어와 같은 성장 규칙(턴 수만큼, 상한 10).
+  //    🐛 예전에는 마나가 없어서(가상 99) 매 턴 카드를 2~3장씩 몰아 냈다.
+  //       플레이어가 1마나일 때 보스는 이미 전장을 채우고 있었다 —
+  //       "보스 행동이 너무 많다"의 원인이 이것이다.
+  //    이제 낼 수 있는 만큼만 낸다. 자원이 곧 제한이므로 램프의 카드 수 상한은
+  //    보조 장치로만 남는다.
+  const bossSide = sides[SIDE_BOSS];
+  growMana(bossSide, state.turnCount);
+  addBattleLog(`<span class="text-slate-400">💎 보스 마나 ${bossSide.mana}/${bossSide.maxMana}</span>`);
+
   const baseCardLimit = (bossPhase === 2 || state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5) ? 3 : 2;
   // 🐌 초반 램프 — 플레이어가 1~2마나일 때 보스가 카드를 몰아 내지 않게 한다
   const rampNow = BOSS_RAMP[state.turnCount];
   const cardsToPlayLimit = rampNow ? Math.min(baseCardLimit, rampNow.cards) : baseCardLimit;
-  
+
   for (let playCount = 0; playCount < cardsToPlayLimit; playCount++) {
     if (!state.bossHand || state.bossHand.length === 0 || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
 
-    let cardIdxToPlay = 0;
-    // 1) 체력 위기 시 치유/방어 카드 최우선
-    if (state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.6) {
-      const defIdx = state.bossHand.findIndex(c => c.skills && c.skills[0] && (c.skills[0].heal > 0 || c.skills[0].shield > 0));
-      if (defIdx !== -1) cardIdxToPlay = defIdx;
-    } 
-    // 2) 필드 소환수 슬롯이 비었을 때 유닛/건축물 소환
-    else if (state.bossMinions.length < bossMinionCapThisTurn()) {
-      const minionIdx = state.bossHand.findIndex(c => c.cardType === 'unit' || c.cardType === 'structure');
-      if (minionIdx !== -1) cardIdxToPlay = minionIdx;
-    }
-    // 3) 그 외 공격/디버프 주문 우선
-    else {
-      const spellIdx = state.bossHand.findIndex(c => c.cardType === 'spell');
-      if (spellIdx !== -1) cardIdxToPlay = spellIdx;
+    // 💎 낼 수 있는 카드만 후보가 된다 (마나 + 전장 슬롯 — 플레이어와 같은 검사)
+    const affordable = state.bossHand
+      .map((c, i) => ({ c, i }))
+      .filter(x => canPlayCard(bossSide, x.c).ok);
+    if (affordable.length === 0) {
+      addBattleLog(`<span class="text-slate-500">💤 보스가 낼 수 있는 카드가 없습니다. (마나 ${bossSide.mana})</span>`);
+      break;
     }
 
-    const cardToPlay = state.bossHand.splice(cardIdxToPlay, 1)[0];
+    // 우선순위: 체력 위기면 치유/방어 → 전장이 비었으면 소환 → 그 외 주문.
+    // ⚠️ 어느 경우든 **후보 안에서만** 고른다. 예전에는 손패 전체에서 골라
+    //    낼 수 없는 카드를 집기도 했다.
+    const pickFrom = (pred) => affordable.find(x => pred(x.c));
+    let chosen = null;
+    if (state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.6) {
+      chosen = pickFrom(c => c.skills && c.skills[0] && (c.skills[0].heal > 0 || c.skills[0].shield > 0));
+    } else if (state.bossMinions.length < bossMinionCapThisTurn()) {
+      chosen = pickFrom(c => c.cardType === 'unit' || c.cardType === 'structure');
+    } else {
+      chosen = pickFrom(c => c.cardType === 'spell');
+    }
+    // 우선순위에 맞는 게 없으면 **가장 비싼 것**부터 (마나를 놀리지 않는다)
+    if (!chosen) chosen = affordable.slice().sort((a, b) => (b.c.cost || 0) - (a.c.cost || 0))[0];
+
+    const cardToPlay = state.bossHand.splice(chosen.i, 1)[0];
     if (cardToPlay) {
+      bossSide.mana -= (cardToPlay.cost || 0);
       await playBossCard(cardToPlay);
       renderBattleUI();
       await new Promise(r => setTimeout(r, 400));

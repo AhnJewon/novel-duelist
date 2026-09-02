@@ -27,9 +27,14 @@ import { createStatusState } from './status-effects.js';
 export const BATTLE_MODES = {
   pve: {
     label: 'PvE (보스전)',
-    // 보스는 마나를 쓰지 않는다. 스크립트 AI가 턴마다 카드를 몰아 낸다.
-    foeUsesMana: false,
-    foeVirtualMana: 99,
+    // 💎 보스도 플레이어와 **같은 마나 규칙**을 쓴다 (턴 수만큼, 상한 10).
+    //
+    // 🐛 예전에는 `foeUsesMana: false` + 가상 마나 99였다. 보스가 자원 제약 없이
+    //    매 턴 카드를 2~3장씩 몰아 내서, 플레이어가 1마나일 때 이미 전장을
+    //    채우고 있었다. "행동이 너무 많다"는 체감의 원인이 이것이다.
+    //    이제 보스도 낼 수 있는 만큼만 낸다.
+    foeUsesMana: true,
+    foeVirtualMana: 0,
     // 보스 고유의 다단계 콤보 패턴 사용
     foeComboPatterns: true
   },

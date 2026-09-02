@@ -488,7 +488,14 @@ export async function saveAndFightBoss() {
   const newBoss = {
     ...generatedBossPreviewData,
     id: `custom-boss-${Date.now()}`,
-    actionIdx: 0
+    actionIdx: 0,
+    // ⚜️ 🐛 카드군 선택이 **한쪽 경로에서만** 반영되고 있었다.
+    //    `generateBossWithLLM`은 readBossTheme()를 넣었지만,
+    //    showBossPreview를 쓰는 `generateAIBoss`(메인 버튼)와 `generateMockBoss`는
+    //    넣지 않아서 **UI에서 카드군을 골라도 조용히 무시**됐다.
+    //    보스가 실제로 만들어지는 지점은 여기 하나뿐이므로 여기서 붙인다 —
+    //    생성기를 새로 추가해도 자동으로 따라온다.
+    ...readBossTheme()
   };
 
   state.bossesList.unshift(newBoss);
