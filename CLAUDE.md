@@ -109,6 +109,7 @@
 | 밸런스 수치 조정 | `js/config.js`의 `RARITY_BALANCE_CAPS` **+ 프롬프트 텍스트도 함께** |
 | 카드 생성 프롬프트 | `js/card-forge.js`(1장) / `js/card-pack.js`(5장) |
 | 카드 타입별 프롬프트 규칙 | `js/card-type-rules.js` **한 곳** |
+| 한국어 어법 교정 (조사·활용) | `js/korean-grammar.js` **한 곳** |
 | 설명문 2단계 생성 · 검증 | `js/card-describe.js` **한 곳** |
 | LLM 파라미터 | `js/ai-service.js`의 `callOllamaChat()` |
 | 이미지 태그 규칙 (규칙 기반) | `js/dan-tag-gen.js` |
@@ -267,3 +268,11 @@
 45. **설명문 검증 패턴에 한국어 활용형을 넣으세요.** `/훔치/`는 "훔**친**다"를
     놓칩니다. 어간이 바뀌는 동사는 활용형도 함께 넣어야 합니다.
     → [DECISIONS #78](docs/DECISIONS.md)
+
+46. **어법 검사에 임베딩을 쓰지 마세요.** 조사 오류는 임베딩상 0.997로 정문과
+    거의 같습니다 (숫자 하나 바뀐 것보다 가깝습니다). 규칙 기반
+    `korean-grammar.js`를 쓰세요. → [DECISIONS #79](docs/DECISIONS.md)
+
+47. **카드 텍스트에 엔진 키를 그대로 쓰지 마세요.** `st.type`을 찍어서 카드에
+    "freeze"가 나왔습니다. `STATUS_EFFECTS[type].name`처럼 한국어 이름을 쓰세요.
+    → [DECISIONS #79](docs/DECISIONS.md)

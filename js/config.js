@@ -1,5 +1,6 @@
 // config.js - 게임 상수 및 설정
 import { normalizeTrapTrigger, TRAP_TRIGGERS } from './trap-system.js';
+import { STATUS_EFFECTS } from './status-effects.js';
 import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
          HP_TARGETS, readHpTarget, hpTargetCostMultiplier } from './effect-targets.js';
 
@@ -1003,7 +1004,10 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
     const st = skill.statusEffect;
     const val = st.value ? ` ${st.value}` : '';
-    parts.push(`${tgt}에게 ${st.type}${val} (${st.duration || 1}턴)`);
+    // 🐛 수정: `st.type`은 **엔진 키**다("freeze"). 카드에 영어가 그대로 찍혔다.
+    //    카드 텍스트는 전부 한국어여야 한다.
+    const stName = (STATUS_EFFECTS[st.type] && STATUS_EFFECTS[st.type].name) || st.type;
+    parts.push(`${tgt}에게 ${stName}${val} (${st.duration || 1}턴)`);
   }
   if (skill.passiveEffect) {
     const p = skill.passiveEffect;

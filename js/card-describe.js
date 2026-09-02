@@ -19,6 +19,7 @@
 
 import { callOllamaChat } from './ai-service.js';
 import { describeSkillFromData, syncDescriptionNumbers } from './config.js';
+import { tidyKoreanText } from './korean-grammar.js';
 
 /** 설명문이 언급하면 안 되는 효과를 찾기 위한 키워드 (config의 것과 목적이 같다) */
 const CLAIM_PATTERNS = {
@@ -145,11 +146,21 @@ export async function describeCardWithLLM(card, { timeoutMs = 45000, reasoningMo
       timeoutMs,
       reasoningMode
     });
-    const text = String((raw && (raw.description || raw.desc)) || '')
+    const rawText = String((raw && (raw.description || raw.desc)) || '')
       .replace(/^[\s"'`]+|[\s"'`]+$/g, '')
       .replace(/^(설명문?|효과)\s*[:：]\s*/, '')
       .split('\n')[0]
       .trim();
+
+    // 📝 어법 교정 — 4B 모델은 조사를 자주 틀린다 ("피해가 입힌다", "방어막 14을").
+    //    임베딩으로는 못 잡는다(어법 오류는 임베딩상 거의 0거리다). 규칙으로 고친다.
+    //    고칠 수 없는 문제(영어 잔존 등)가 남으면 폐기하고 결정론적 문장을 쓴다.
+    const tidied = tidyKoreanText(rawText);
+    const text = tidied.text;
+    if (tidied.problems.length > 0) {
+      console.info(`[설명 2단계] 폐기 (어법: ${tidied.problems.map(p => p.why).join(', ')}) → 데이터 생성 문장 사용: "${text.slice(0, 40)}"`);
+      return null;
+    }
 
     const problem = validateDescription(text, skill, cardType, facts);
     if (problem) {
