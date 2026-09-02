@@ -154,16 +154,35 @@ export async function describeCardWithLLM(card, { timeoutMs = 45000, reasoningMo
 }
 
 /**
- * 카드에 2단계 설명문을 적용한다. 실패하면 기존 설명문을 그대로 둔다.
- * (기존 설명문은 이미 sanitize가 데이터와 맞춰 놓은 정확한 문장이다)
+ * 카드 설명문을 **정확한 것으로 확정한다.**
+ *
+ * 2단계가 성공하면 그 문장을, 실패하면 **결정론적 문장**을 쓴다.
+ *
+ * 🐛 처음에는 실패 시 "기존 설명문을 그대로 둔다"고 했다. 틀렸다.
+ *    기존 설명문은 **LLM 1단계 원문**이고, sanitize는 원문이 있으면 숫자만
+ *    맞출 뿐 통째로 다시 쓰지는 않는다. 그래서 구현되지 않은 서술이 살아남았다:
+ *      "적의 공격 피해 160% 감소"        ← damageReduction은 5~40으로 클램프된다
+ *      "[성역의 수호사제] 카드에 방어막"  ← 특정 카드 지정은 구현되지 않았다
+ *      "[성역] 카드가 필드에 있을 때:"     ← 조건부 발동은 함정 전용이다
+ *    실팩 24장에서 실제로 나왔다.
+ *
+ * ⚠️ 플레이버를 잃더라도 **정확한 문장이 이긴다.** 이 프로젝트에서 설명문이
+ *    거짓말한 사례가 반복됐고, 그때마다 값을 치른 쪽은 플레이어였다.
+ *
+ * @returns {boolean} 2단계 문장이 채택됐는가 (false여도 설명문은 정확해진다)
  */
 export async function applyLlmDescription(card, opts = {}) {
-  const better = await describeCardWithLLM(card, opts);
-  if (!better) return false;
-  const skill = card.skill || (card.skills && card.skills[0]);
+  const skill = card && (card.skill || (card.skills && card.skills[0]));
   if (!skill) return false;
-  skill.description = better;
-  if (card.skills && card.skills[0]) card.skills[0].description = better;
-  if (card.skill) card.skill.description = better;
-  return true;
+  // 🃏 바닐라는 플레이버 텍스트가 정답이다. 건드리지 않는다.
+  if (skill.isVanilla) return false;
+
+  const better = await describeCardWithLLM(card, opts);
+  const finalText = better || describeSkillFromData(skill, card.cardType || 'unit');
+  if (!finalText) return false;
+
+  skill.description = finalText;
+  if (card.skills && card.skills[0]) card.skills[0].description = finalText;
+  if (card.skill) card.skill.description = finalText;
+  return !!better;
 }

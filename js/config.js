@@ -1,4 +1,5 @@
 // config.js - 게임 상수 및 설정
+import { normalizeTrapTrigger, TRAP_TRIGGERS } from './trap-system.js';
 import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
          HP_TARGETS, readHpTarget, hpTargetCostMultiplier } from './effect-targets.js';
 
@@ -762,7 +763,8 @@ export function enforcePowerBudget(cardData, skill) {
   let effects = listActiveEffects(out).sort((a, b) => b.cost - a.cost);
   for (const e of effects) {
     if (usedPower() <= affordablePower(rarity, cost, cardType)) break;
-    if (mustKeepEffect && listActiveEffects(out).length <= 1) break;
+    // trapTrigger는 조건이라 효과 수에 넣지 않는다 (넣으면 진짜 효과가 0이 된다)
+    if (mustKeepEffect && listActiveEffects(out).filter(x => x.key !== 'trapTrigger').length <= 1) break;
     clearEffect(e.key);
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
@@ -780,7 +782,11 @@ export function enforcePowerBudget(cardData, skill) {
   //   ⚠️ **바닐라는 소환수 전용이다.** 마법·함정·건축물은 위 4단계가 마지막
   //      효과를 남기므로 여기 걸리지 않지만, LLM이 애초에 효과를 하나도 안 준
   //      경우가 있다. 그때는 백지 카드가 되므로 최소 효과를 넣어준다.
-  if (listActiveEffects(out).length === 0) {
+  //   ⚠️ trapTrigger는 **조건이지 효과가 아니다.** 세면 안 된다.
+  //      🐛 세는 바람에 효과 0인 함정이 "효과 1개"로 통과했고,
+  //         설명문이 "조건 충족 시 발동합니다."만 남았다 — 터져도 아무 일이 없다.
+  const realEffects = listActiveEffects(out).filter(e => e.key !== 'trapTrigger');
+  if (realEffects.length === 0) {
     if (cardType === 'unit') {
       out.isVanilla = true;
     } else if (cardType === 'structure') {
@@ -1018,6 +1024,13 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
     }
   }
   if (skill.taunt) parts.push('도발 — 공격을 먼저 받는다');
+
+  // 🪤 함정은 **언제 터지는지**가 효과만큼 중요하다.
+  //    조건 없이 "적 1체에게 12 피해"만 적으면 플레이어가 세트할 판단을 못 한다.
+  if (cardType === 'trap' && parts.length > 0) {
+    const spec = TRAP_TRIGGERS[normalizeTrapTrigger(skill.trapTrigger)];
+    if (spec) return `${spec.label}: ${parts.join(' · ')}.`;
+  }
 
   if (parts.length === 0) {
     // 🃏 바닐라 — 효과 슬롯에 **플레이버 텍스트**를 담는다.
@@ -1314,6 +1327,15 @@ export function sanitizeAndClampCardData(cardData) {
   if (cardType !== 'trap') {
     if (skill.trapTrigger) delete skill.trapTrigger;
     if (skill.condition) delete skill.condition;
+  } else if (normalizeTrapTrigger(skill.trapTrigger) !== skill.trapTrigger) {
+    // 🐛 반대 방향이 비어 있었다: **발동조건 없는 함정**은 영영 발동하지 않는다.
+    //    필드에 놓이고 아무 일도 일어나지 않는 死카드다.
+    //    (실측: 보관함 함정 6장 **전부** 트리거가 없었다 — 카드팩 생성기가
+    //     프롬프트로 요구해놓고 응답에서 읽지를 않았다)
+    //    LLM이 안 줬거나 엉뚱한 값을 줬으면 가장 무난한 조건으로 채운다.
+    const before = skill.trapTrigger;
+    skill.trapTrigger = normalizeTrapTrigger(skill.trapTrigger);
+    console.log(`[Trap] "${cardData.name || '무명'}" 발동조건이 ${before ? `알 수 없는 값(${before})` : '없어'} → foePlaysUnit으로 지정 (조건 없는 함정은 발동하지 않는다)`);
   }
 
   // 🛡️ 피해 경감 — 퍼센트. 100%(완전 무효)는 '무적'과 같아지므로 상한을 둔다.

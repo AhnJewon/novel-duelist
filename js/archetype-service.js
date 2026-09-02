@@ -1060,10 +1060,14 @@ export async function rebalanceExistingCards({ dryRun = false, silent = false } 
     //    ("자신 1체에 12 피해" 같은 카드가 보관함에 남아 있었다 → DECISIONS #74)
     const targetChanged = (oldSkill.targetSide || 'foe') !== (newSkill.targetSide || 'foe')
       || (oldSkill.targetScope || 'single') !== (newSkill.targetScope || 'single');
+    // 🪤 발동조건이 붙거나 바뀌는 것도 감지해야 한다.
+    //    🐛 이게 없어서 **발동조건 없는 死함정**이 재조정에 안 걸렸다
+    //       (보관함 함정 6/6이 트리거 없이 남아 있었다).
+    const trapChanged = (oldSkill.trapTrigger || '') !== (newSkill.trapTrigger || '');
     const descChanged = String(oldSkill.description || '') !== String(newSkill.description || '');
     if (!before.overBudget && before.illegal.length === 0
         && !costChanged && !effectsChanged && !statsChanged
-        && !targetChanged && !descChanged) continue;
+        && !targetChanged && !descChanged && !trapChanged) continue;
 
     log.push({
       카드: card.name,
@@ -1075,6 +1079,7 @@ export async function rebalanceExistingCards({ dryRun = false, silent = false } 
       '마나': `${before.cost} → ${after.cost}`,
       사유: before.overBudget ? '예산 초과'
         : costChanged ? '마나 과다'
+        : trapChanged ? '함정 발동조건 보정'
         : targetChanged ? '대상 교정'
         : (effectsChanged || statsChanged) ? '효과/스탯 교정'
         : '설명문 교정',

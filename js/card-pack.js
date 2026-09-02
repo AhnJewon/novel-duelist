@@ -353,6 +353,8 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let llmPassiveRaw = null;      // 🏛️ LLM이 설계한 건축물 패시브 (없으면 폴백)
   let llmVanilla = false;        // 🃏 LLM이 바닐라로 만들겠다고 했는가
   let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
+  let llmTrapTrigger = null;     // 🪤 함정 발동조건 (없으면 sanitize가 기본값을 넣는다)
+  let llmTrapCondition = null;   // 🪤 그 조건이 요구하는 값 (속성·카드군 등)
   let skillName = `${baseConcept}의 비기`;
   // 🐛 수정: 예전에는 함정에도 소환수 문구를 붙여 **"0 공격을 가합니다"**가 나왔다
   //    (함정은 공격력이 0이다). 건축물 문구도 실제 패시브와 무관한 고정 문장이었다.
@@ -610,6 +612,10 @@ Return ONLY JSON:
       if (cardJson.targetScope) skillTargetScope = cardJson.targetScope;
       if (cardJson.targetCount) skillTargetCount = parseInt(cardJson.targetCount) || 1;
       if (cardJson.passiveEffect) llmPassiveRaw = cardJson.passiveEffect;
+      // 🪤 🐛 이걸 읽지 않아서 **생성된 함정이 전부 발동조건 없이** 나왔다.
+      //    프롬프트로는 요구해놓고 응답에서 버리고 있었다 (보관함 함정 6/6이 死카드).
+      if (cardJson.trapTrigger) llmTrapTrigger = String(cardJson.trapTrigger);
+      if (cardJson.condition) llmTrapCondition = cardJson.condition;
 
       if (cardJson.themeName) {
         themeObj = await registerNewArchetype({
@@ -719,13 +725,17 @@ Return ONLY JSON:
     cost: cost,
     isVanilla: makeVanilla || undefined,
     flavorText: llmFlavorText || undefined,
-    damage: makeVanilla ? 0 : (cardType === 'spell' ? spellDmg : atk),
+    // 🪤 함정도 피해를 준다. atk를 쓰면 함정은 공격력이 0이라 피해도 0이 된다.
+    damage: makeVanilla ? 0 : ((cardType === 'spell' || cardType === 'trap') ? spellDmg : atk),
     // 🎯 LLM이 정한 대상 규칙. 없으면 sanitizeAndClampCardData가 기본값(적 1체)으로 떨군다.
     //    isAoeSpell은 여기서 강제하지 않는다 — targetScope가 단일 소스다.
     targetSide: skillTargetSide,
     targetScope: skillTargetScope,
     targetCount: skillTargetCount,
     passiveEffect: structPassive,
+    // 🪤 함정 전용. sanitize가 비어 있으면 기본 조건을 채운다.
+    trapTrigger: cardType === 'trap' ? (llmTrapTrigger || undefined) : undefined,
+    condition: cardType === 'trap' ? (llmTrapCondition || undefined) : undefined,
     statusEffect: { type: 'none', duration: 0, value: 0 }
   };
   // 🏷️ 타입에 안 맞는 이름 교정 — LLM이 규칙을 어겨도 여기서 막는다.
