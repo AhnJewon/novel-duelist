@@ -31,7 +31,7 @@ import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLi
 import { readTargetSpec, needsTargetPick, collectTargetKeys, resolveTargetKey,
          describeTarget, targetCostMultiplier, hasTargetableEffect } from '/js/effect-targets.js';
 import { TRAP_TRIGGERS, checkTraps, normalizeTrapTrigger } from '/js/trap-system.js';
-import { refreshMinions, createSides, createBuffs, canPlayCard } from '/js/combat-side.js';
+import { refreshMinions, createSides, createBuffs, canPlayCard, growMana } from '/js/combat-side.js';
 import { seedBattleRng } from '/js/rng.js';
 import { isValidTarget, cancelTargeting, beginTargeting } from '/js/targeting.js';
 import { getSkillBadgesHtml } from '/js/card-renderer.js';
@@ -55,7 +55,7 @@ function check(suite, name, pass, detail = '') {
 function snapshot() {
   return JSON.stringify({
     php: state.playerHp, pmax: state.playerMaxHp, psh: state.playerMaxShield,
-    pmana: state.playerMana, phand: (state.playerHand || []).length,
+    pmana: state.playerMana, bmana: state.bossMana, phand: (state.playerHand || []).length,
     pdeck: (state.playerDeck || []).length,
     pmin: (state.playerMinions || []).map(m => `${m.name}:${m.currentHp}/${m.attack}/${m.defense}/${!!m.taunt}/${JSON.stringify(m.statuses || {})}`),
     bhp: state.currentBoss && state.currentBoss.currentHp, bsh: state.currentBoss && state.currentBoss.shield,
@@ -939,9 +939,9 @@ function suiteCombos() {
           playerMaxShield: (side === 'boss' && cfg.foeShield) ? 20 : 0,
           playerMinions: side === 'player' ? mine : [],
           bossMinions: side === 'boss' ? mine : [],
-          // handRich: 플레이어 상한 7의 70%=5, 보스 상한 5의 70%=4
+          // handRich: 상한 7의 70% = 5 — 양 진영 같다 (🐛 예전엔 보스 상한 5의 70%=4)
           playerHand: Array.from({ length: cfg.handRich ? 5 : 1 }, () => card()),
-          bossHand: Array.from({ length: cfg.handRich ? 4 : 1 }, () => card()),
+          bossHand: Array.from({ length: cfg.handRich ? 5 : 1 }, () => card()),
           playerDeck: [card()], bossDeck: [card()]
         });
         const src = card({ name: '발동카드', themeId: 'th-test', themeName: '검증군', instanceId: 'src#1' });
@@ -1018,8 +1018,9 @@ function suiteCombos() {
   check(S, 'selfView(player) = 플레이어 상태',
     pv.hp === 30 && pv.maxHp === 50 && pv.shield === 7 && pv.hand.length === 2 && pv.handCap === 7,
     JSON.stringify({ hp: pv.hp, sh: pv.shield, hand: pv.hand.length }));
+  // 손패 상한은 양 진영 7 (재기준선: 예전 보스 5 — DECISIONS #94)
   check(S, 'selfView(boss) = 보스 상태',
-    bv.hp === 120 && bv.maxHp === 300 && bv.shield === 9 && bv.hand.length === 1 && bv.handCap === 5,
+    bv.hp === 120 && bv.maxHp === 300 && bv.shield === 9 && bv.hand.length === 1 && bv.handCap === 7,
     JSON.stringify({ hp: bv.hp, sh: bv.shield, hand: bv.hand.length }));
   check(S, 'foeView는 정확히 반대',
     JSON.stringify(foeView({ game: state, side: 'boss' }).hp) === JSON.stringify(pv.hp) &&
@@ -1368,6 +1369,65 @@ function suitePlayCard() {
 }
 
 // ============================================================
+// 9b. 진영 대칭 — 보스는 "콤보를 가진 봇 플레이어"다 (DECISIONS #94)
+// ------------------------------------------------------------
+// 규칙은 양 진영 동일해야 한다. Side 접근자·거울 뷰·헬퍼가 정말 대칭인지 잰다.
+// 1단계(Side 완성) 검사 — 수정 전 코드에서는 슬롯 3·손패 5·클로저 마나라 전부 실패했다.
+// ============================================================
+async function suiteSides() {
+  const S = '진영 대칭';
+  const T = BE.__test;
+
+  // 상한: 양 진영 같은 값 (🐛 보스만 슬롯 3·손패 5였다)
+  resetBoard();
+  const foe = BE.getSide('boss'), me = BE.getSide('player');
+  check(S, '상대 슬롯 상한 = 플레이어 (4)', foe.maxMinions === 4 && me.maxMinions === 4, `${foe.maxMinions}/${me.maxMinions}`);
+  check(S, '상대 손패 상한 = 플레이어 (7)', foe.maxHand === 7 && me.maxHand === 7, `${foe.maxHand}/${me.maxHand}`);
+  check(S, 'HAND_CAP도 양 진영 7', HAND_CAP.player === 7 && HAND_CAP.boss === 7, JSON.stringify(HAND_CAP));
+
+  // PvE에서 상대 소환수 3기여도 4번째를 낼 수 있다
+  resetBoard({ bossMinions: [minion(), minion(), minion()] });
+  state.bossMana = 5; state.bossMaxMana = 5;
+  check(S, '상대 전장 3기여도 canPlayCard ok (예전 상한 3)',
+    canPlayCard(BE.getSide('boss'), card({ cost: 1 })).ok === true);
+
+  // 마나는 한 집: growMana(boss) → state.bossMana
+  resetBoard();
+  growMana(BE.getSide('boss'), 4);
+  check(S, '상대 마나 성장이 state.bossMana에 쓰인다',
+    state.bossMana === 4 && BE.getSide('boss').mana === 4, `state=${state.bossMana} side=${BE.getSide('boss').mana}`);
+
+  // 거울의 manaGain이 진영 마나를 올린다 (🐛 예전엔 클로저와 다른 집에 써서 죽었다)
+  resetBoard();
+  state.bossMana = 1; state.bossMaxMana = 5;
+  await BE.playFoeCardPvp(card({ name: '상대마나', cardType: 'spell', cost: 0, skills: [{ manaGain: 2 }] }));
+  check(S, '상대 manaGain이 진영 마나를 올린다', BE.getSide('boss').mana === 3, `${BE.getSide('boss').mana}`);
+
+  // 거울 드로우가 n장 뽑는다 (🐛 예전엔 n을 무시하고 1장)
+  resetBoard({ bossHand: [], bossDeck: [card(), card(), card()] });
+  await BE.playFoeCardPvp(card({ name: '상대드로우', cardType: 'spell', cost: 0, skills: [{ drawCards: 2 }] }));
+  check(S, '상대 drawCards:2 → 2장 (예전 1장)',
+    state.bossHand.length === 2 && state.bossDeck.length === 1, `hand=${state.bossHand.length} deck=${state.bossDeck.length}`);
+
+  // 거울 뷰가 상대 덱(= 내 덱)을 노출한다 — 덱 서치·파기 연계가 읽는다
+  resetBoard({ playerDeck: [card({ name: '내덱' })] });
+  const fg = typeof T.foeGame === 'function' ? T.foeGame() : null;
+  check(S, '거울 뷰에 bossDeck(= 내 덱)이 있다', !!fg && fg.bossDeck === state.playerDeck);
+
+  // 진영 접근자가 함정 구역을 본다
+  resetBoard();
+  T.setTrap('boss', card({ name: '상대함정', cardType: 'trap', trapTrigger: 'foeAttacks', skills: [{ damage: 1 }] }));
+  check(S, 'side.traps가 함정 구역을 본다',
+    (BE.getSide('boss').traps || []).length === 1 && (BE.getSide('player').traps || []).length === 0);
+
+  // 헬퍼는 한 팩토리에서 나오고 진영 상대적이다: 상대 헬퍼의 "적 본체 피해"는 나에게 온다
+  resetBoard({ playerHp: 50 });
+  const hb = T.helpers('boss');
+  if (hb && typeof hb.dealDamageToBoss === 'function') hb.dealDamageToBoss(7, '검사');
+  check(S, "helpers('boss').dealDamageToBoss는 내 본체를 친다", state.playerHp === 43, `${state.playerHp}`);
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -1518,7 +1578,9 @@ async function suiteBossTurn() {
   check(S, '스텝 summon_or_buff: 소환 + 후유증',
     state.bossMinions.length === 1 && state.bossMinions[0].canAttack === false);
 
-  resetBoard({ bossMinions: [minion({ name: 'A', attack: 5 }), minion({ name: 'B', attack: 5 }), minion({ name: 'C', attack: 5 })] });
+  // "자리가 없다" = 슬롯 4를 다 채운 상태 (재기준선: 예전 보스 슬롯 3 — DECISIONS #94)
+  resetBoard({ bossMinions: [minion({ name: 'A', attack: 5 }), minion({ name: 'B', attack: 5 }),
+                             minion({ name: 'C', attack: 5 }), minion({ name: 'D', attack: 5 })] });
   await BE.__test.bossStep({ type: 'summon_or_buff', name: '강화', value: 1 });
   check(S, '스텝 summon_or_buff: 자리가 없으면 전체 +3 강화',
     state.bossMinions.every(m => m.attack === 8), `${state.bossMinions.map(m => m.attack)}`);
@@ -2072,7 +2134,7 @@ export async function runAll() {
     ['공격 규칙', suiteAttack], ['효과 대상', suiteTargets], ['카드 효과', suiteEffects],
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
-    ['시전 통합', suitePlayCard], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];

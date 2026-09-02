@@ -17,39 +17,22 @@
 
 import { state } from './storage.js';
 import { createStatusState } from './status-effects.js';
+import { SLOT_CAP, HAND_CAP } from './battle-rules.js';
 
 // ============================================================
-// 🎮 전투 모드 — PvE와 PvP는 규칙이 다르다
+// 🎮 전투 모드 — 라벨과 `isPvp()` 판정만 담는다
 // ------------------------------------------------------------
-// 억지로 하나의 대칭 엔진으로 합치면 PvE 밸런스가 무너진다.
-// 공용 로직(피해·상태이상·연계)은 공유하고, 다른 부분만 모드로 가른다.
+// 🐛 예전에는 `foeUsesMana`·`foeVirtualMana`·`foeComboPatterns` 플래그가 있었지만
+//    아무도 읽지 않았고(둘 다 마나를 쓰게 된 뒤 가상 마나 분기는 도달 불가),
+//    "PvE와 PvP는 규칙이 다르다"는 착시만 만들었다. **규칙은 양 진영·양 모드 동일**하다.
+//    다른 것은 상대 진영을 누가 조종하는가(사람/봇/원격)뿐이고 그건 `side.controller`가 쥔다.
+//    보스 고유의 콤보 스텝은 봇 컨트롤러의 행동이다 → DECISIONS #94
+//
+// ⚠️ 연계 발동조건도 모드와 무관하게 양 진영 동일이다 (archetype-combos.js의 runArchetypeCombo).
 // ============================================================
 export const BATTLE_MODES = {
-  pve: {
-    label: 'PvE (보스전)',
-    // 💎 보스도 플레이어와 **같은 마나 규칙**을 쓴다 (턴 수만큼, 상한 10).
-    //
-    // 🐛 예전에는 `foeUsesMana: false` + 가상 마나 99였다. 보스가 자원 제약 없이
-    //    매 턴 카드를 2~3장씩 몰아 내서, 플레이어가 1마나일 때 이미 전장을
-    //    채우고 있었다. "행동이 너무 많다"는 체감의 원인이 이것이다.
-    //    이제 보스도 낼 수 있는 만큼만 낸다.
-    foeUsesMana: true,
-    foeVirtualMana: 0,
-    // 보스 고유의 다단계 콤보 패턴 사용
-    foeComboPatterns: true
-  },
-  pvp: {
-    label: 'PvP (1대1 대전)',
-    // 양쪽 모두 같은 마나 규칙
-    foeUsesMana: true,
-    foeVirtualMana: 0,
-    // 스크립트 패턴 없음 — 상대도 카드만 낸다
-    foeComboPatterns: false
-  }
-  // ⚠️ 연계 발동조건은 **모드와 무관하게 양 진영 동일**이다.
-  //    예전에는 여기 foeComboTriggers 플래그가 있었지만 아무도 읽지 않았고,
-  //    runArchetypeCombo가 `side === 'player'`로 하드코딩돼 있었다.
-  //    → archetype-combos.js의 runArchetypeCombo
+  pve: { label: 'PvE (보스전)' },
+  pvp: { label: 'PvP (1대1 대전)' }
 };
 
 let _mode = 'pve';
@@ -82,7 +65,13 @@ export function createBuffs() {
     pierceShield: false,
     // 🛡️ 피해 경감 (%) + 남은 턴. 무적과 달리 완전 차단이 아니라 비율로 깎는다.
     damageReduction: 0,
-    damageReductionTurns: 0
+    damageReductionTurns: 0,
+    // 🌵 가시(받은 피해 반사 비율)와 남은 턴.
+    //    🐛 예전엔 `state.currentBoss.thorns`에만 있어 보스 전용이었고, 한 번 걸리면
+    //       전투 끝까지 영구였다(초기화도 안 됨). 버프로 두면 양 진영이 가질 수 있고
+    //       턴 시작마다 줄어든다.
+    thorns: 0,
+    thornsTurns: 0
   };
 }
 
@@ -90,11 +79,14 @@ export function createBuffs() {
  * 플레이어 진영 접근자.
  * 게터/세터로 기존 state 필드를 그대로 읽고 쓴다 — 저장 구조 변경 없음.
  */
-function makePlayerSide(statuses, buffs) {
+function makePlayerSide(statuses, buffs, trapZones) {
   return {
     key: SIDE_PLAYER,
     name: '플레이어',
-    isAI: false,
+    // 🎮 누가 조종하는가 (human | bot | remote). 규칙 함수는 이 값을 보지 않는다 —
+    //    "봇만 콤보 스텝을 낼 수 있다" 같은 관문만 본다.
+    controller: 'human',
+    get isAI() { return this.controller !== 'human'; },
 
     get hp() { return state.playerHp; },
     set hp(v) { state.playerHp = v; },
@@ -116,8 +108,14 @@ function makePlayerSide(statuses, buffs) {
     get minions() { return state.playerMinions; },
     set minions(v) { state.playerMinions = v; },
 
-    get maxMinions() { return 4; },
-    get maxHand() { return 7; },
+    get maxMinions() { return SLOT_CAP; },
+    get maxHand() { return HAND_CAP; },
+
+    // 🪤 세트된 함정 — battle-engine의 모듈 지역 trapZones를 진영 시점으로 노출한다
+    get traps() { return trapZones ? trapZones[SIDE_PLAYER] : []; },
+    set traps(v) { if (trapZones) trapZones[SIDE_PLAYER] = v; },
+    get lastCastCard() { return state.playerLastCastCard || null; },
+    set lastCastCard(v) { state.playerLastCastCard = v; },
 
     statuses,
     buffs
@@ -125,20 +123,27 @@ function makePlayerSide(statuses, buffs) {
 }
 
 /**
- * 상대 진영 접근자 (PvE=보스 / PvP=상대 플레이어).
+ * 상대 진영 접근자 (PvE=봇 보스 / PvP=원격 플레이어).
  *
- * 마나는 모드에 따라 다르다.
- *   PvE: 보스는 마나를 쓰지 않는다 → 가상 99를 노출해 대칭 코드가 깨지지 않게 한다
- *   PvP: 플레이어와 완전히 같은 마나 규칙
+ * 규칙은 플레이어와 **완전히 같다** — 슬롯 4, 손패 7, 마나 성장 동일.
+ * 보스가 특별한 것은 콤보 스텝(봇 컨트롤러의 행동)과 체력 데이터뿐이다.
+ *
+ * 🐛 예전에는 마나가 클로저(`pvpMana`)에 살아서 `state.bossMana`(거울 뷰가 읽고 쓰는 곳)와
+ *    **두 집**이었다 — 거울의 manaGain은 죽은 필드에 썼고, growMana는 클로저에만 썼다.
+ *    슬롯 3·손패 5도 보스만 작았다. 이제 한 집, 한 값이다 → DECISIONS #94
  */
-function makeFoeSide(statuses, buffs) {
-  // PvP에서만 쓰는 실제 마나 저장소
-  const pvpMana = { cur: 1, max: 1 };
+function makeFoeSide(statuses, buffs, trapZones) {
+  let controller = null;   // initBattle이 세팅. 비어 있으면 모드에서 추론한다.
 
   return {
     key: SIDE_BOSS,
-    get name() { return isPvp() ? '상대' : '보스'; },
-    isAI: true,
+    // 로그에 찍히는 이름 — 보스 데이터/원격 프로필의 실제 이름을 쓴다
+    get name() {
+      return (state.currentBoss && state.currentBoss.name) || (isPvp() ? '상대' : '보스');
+    },
+    get controller() { return controller || (isPvp() ? 'remote' : 'bot'); },
+    set controller(v) { controller = v; },
+    get isAI() { return this.controller !== 'human'; },
 
     get hp() { return state.currentBoss ? state.currentBoss.currentHp : 0; },
     set hp(v) { if (state.currentBoss) state.currentBoss.currentHp = v; },
@@ -148,21 +153,25 @@ function makeFoeSide(statuses, buffs) {
     get shield() { return (state.currentBoss && state.currentBoss.shield) || 0; },
     set shield(v) { if (state.currentBoss) state.currentBoss.shield = v; },
 
-    get mana() { return modeConfig().foeUsesMana ? pvpMana.cur : modeConfig().foeVirtualMana; },
-    set mana(v) { if (modeConfig().foeUsesMana) pvpMana.cur = v; },
-    get maxMana() { return modeConfig().foeUsesMana ? pvpMana.max : modeConfig().foeVirtualMana; },
-    set maxMana(v) { if (modeConfig().foeUsesMana) pvpMana.max = v; },
+    get mana() { return Number.isFinite(state.bossMana) ? state.bossMana : 0; },
+    set mana(v) { state.bossMana = v; },
+    get maxMana() { return Number.isFinite(state.bossMaxMana) ? state.bossMaxMana : 0; },
+    set maxMana(v) { state.bossMaxMana = v; },
 
     get deck() { return state.bossDeck || (state.bossDeck = []); },
     set deck(v) { state.bossDeck = v; },
     get hand() { return state.bossHand || (state.bossHand = []); },
     set hand(v) { state.bossHand = v; },
-    get minions() { return state.bossMinions; },
+    get minions() { return state.bossMinions || (state.bossMinions = []); },
     set minions(v) { state.bossMinions = v; },
 
-    // PvP에서는 플레이어와 같은 슬롯 규칙
-    get maxMinions() { return isPvp() ? 4 : 3; },
-    get maxHand() { return isPvp() ? 7 : 5; },
+    get maxMinions() { return SLOT_CAP; },
+    get maxHand() { return HAND_CAP; },
+
+    get traps() { return trapZones ? trapZones[SIDE_BOSS] : []; },
+    set traps(v) { if (trapZones) trapZones[SIDE_BOSS] = v; },
+    get lastCastCard() { return state.bossLastCastCard || null; },
+    set lastCastCard(v) { state.bossLastCastCard = v; },
 
     statuses,
     buffs
@@ -171,12 +180,13 @@ function makeFoeSide(statuses, buffs) {
 
 /**
  * 전투 진영 한 쌍을 만든다.
- * 상태이상·버프는 battle-engine의 모듈 지역 변수를 그대로 참조하도록 주입받는다.
+ * 상태이상·버프·함정 구역은 battle-engine의 모듈 지역 변수를 그대로 참조하도록 주입받는다.
+ * (⚠️ trapZones는 sides보다 **먼저** 만들어 넘겨야 side.traps가 산다)
  */
-export function createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs }) {
+export function createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones = null }) {
   return {
-    [SIDE_PLAYER]: makePlayerSide(playerStatus, playerBuffs),
-    [SIDE_BOSS]: makeFoeSide(bossStatus, bossBuffs || createBuffs())
+    [SIDE_PLAYER]: makePlayerSide(playerStatus, playerBuffs, trapZones),
+    [SIDE_BOSS]: makeFoeSide(bossStatus, bossBuffs || createBuffs(), trapZones)
   };
 }
 

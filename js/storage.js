@@ -39,6 +39,10 @@ export const state = {
   playerHand: [],
   playerMinions: [],
   bossMinions: [],
+  // 💎 상대 진영 마나 — Side(combat-side.js)가 읽고 쓰는 **한 집**.
+  //    🐛 예전엔 클로저(pvpMana)와 이 필드 두 집이어서 거울의 manaGain이 죽은 필드에 썼다.
+  bossMana: 1,
+  bossMaxMana: 1,
   currentBoss: null,
   turnCount: 1,
   isAnimating: false

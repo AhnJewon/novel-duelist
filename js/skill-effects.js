@@ -9,6 +9,7 @@ import { escapeHtml } from './dom-utils.js';
 import { resolveTargetKey, readHpTarget, readTargetSpec, readDamageTarget } from './effect-targets.js';
 import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
+import { SLOT_CAP, HAND_CAP } from './battle-rules.js';
 
 /**
  * 공격 대상 선택. 실드 관통이면 전열을 무시하고 본체(null)를 노린다.
@@ -444,8 +445,8 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     const wantTheme = card.themeId || card.themeName || null;
     let found = 0;
     for (let i = 0; i < skill.searchDeck; i++) {
-      if (game.playerHand.length >= 7) {
-        addBattleLog(`<span class="text-red-400">손패가 가득 차 더 가져올 수 없습니다. (최대 7장)</span>`);
+      if (game.playerHand.length >= HAND_CAP) {
+        addBattleLog(`<span class="text-red-400">손패가 가득 차 더 가져올 수 없습니다. (최대 ${HAND_CAP}장)</span>`);
         break;
       }
       // 같은 카드군 → 없으면 아무 카드나
@@ -468,7 +469,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
   // 👾 토큰 소환 — 전장을 채운다.
   //    전장 자체가 벽인 지금(DECISIONS #84) 이건 방어 수단이기도 하다.
   if (skill.summonToken > 0 && Array.isArray(game.playerMinions)) {
-    const maxSlots = 4;
+    const maxSlots = SLOT_CAP;   // 양 진영 같은 값 (거울에서도 상대 전장 상한이 맞는다)
     let made = 0;
     for (let i = 0; i < skill.summonToken; i++) {
       if (game.playerMinions.length >= maxSlots) {

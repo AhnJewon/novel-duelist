@@ -133,8 +133,13 @@ export function coerceCardElement(theme, requestedElement) {
 // ⚠️ game 필드를 직접 읽지 말고 이 뷰를 쓰세요. 직접 읽으면 보스 경로와
 //    PvP 거울 경로에서 조용히 틀린 진영을 봅니다.
 
-/** 손패 상한. handRich를 진영별 비율로 판정하는 데 쓴다. */
-export const HAND_CAP = { player: 7, boss: 5 };
+/**
+ * 손패 상한. handRich를 진영별 비율로 판정하는 데 쓴다.
+ * 🐛 예전엔 { player: 7, boss: 5 }로 보스만 작았다. 양 진영 한 값 — battle-rules.js가 단일 소스.
+ *    (이 파일은 원래 import가 없어 순환 걱정이 없는 상수 모듈만 끌어온다)
+ */
+import { HAND_CAP as HAND_LIMIT } from './battle-rules.js';
+export const HAND_CAP = { player: HAND_LIMIT, boss: HAND_LIMIT };
 
 function viewOf(ctx, who) {
   const g = (ctx && ctx.game) || {};

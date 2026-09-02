@@ -34,9 +34,10 @@ import {
   registerPvpHandlers, slimCardForWire
 } from './pvp-battle.js';
 import { readDirectAttack } from './card-keywords.js';
+import { SLOT_CAP } from './battle-rules.js';
 
-export const BATTLE_SLOTS = 4;
-export const BOSS_SLOTS = 3;
+// 전장 슬롯은 양 진영 동일 (battle-rules.js). 🐛 예전엔 보스만 3이었다 → DECISIONS #94
+export const BATTLE_SLOTS = SLOT_CAP;
 
 // 🛡️⚔️ 도발·직접공격 판정은 card-keywords.js가 단일 소스다.
 //    카드 렌더러와 상세 팝업도 같은 함수를 써야 해서 엔진 밖으로 뺐다
@@ -83,13 +84,13 @@ export function canAttackFace(defenderMinions, attacker) {
 const BOSS_RAMP = {
   1: { minions: 1, cards: 1 },
   2: { minions: 2, cards: 1 }
-  // 3턴 이후는 제한 없음 (BOSS_SLOTS / 기본 카드 수)
+  // 3턴 이후는 제한 없음 (SLOT_CAP / 기본 카드 수)
 };
 
 /** 이번 턴 보스가 채울 수 있는 최대 소환수 수 */
 function bossMinionCapThisTurn() {
   const ramp = BOSS_RAMP[state.turnCount];
-  return ramp ? Math.min(BOSS_SLOTS, ramp.minions) : BOSS_SLOTS;
+  return ramp ? Math.min(SLOT_CAP, ramp.minions) : SLOT_CAP;
 }
 
 let isPlayerTurn = true;
@@ -102,13 +103,13 @@ let playerStatus = createStatusState();
 let playerBuffs = createBuffs();
 let bossBuffs = createBuffs();
 
+// 🪤 세트된 함정. 진영별로 분리해 관리한다.
+// 상대의 행동에만 반응하므로 소유자를 알아야 한다. (sides보다 먼저 — side.traps가 이걸 본다)
+let trapZones = { player: [], boss: [] };
+
 // 진영 접근자. 저장 구조는 그대로 두고 대칭 인터페이스만 씌운다.
 // 새 전투 로직은 state.playerHp가 아니라 sides.player.hp를 쓰세요.
-let sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs });
-
-// 🪤 세트된 함정. 진영별로 분리해 관리한다.
-// 상대의 행동에만 반응하므로 소유자를 알아야 한다.
-let trapZones = { player: [], boss: [] };
+let sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
 
 // 🎯 슬롯을 눌러 소환할 때의 목표 위치. 카드를 그냥 클릭하면 null(맨 뒤).
 let _pendingSummonSlot = null;
@@ -134,36 +135,59 @@ export function describeBattleSides() {
   return { player: describeSide(sides.player), boss: describeSide(sides.boss) };
 }
 
-// 카드군 콤보 / 스킬 효과에 넘기는 헬퍼 묶음.
-// 이전에는 이 객체 리터럴이 playCard 안에 두 번 그대로 복붙돼 있었다.
-function makeComboHelpers() {
+/**
+ * 효과·연계가 읽는 **게임 뷰**. 플레이어는 state 그대로, 상대는 진영을 뒤집은 거울.
+ * 필드 이름(`playerHp`=자기, `bossMinions`=상대)은 유산이고 의미는 self/foe다.
+ */
+function viewFor(side) {
+  return side.key === SIDE_PLAYER ? state : makeMirroredGame();
+}
+
+/**
+ * 효과·연계에 넘기는 헬퍼 묶음 — **진영 상대적**이다.
+ *
+ * 키 이름은 유산이다: `dealDamageToBoss` = "내 상대의 본체에", `setPlayerStatus` = "내 진영에",
+ * `setBossStatus` = "상대 진영에". 플레이어 카드든 상대 카드든 **같은 구현이 같은 이름**으로 쓴다.
+ *
+ * 🐛 예전에는 세 벌이었다 — makeComboHelpers(플레이어), makeMirroredHelpers(PvP 거울),
+ *    makeBossComboHelpers(보스 전용 구현). 키가 서로 달라 한쪽에만 있는 헬퍼를 부르면
+ *    TypeError가 runArchetypeCombo의 try/catch에 삼켜져 조용히 아무 일도 안 일어났다
+ *    (DECISIONS #82). 거울은 drawCards의 n을 무시하고 1장만 뽑았다.
+ *    보스 전용 연계 구현이 사라지는 2단계까지 makeBossComboHelpers만 잠시 남는다 → DECISIONS #94
+ */
+function helpersFor(side) {
+  const other = sides[opponentOf(side.key)];
+  const mine = side.key === SIDE_PLAYER;
+  const labelOf = (s) => (s.key === SIDE_PLAYER ? '내' : '상대');
   return {
     addBattleLog,
     audio,
-    dealDamageToBoss,
-    drawCards,
+    // "적 본체에 피해" — 이 진영의 상대에게
+    dealDamageToBoss: mine
+      ? (dmg, src) => dealDamageToBoss(dmg, src)
+      : (dmg) => applyDirectDamageToPlayer(dmg, false),
+    // 드로우는 **자기** 덱에서 자기 손패로, n장
+    drawCards: (n = 1) => (mine ? drawCards(n) : drawTo(side, n, { onDraw: () => audio.playDraw() })),
     // 💫 소환수 전용 상태이상(기절·빙결·화상·맹독)은 본체에 걸리지 않는다.
-    //    관문이 상대 전장의 최전방 소환수로 돌린다.
+    //    관문이 그 진영의 최전방 소환수로 돌린다.
     setBossStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(bossStatus, state.bossMinions, '상대', type, turns, value, allowBody),
+      applyStatusRespectingScope(other.statuses, other.minions, labelOf(other), type, turns, value, allowBody),
     setPlayerStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(playerStatus, state.playerMinions, '내', type, turns, value, allowBody),
-    setPlayerBuff: (type, val) => { playerBuffs[type] = val; },
-    foeLabel: isPvpActive() ? getFoeName() : '보스',
-    onShielded: () => triggerTraps('player', 'shielded', null),
-    foeHp: () => state.currentBoss ? state.currentBoss.currentHp : 0,
-    foeMaxHp: () => state.currentBoss ? state.currentBoss.maxHp : 0
+      applyStatusRespectingScope(side.statuses, side.minions, labelOf(side), type, turns, value, allowBody),
+    setPlayerBuff: (type, val) => { side.buffs[type] = val; },
+    // 로그는 늘 **내 화면** 기준이다 — 상대 카드가 "적"을 치면 그건 나다
+    foeLabel: mine ? other.name : '나',
+    onShielded: () => triggerTraps(side.key, 'shielded', null),
+    foeHp: () => other.hp,
+    foeMaxHp: () => other.maxHp,
+    // 상대 손패 무작위 파기 — 반드시 battleRng를 거쳐야 PvP가 어긋나지 않는다
+    discardFromBoss: () => discardRandom(other, battleRng())
   };
 }
 
 /**
- * 보스 연계가 쓰는 헬퍼 묶음.
- *
- * 🐛 예전에는 호출부에 `{ addBattleLog, audio, applyDirectDamageToPlayer }`
- *    세 개만 인라인으로 넘겼다. 보스 구현이 그 밖의 헬퍼를 쓰면
- *    TypeError가 나고 runArchetypeCombo의 try/catch가 삼켜서
- *    **조용히 아무 일도 일어나지 않았다.** 플레이어 쪽(makeComboHelpers)과
- *    같은 자리에 같은 이름으로 모아둔다.
+ * 보스 전용 연계 구현(ARCHETYPE_COMBO_ACTIONS[*].boss)이 쓰는 헬퍼 묶음.
+ * ⚠️ 2단계(연계 한 벌)에서 그 구현과 함께 삭제된다. 새 코드는 helpersFor(side)를 쓰세요.
  */
 function makeBossComboHelpers() {
   return {
@@ -194,7 +218,10 @@ function makeBossComboHelpers() {
 //    실제로 두 번 오판했다. → DECISIONS #82
 // ============================================================
 export const __test = {
-  helpers: () => makeComboHelpers(),
+  /** 진영 상대적 헬퍼 (기본 플레이어). 'boss'를 주면 거울 진영의 같은 묶음 */
+  helpers: (key = SIDE_PLAYER) => helpersFor(sides[key]),
+  /** 상대 진영의 게임 뷰 (거울) */
+  foeGame: () => viewFor(sides[SIDE_BOSS]),
   bossHelpers: () => makeBossComboHelpers(),
   buffs: () => ({ player: playerBuffs, boss: bossBuffs }),
   statuses: () => ({ player: playerStatus, boss: bossStatus }),
@@ -209,8 +236,10 @@ export const __test = {
     playerStatus = createStatusState();
     playerBuffs = createBuffs();
     bossBuffs = createBuffs();
-    sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs });
     trapZones = { player: [], boss: [] };
+    sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
+    state.bossMana = 1;
+    state.bossMaxMana = 1;
     isPlayerTurn = true;
     bossPhase = 1;
     // ⚠️ 대상 선택 모드도 반드시 끈다. 켜진 채로 남으면 다음 검사의
@@ -354,8 +383,11 @@ export function initBattle({ seed = null } = {}) {
   playerStatus = createStatusState();
   playerBuffs = createBuffs();
   bossBuffs = createBuffs();
-  sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs });
   trapZones = { player: [], boss: [] };
+  sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
+  // 💎 상대 마나도 플레이어처럼 1에서 시작해 턴 시작마다 자란다 (한 집: state.bossMana)
+  state.bossMana = 1;
+  state.bossMaxMana = 1;
   // 🎯 소환 위치 무장·효과 대상 선택도 전투 단위 상태다.
   //    🐛 수정: 여기서 지우지 않아 지난 전투에서 눌러 둔 자리가 새 전투의 첫 소환에
   //       그대로 적용됐다 — "지정 안 했는데 이상한 자리에 들어간다"의 원인 하나 (DECISIONS #93)
@@ -393,8 +425,8 @@ export function initBattle({ seed = null } = {}) {
 
 export function drawCards(count = 1) {
   for (let i = 0; i < count; i++) {
-    if (state.playerHand.length >= 7) {
-      addBattleLog(`<span class="text-red-400">손패가 가득 차 카드를 더 뽑을 수 없습니다! (최대 7장)</span>`);
+    if (state.playerHand.length >= sides.player.maxHand) {
+      addBattleLog(`<span class="text-red-400">손패가 가득 차 카드를 더 뽑을 수 없습니다! (최대 ${sides.player.maxHand}장)</span>`);
       break;
     }
     if (state.playerDeck.length === 0) {
@@ -868,7 +900,7 @@ function triggerTraps(actorKey, event, card = null) {
     if (!skill) return;
 
     if (defenderKey === 'player') {
-      applyPlayerSkillEffects(skill, { card: trap, game: state, helpers: makeComboHelpers() },
+      applyPlayerSkillEffects(skill, { card: trap, game: viewFor(sides.player), helpers: helpersFor(sides.player) },
         { sourceLabel: '함정', allowAoe: true });
     } else {
       // 보스 함정 — 플레이어에게 역으로 적용
@@ -955,14 +987,14 @@ export function playCard(handIdx) {
 
   // 1. 주문/마법 카드 (Spell): 필드를 차지하지 않고 즉발 발동 후 묘지로 소모
   if (cardType === 'spell') {
-    state.playerMana -= card.cost;
-    state.playerHand.splice(handIdx, 1);
+    me.mana -= card.cost;
+    me.hand.splice(handIdx, 1);
     audio.playMagic();
 
     addBattleLog(`<span class="text-purple-400 font-bold">🔮 [주문 발동] ${card.name}!</span>`);
     
     // 🎴 정통 TCG식 테마 덱 상호 연계(Combo & Search) 발동
-    triggerArchetypeCombo(card, state, makeComboHelpers());
+    triggerArchetypeCombo(card, viewFor(sides.player), helpersFor(sides.player));
 
     triggerSpellEffect(card, picked);
 
@@ -979,8 +1011,8 @@ export function playCard(handIdx) {
 
   // 2. 소환수(Unit) or 건축물(Structure): 전장 슬롯 점유
 
-  state.playerMana -= card.cost;
-  state.playerHand.splice(handIdx, 1);
+  me.mana -= card.cost;
+  me.hand.splice(handIdx, 1);
   audio.playSummon();
 
   const entity = {
@@ -1009,7 +1041,7 @@ export function playCard(handIdx) {
     ? Math.max(0, Math.min(state.playerMinions.length, _pendingSummonSlot))
     : state.playerMinions.length;
   _pendingSummonSlot = null;
-  state.playerMinions.splice(at, 0, entity);
+  me.minions.splice(at, 0, entity);
 
   if (cardType === 'structure') {
     addBattleLog(`<span class="text-amber-400 font-bold">🏛️ [건축물 건립] [${card.name}] 을(를) 전장에 구축했습니다! (내구도: ${entity.maxHp})</span>`);
@@ -1018,7 +1050,7 @@ export function playCard(handIdx) {
   }
 
   // 🎴 정통 TCG식 테마 덱 상호 연계(Combo & Search) 발동
-  triggerArchetypeCombo(card, state, makeComboHelpers());
+  triggerArchetypeCombo(card, viewFor(sides.player), helpersFor(sides.player));
 
   // 전투의 함성 (Battlecry) 발동
   triggerBattlecry(card, picked);
@@ -1040,14 +1072,14 @@ export function playCard(handIdx) {
 export function triggerSpellEffect(card, picked = null) {
   const skill = card.skills && card.skills[0];
   if (!skill) return;
-  applyPlayerSkillEffects(skill, { card, game: state, helpers: makeComboHelpers() },
+  applyPlayerSkillEffects(skill, { card, game: viewFor(sides.player), helpers: helpersFor(sides.player) },
     { sourceLabel: '주문', allowAoe: true, picked });
 }
 
 export function triggerBattlecry(card, picked = null) {
   const skill = card.skills && card.skills[0];
   if (!skill) return;
-  applyPlayerSkillEffects(skill, { card, game: state, helpers: makeComboHelpers() },
+  applyPlayerSkillEffects(skill, { card, game: viewFor(sides.player), helpers: helpersFor(sides.player) },
     { sourceLabel: '전투의 함성', allowAoe: false, picked });
 }
 
@@ -2245,18 +2277,23 @@ function makeMirroredGame() {
     get playerMaxHp() { return state.currentBoss.maxHp; },
     set playerMaxHp(v) { state.currentBoss.maxHp = v; },
 
-    get playerMana() { return state.bossMana || 0; },
-    set playerMana(v) { state.bossMana = v; },
-    get playerMaxMana() { return state.bossMaxMana || 10; },
+    // 마나는 Side가 한 집(state.bossMana)으로 관리한다.
+    // 🐛 예전엔 여기 쓰기가 클로저 마나와 다른 집에 들어가 manaGain이 죽은 필드에 쓰였다.
+    get playerMana() { return sides.boss.mana; },
+    set playerMana(v) { sides.boss.mana = v; },
+    get playerMaxMana() { return sides.boss.maxMana; },
+    set playerMaxMana(v) { sides.boss.maxMana = v; },
 
     // 상대 입장의 "내 손패/덱" = 보스 슬롯의 손패/덱
     get playerHand() { return state.bossHand || (state.bossHand = []); },
     set playerHand(v) { state.bossHand = v; },
     get playerDeck() { return state.bossDeck || (state.bossDeck = []); },
     set playerDeck(v) { state.bossDeck = v; },
-    // 상대 입장의 "적 손패" = 내 손패
+    // 상대 입장의 "적 손패/덱" = 내 손패/덱 (🐛 적 덱 게터가 없어 서치·파기 연계가 거울에서 죽었다)
     get bossHand() { return state.playerHand; },
     set bossHand(v) { state.playerHand = v; },
+    get bossDeck() { return state.playerDeck; },
+    set bossDeck(v) { state.playerDeck = v; },
 
     // 상대 입장의 "적 본체" = 나
     get currentBoss() {
@@ -2272,33 +2309,6 @@ function makeMirroredGame() {
     // 턴 수는 진영과 무관하다 — 없으면 perTurn/lateGame이 조용히 죽는다
     get turnCount() { return state.turnCount; },
     get archetypesList() { return state.archetypesList; }
-  };
-}
-
-/** 진영을 뒤집은 helpers — 피해·상태이상 방향이 반대가 된다 */
-function makeMirroredHelpers() {
-  return {
-    addBattleLog,
-    audio,
-    // 상대가 "적"에게 주는 피해 = 나에게 오는 피해
-    dealDamageToBoss: (dmg, src) => applyDirectDamageToPlayer(dmg, false),
-    // 상대의 드로우는 내 손패를 건드리면 안 된다
-    drawCards: () => {
-      if (Array.isArray(state.bossDeck) && state.bossDeck.length > 0 && Array.isArray(state.bossHand)) {
-        state.bossHand.push(state.bossDeck.shift());
-      }
-    },
-    // 🪞 거울: 상대 기준 "보스"는 내 진영이다. 관문도 진영을 맞바꿔 넘긴다.
-    setBossStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(playerStatus, state.playerMinions, '내', type, turns, value, allowBody),
-    setPlayerStatus: (type, turns, value, allowBody = false) =>
-      applyStatusRespectingScope(bossStatus, state.bossMinions, '상대', type, turns, value, allowBody),
-    setPlayerBuff: (type, val) => { bossBuffs[type] = val; },
-    foeLabel: '나',
-    onShielded: () => triggerTraps('boss', 'shielded', null),
-    // 거울: 상대 카드 입장에서 '적'은 나다
-    foeHp: () => state.playerHp,
-    foeMaxHp: () => state.playerMaxHp
   };
 }
 
@@ -2330,8 +2340,9 @@ export async function playFoeCardPvp(card, slot = null, picked = null) {
     </div>
   `);
 
-  const mirroredGame = makeMirroredGame();
-  const mirroredHelpers = makeMirroredHelpers();
+  // 거울 뷰·헬퍼는 플레이어와 **같은 팩토리**에서 나온다 — 진영만 다르다
+  const mirroredGame = viewFor(sides.boss);
+  const mirroredHelpers = helpersFor(sides.boss);
 
   // 🪤 함정: 뒷면으로 세트만 한다
   if (cardType === 'trap') {
@@ -2365,7 +2376,7 @@ export async function playFoeCardPvp(card, slot = null, picked = null) {
 
   // 소환수 / 건축물 — 전장 점유
   audio.playSummon();
-  if (state.bossMinions.length < BOSS_SLOTS) {
+  if (state.bossMinions.length < sides.boss.maxMinions) {
     // 상대가 고른 배치 위치를 그대로 재현한다 (안 그러면 전열이 어긋난다)
     // length로 누르는 이유는 playCard와 같다 — 빈칸 없는 배열에 length 너머는 없다 (DECISIONS #93)
     const at = Number.isInteger(slot)
