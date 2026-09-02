@@ -12,3 +12,10 @@ export const SLOT_CAP = 4;
 
 /** 손패 상한 — 양 진영 동일 */
 export const HAND_CAP = 7;
+
+/**
+ * 🌵 가시(피해 반사) 지속 턴. 콤보 스텝이 `turns`를 안 주면 이 값.
+ * 유저 결정(DECISIONS #94): 예전엔 보스 전용·영구였다 — 한 번 걸리면 전투 끝까지.
+ * 그 진영의 턴 시작마다 1씩 줄고 0이 되면 반사가 사라진다 (2 = 상대 턴 두 번 동안 반사).
+ */
+export const THORNS_TURNS = 2;

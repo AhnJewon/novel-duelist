@@ -89,7 +89,7 @@ function resetBoard(over = {}) {
   seedBattleRng(12345);
   state.currentBoss = Object.assign({
     id: 'testboss', name: '검증보스', element: 'dark',
-    maxHp: 300, currentHp: 300, shield: 0, actionIdx: 0, thorns: 0
+    maxHp: 300, currentHp: 300, shield: 0, actionIdx: 0
   }, over.boss || {});
   state.turnCount = over.turnCount != null ? over.turnCount : 4;
   state.playerHp = over.playerHp != null ? over.playerHp : 50;
@@ -1461,6 +1461,68 @@ async function suiteSides() {
 }
 
 // ============================================================
+// 9c. 본체 피해 — 양 진영 같은 규칙 (DECISIONS #94)
+// ------------------------------------------------------------
+// 🐛 본체 피해 함수가 두 벌이었다. 보스 쪽엔 무적·경감이 없고 관통은 플레이어 버프만 봤으며
+//    가시는 보스 전용, damaged 함정 이벤트는 플레이어 본체에서만 났다.
+// ============================================================
+function suiteFaceDamage() {
+  const S = '본체 피해';
+  const B = () => BE.__test.buffs();
+
+  // 상대 무적이 내 공격을 막는다
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  B().boss.invulnerable = 1;
+  BE.dealDamageToBoss(20, '검사');
+  check(S, '상대 무적이 내 본체 공격을 막는다 (예전: 무시)', state.currentBoss.currentHp === 300, `${state.currentBoss.currentHp}`);
+
+  // 상대 경감 50%
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  B().boss.damageReduction = 50; B().boss.damageReductionTurns = 1;
+  BE.dealDamageToBoss(20, '검사');
+  check(S, '상대 경감 50%가 내 본체 공격을 반으로 (20→10)', state.currentBoss.currentHp === 290, `${state.currentBoss.currentHp}`);
+
+  // 상대 건축물의 경감 오라가 상대 본체를 지킨다
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 },
+    bossMinions: [minion({ name: '상대요새', cardType: 'structure', skills: [{ passiveEffect: { aura: { scope: 'all', damageReduction: 25 } } }] })] });
+  BE.dealDamageToBoss(20, '검사');
+  check(S, '상대 건축물 경감 오라 25% (20→15) (예전: 플레이어 오라만)', state.currentBoss.currentHp === 285, `${state.currentBoss.currentHp}`);
+
+  // 상대의 관통 버프가 내 방어막을 무시하고 소모된다
+  resetBoard({ playerHp: 50, playerMaxShield: 10, playerMinions: [], bossMinions: [minion({ name: '상대병', attack: 10 })] });
+  B().boss.pierceShield = true;
+  BE.foeMinionAttack(0, null, 'face');
+  check(S, '상대의 관통 버프가 내 방어막을 무시하고 소모된다 (예전: 죽은 버프)',
+    state.playerHp === 40 && state.playerMaxShield === 10 && B().boss.pierceShield === false,
+    `php=${state.playerHp} sh=${state.playerMaxShield} buff=${B().boss.pierceShield}`);
+
+  // 내 가시가 상대에게 반사된다
+  resetBoard({ playerHp: 50, playerMinions: [], bossMinions: [minion({ name: '상대병', attack: 10 })],
+    boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  B().player.thorns = 0.3; B().player.thornsTurns = 2;
+  BE.foeMinionAttack(0, null, 'face');
+  check(S, '내 가시 30%가 상대 본체에 반사된다 (예전: 가시는 보스 전용)',
+    state.playerHp === 40 && state.currentBoss.currentHp === 297,
+    `php=${state.playerHp} bhp=${state.currentBoss.currentHp}`);
+
+  // 반사는 되반사되지 않는다 (양쪽 다 가시)
+  resetBoard({ playerHp: 50, boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  B().player.thorns = 0.5; B().player.thornsTurns = 2;
+  B().boss.thorns = 0.5; B().boss.thornsTurns = 2;
+  BE.dealDamageToBoss(20, '검사');
+  check(S, '가시 반사는 되반사되지 않는다', state.currentBoss.currentHp === 280 && state.playerHp === 40,
+    `bhp=${state.currentBoss.currentHp} php=${state.playerHp}`);
+
+  // 보스가 세트한 selfLowHp 함정이 터진다
+  resetBoard({ boss: { maxHp: 300, currentHp: 160, shield: 0 } });
+  BE.__test.setTrap('boss', card({ name: '상대위기', cardType: 'trap', trapTrigger: 'selfLowHp', skills: [{ shield: 20 }] }));
+  BE.dealDamageToBoss(20, '검사');
+  check(S, '상대 본체가 절반 아래로 떨어지면 상대 함정(selfLowHp) 발동 (예전: 내 본체만)',
+    BE.getTrapZone('boss').length === 0 && state.currentBoss.shield === 20,
+    `zone=${BE.getTrapZone('boss').length} sh=${state.currentBoss.shield}`);
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -1642,8 +1704,10 @@ async function suiteBossTurn() {
 
   resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
   await BE.__test.bossStep({ type: 'shield', name: '결계', value: 25, reflectPercent: 0.3 });
-  check(S, '스텝 shield: 방어막 + 가시 반사 등록',
-    state.currentBoss.shield === 25 && state.currentBoss.thorns === 0.3);
+  // 가시는 진영 버프 + 턴제 (재기준선: 예전 currentBoss.thorns 영구 — DECISIONS #94)
+  check(S, '스텝 shield: 방어막 + 가시 반사 등록 (버프, 2턴)',
+    state.currentBoss.shield === 25 && BE.__test.buffs().boss.thorns === 0.3 && BE.__test.buffs().boss.thornsTurns === 2,
+    JSON.stringify(BE.__test.buffs().boss));
 
   // 가시 반사가 실제로 되돌아오는가
   BE.dealDamageToBoss(100, '검증');
@@ -2216,7 +2280,8 @@ export async function runAll() {
     ['공격 규칙', suiteAttack], ['효과 대상', suiteTargets], ['카드 효과', suiteEffects],
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
-    ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
+    ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];

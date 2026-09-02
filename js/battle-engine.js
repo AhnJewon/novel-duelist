@@ -34,7 +34,7 @@ import {
   registerPvpHandlers, slimCardForWire
 } from './pvp-battle.js';
 import { readDirectAttack } from './card-keywords.js';
-import { SLOT_CAP } from './battle-rules.js';
+import { SLOT_CAP, THORNS_TURNS } from './battle-rules.js';
 
 // 전장 슬롯은 양 진영 동일 (battle-rules.js). 🐛 예전엔 보스만 3이었다 → DECISIONS #94
 export const BATTLE_SLOTS = SLOT_CAP;
@@ -357,6 +357,8 @@ export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   leaderKey = (leader === SIDE_BOSS) ? SIDE_BOSS : SIDE_PLAYER;
   activeSideKey = leaderKey;
   bossPhase = 1;
+  const phaseBadge = document.getElementById('boss-phase-badge');
+  if (phaseBadge) phaseBadge.classList.add('hidden');
   state.playerMinions = [];
   
   // 보스 전용 전술 덱 & 손패 구축 (손패 4장으로 적극적 카드 전개!)
@@ -1251,67 +1253,140 @@ export function foeMinionAttack(slotIdx, minion = null, targetKey = null) {
   }
 }
 
-export function dealDamageToBoss(dmg, sourceName) {
-  if (!state.currentBoss) return;
-  let remainingDmg = Math.max(0, Math.floor(dmg));
+/**
+ * 본체 피해 — **양 진영 공용.** 플레이어 본체든 상대 본체든 같은 순서로 같은 규칙을 지난다.
+ *
+ * 순서: 무적 → 경감(버프 + 그 진영 건축물 오라, 합 75% 상한) → 취약 → 감전 → 관통(명시 또는
+ *       **때린 진영**의 관통 버프 소모) → 방어막 → 체력 → 절반 하락 함정 → 가시 반사 → 낮은 체력 훅.
+ *
+ * 🐛 예전엔 두 벌이었다 — dealDamageToBoss(무적·경감 없음, 관통은 플레이어 버프만, 가시는 보스만)와
+ *    applyDirectDamageToPlayer(가시·격노 없음, 관통 버프 안 봄). 그래서 상대가 무적·경감·관통을
+ *    얻는 효과는 아무 일도 하지 않았고, 보스가 세트한 selfLowHp 함정은 영영 터지지 않았다.
+ *    → DECISIONS #94
+ *
+ * @param target        맞는 진영(Side)
+ * @param opts.pierce   방어막을 무시하는 피해인가 (관통 주문·스텝)
+ * @param opts.source   로그에 찍을 출처
+ * @param opts.attacker 때린 진영(Side) — 관통 버프 소모·가시 반사의 대상. 없으면 둘 다 생략된다.
+ * @param opts.reflected 가시 반사로 온 피해인가 — 반사는 되반사하지 않는다
+ * @returns {number} 실제로 체력에서 깎인 값
+ */
+export function dealFaceDamage(target, dmg, { pierce = false, source = '', attacker = null, reflected = false } = {}) {
+  if (!target) return 0;
+  const label = sideLabel(target);
+  const tb = target.buffs;
 
-  // 취약 배율 (status-effects가 단일 소스 — 이제 턴마다 정상 감쇠된다)
-  const mult = getIncomingDamageMultiplier(bossStatus);
+  if (tb.invulnerable > 0) {
+    addBattleLog(`<span class="text-cyan-300 font-bold">🛡️ ${escapeHtml(label)}의 무적 결계가 피해를 완전 무효화했습니다!</span>`);
+    return 0;
+  }
+
+  let remaining = Math.max(0, Math.floor(dmg));
+
+  // 🛡️ 피해 경감 — 취약 배율보다 **먼저** 적용한다 ("방어를 뚫고 약점을 노린다"는 감각).
+  //    주문으로 건 일시적 경감(버프)과 그 진영 건축물 오라를 **합산**한다.
+  const auraCut = auraDamageReduction(target);
+  const buffCut = (tb.damageReduction > 0 && tb.damageReductionTurns > 0) ? tb.damageReduction : 0;
+  const totalCutPct = Math.min(75, buffCut + auraCut);
+  if (totalCutPct > 0) {
+    const cut = Math.floor(remaining * (totalCutPct / 100));
+    if (cut > 0) {
+      remaining -= cut;
+      const src = auraCut > 0 && buffCut > 0 ? '주문+건축물' : (auraCut > 0 ? '건축물 오라' : '피해 경감');
+      addBattleLog(`<span class="text-cyan-300">🛡️ [${src} ${totalCutPct}%] ${escapeHtml(label)}이(가) ${cut} 피해를 막아냈습니다. (${remaining} 관통)</span>`);
+    }
+  }
+
+  // 💥 취약 (status-effects가 단일 소스 — 턴마다 정상 감쇠된다)
+  const mult = getIncomingDamageMultiplier(target.statuses);
   if (mult !== 1) {
-    remainingDmg = Math.floor(remainingDmg * mult);
-    addBattleLog(`<span class="text-purple-300">💥 [취약] 보스가 받는 피해가 증폭되었습니다! (x${mult})</span>`);
+    remaining = Math.floor(remaining * mult);
+    addBattleLog(`<span class="text-purple-300">💥 [취약] ${escapeHtml(label)}이(가) 받는 피해가 증폭되었습니다! (x${mult})</span>`);
   }
 
-  // ⚡ 감전: 보스가 피격될 때마다 추가 연쇄 피해
-  const shockBonus = getOnHitBonusDamage(bossStatus);
+  // ⚡ 감전: 피격될 때마다 추가 연쇄 피해
+  const shockBonus = getOnHitBonusDamage(target.statuses);
   if (shockBonus > 0) {
-    remainingDmg += shockBonus;
-    addBattleLog(`<span class="text-amber-300">⚡ [감전 연쇄] 보스에게 추가 번개 피해 +${shockBonus}!</span>`);
+    remaining += shockBonus;
+    addBattleLog(`<span class="text-amber-300">⚡ [감전 연쇄] ${escapeHtml(label)}에게 추가 번개 피해 +${shockBonus}!</span>`);
   }
 
-  // 🎯 실드 관통 버프를 보유 중이면 이번 타격은 보스 방어막을 무시한다
-  // 🐛 수정: 카드군 콤보가 playerBuffs.pierceShield를 세팅했지만 읽는 곳이 없어 죽은 버프였다.
-  const piercing = !!playerBuffs.pierceShield;
-  if (piercing) {
-    playerBuffs.pierceShield = false;
-    addBattleLog(`<span class="text-purple-400 font-bold">🎯 [실드 관통] 보스의 방어막을 무시하고 직격합니다!</span>`);
+  // 🎯 관통 — 명시된 관통이거나, **때린 진영**이 연계로 예약한 관통 버프를 소모한다.
+  //    🐛 예전엔 플레이어 버프만 읽었다 — 상대가 관통 버프를 얻어도 죽은 버프였다.
+  let piercing = !!pierce;
+  if (!piercing && attacker && attacker.buffs && attacker.buffs.pierceShield) {
+    attacker.buffs.pierceShield = false;
+    piercing = true;
+    addBattleLog(`<span class="text-purple-400 font-bold">🎯 [실드 관통] ${escapeHtml(label)}의 방어막을 무시하고 직격합니다!</span>`);
+  } else if (piercing) {
+    addBattleLog(`<span class="text-purple-400 font-bold">🎯 [실드 관통] 공격이 ${escapeHtml(label)}의 방어막을 무시하고 체력을 직접 타격합니다!</span>`);
   }
 
-  if (!piercing && state.currentBoss.shield > 0) {
-    const absorbed = Math.min(state.currentBoss.shield, remainingDmg);
-    state.currentBoss.shield -= absorbed;
-    remainingDmg -= absorbed;
-    if (state.currentBoss.shield === 0) {
-      addBattleLog(`<span class="text-slate-300">🛡️ 보스의 방어막이 ${absorbed} 피해를 흡수하고 파괴되었습니다!</span>`);
-    } else {
-      addBattleLog(`<span class="text-slate-300">🛡️ 보스의 방어막이 ${absorbed} 피해를 흡수했습니다. (잔여 ${state.currentBoss.shield})</span>`);
+  if (!piercing && target.shield > 0) {
+    const absorbed = Math.min(target.shield, remaining);
+    target.shield -= absorbed;
+    remaining -= absorbed;
+    if (absorbed > 0) {
+      addBattleLog(target.shield === 0
+        ? `<span class="text-slate-300">🛡️ ${escapeHtml(label)}의 방어막이 ${absorbed} 피해를 흡수하고 파괴되었습니다!</span>`
+        : `<span class="text-slate-300">🛡️ ${escapeHtml(label)}의 방어막이 ${absorbed} 피해를 흡수했습니다. (잔여 ${target.shield})</span>`);
     }
   }
 
-  if (remainingDmg > 0) {
-    state.currentBoss.currentHp -= remainingDmg;
-    addBattleLog(`<span class="text-red-400 font-bold">💥 [${sourceName}] 보스에게 ${remainingDmg} 직접 피해!</span>`);
+  if (remaining <= 0) return 0;
 
-    const bossCard = document.getElementById('boss-card');
-    if (bossCard) {
-      bossCard.classList.add('animate-shake');
-      setTimeout(() => bossCard.classList.remove('animate-shake'), 400);
-    }
+  const wasAbove = target.hp > target.maxHp * 0.5;
+  target.hp -= remaining;
+  addBattleLog(`<span class="text-red-500 font-bold">🩸 ${source ? `[${escapeHtml(source)}] ` : ''}${escapeHtml(label)}에게 ${remaining} 피해!</span>`);
 
-    // 🌵 불멸의 요새 / 가시 결계 피해 반사
-    if (state.currentBoss.thorns > 0) {
-      const reflectDmg = Math.max(1, Math.floor(remainingDmg * state.currentBoss.thorns));
-      applyDirectDamageToPlayer(reflectDmg);
-      addBattleLog(`<span class="text-emerald-400 font-bold">🌵 [가시 반사] 보스의 결계가 ${reflectDmg} 피해를 플레이어에게 반사했습니다!</span>`);
+  if (target.key === SIDE_BOSS) {
+    // 🐛 예전엔 존재하지 않는 #boss-card를 찾아 흔들림 연출이 한 번도 나오지 않았다
+    const face = document.getElementById('boss-container');
+    if (face) {
+      face.classList.add('animate-shake');
+      setTimeout(() => face.classList.remove('animate-shake'), 400);
     }
   }
 
-  // 2페이즈 광폭화 체크 (40% 이하)
-  if (bossPhase === 1 && state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.4) {
+  // 🪤 절반 아래로 **떨어지는 순간**에만 그 진영의 함정(selfLowHp)이 반응한다 — 양 진영 다.
+  //    (함정은 상대 행동에 반응하므로 actor = 상대 진영)
+  //    🐛 예전엔 플레이어 본체에서만 쐈다 — 보스가 세트한 selfLowHp 함정은 영영 터지지 않았다.
+  if (wasAbove && target.hp <= target.maxHp * 0.5 && target.hp > 0) {
+    triggerTraps(opponentOf(target.key), 'damaged', null);
+  }
+
+  // 🌵 가시 반사 — 때린 진영에게 되돌린다. 반사 피해는 다시 반사되지 않는다.
+  if (tb.thorns > 0 && attacker && !reflected) {
+    const reflectDmg = Math.max(1, Math.floor(remaining * tb.thorns));
+    addBattleLog(`<span class="text-emerald-400 font-bold">🌵 [가시 반사] ${escapeHtml(label)}의 결계가 ${reflectDmg} 피해를 ${escapeHtml(sideLabel(attacker))}에게 반사했습니다!</span>`);
+    dealFaceDamage(attacker, reflectDmg, { reflected: true, source: '가시 반사' });
+  }
+
+  onFaceLowHp(target);
+  return remaining;
+}
+
+/** 본체가 낮은 체력에 들어섰을 때의 훅 — 지금은 보스 격노(2페이즈)만. 7단계에서 봇 컨트롤러로 옮긴다. */
+function onFaceLowHp(target) {
+  if (target.key !== SIDE_BOSS || bossPhase !== 1) return;
+  if (target.hp <= target.maxHp * 0.4) {
     bossPhase = 2;
-    addBattleLog(`<span class="text-red-500 font-black text-sm">🔥 [광폭화] 보스가 격노하여 모든 콤보 패턴의 위력이 폭증합니다!</span>`);
+    addBattleLog(`<span class="text-red-500 font-black text-sm">🔥 [광폭화] ${escapeHtml(target.name)}이(가) 격노하여 모든 콤보 패턴의 위력이 폭증합니다!</span>`);
+    // 🐛 이 배지는 만들어진 뒤 한 번도 켜진 적이 없었다 (index.html의 #boss-phase-badge)
+    const badge = document.getElementById('boss-phase-badge');
+    if (badge) badge.classList.remove('hidden');
     triggerLiveBossReaction('lowHp');
   }
+}
+
+/** 상대 본체에 피해 (플레이어가 때린다). dealFaceDamage(sides.boss, …)의 옛 이름 — 효과·연계·하네스가 부른다. */
+export function dealDamageToBoss(dmg, sourceName) {
+  return dealFaceDamage(sides.boss, dmg, { source: sourceName, attacker: sides.player });
+}
+
+/** 플레이어 본체에 피해 (상대가 때린다). dealFaceDamage(sides.player, …)의 옛 이름. */
+function applyDirectDamageToPlayer(dmg, pierceShield = false) {
+  return dealFaceDamage(sides.player, dmg, { pierce: pierceShield, attacker: sides.boss });
 }
 
 export function playerEndTurn() {
@@ -1349,10 +1424,13 @@ export function playerEndTurn() {
 //    부서지면 어느 쪽 몫인지 알 수 없게 됩니다. 항상 읽는 시점에 계산합니다.
 // ============================================================
 
-/** 지금 살아 있는 아군 건축물의 오라 목록 */
-function collectPlayerAuras() {
+/**
+ * 지금 살아 있는 **그 진영** 건축물의 오라 목록.
+ * 🐛 예전엔 state.playerMinions만 훑어 상대 건축물의 오라는 존재하지 않았다 (DECISIONS #94).
+ */
+function collectAuras(side = sides.player) {
   const out = [];
-  (state.playerMinions || []).forEach(e => {
+  (side.minions || []).forEach(e => {
     if (!e || e.cardType !== 'structure' || e.currentHp <= 0) return;
     const p = e.skills && e.skills[0] && e.skills[0].passiveEffect;
     if (p && p.aura) out.push({ src: e, ...p.aura });
@@ -1377,16 +1455,16 @@ function auraApplies(aura, entity) {
   }
 }
 
-/** 아군 소환수가 오라로 얻는 공격력 보정 */
-export function auraAttackBonus(entity) {
-  return collectPlayerAuras()
+/** 그 진영 소환수가 오라로 얻는 공격력 보정 (side = 그 소환수의 진영, 기본 플레이어) */
+export function auraAttackBonus(entity, side = sides.player) {
+  return collectAuras(side)
     .filter(a => a.attackBonus > 0 && auraApplies(a, entity))
     .reduce((s, a) => s + a.attackBonus, 0);
 }
 
-/** 아군 소환수가 오라로 얻는 방어력 보정 */
-export function auraDefenseBonus(entity) {
-  return collectPlayerAuras()
+/** 그 진영 소환수가 오라로 얻는 방어력 보정 */
+export function auraDefenseBonus(entity, side = sides.player) {
+  return collectAuras(side)
     .filter(a => a.defenseBonus > 0 && auraApplies(a, entity))
     .reduce((s, a) => s + a.defenseBonus, 0);
 }
@@ -1395,16 +1473,16 @@ export function auraDefenseBonus(entity) {
  * 본체가 오라로 얻는 피해 경감 (%).
  * 여러 장이 겹치면 합산하되 **75%를 넘지 않는다** — 무적이 되면 게임이 끝난다.
  */
-export function auraDamageReduction() {
-  const sum = collectPlayerAuras()
+export function auraDamageReduction(side = sides.player) {
+  const sum = collectAuras(side)
     .filter(a => a.damageReduction > 0)
     .reduce((s, a) => s + a.damageReduction, 0);
   return Math.min(75, sum);
 }
 
 /** 오라 정보를 UI/카드 상세에 보여주기 위한 요약 */
-export function describeActiveAuras() {
-  return collectPlayerAuras().map(a => ({
+export function describeActiveAuras(side = sides.player) {
+  return collectAuras(side).map(a => ({
     from: a.src.name,
     scope: a.scope,
     attackBonus: a.attackBonus || 0,
@@ -1914,8 +1992,13 @@ async function executeSingleBossStep(step) {
   } else if (step.type === 'shield') {
     state.currentBoss.shield = (state.currentBoss.shield || 0) + val;
     if (step.reflectPercent) {
-      state.currentBoss.thorns = step.reflectPercent;
-      addBattleLog(`<span class="text-emerald-300 font-bold">🌵 [가시 반사 결계] 보스가 받은 피해의 ${Math.round(step.reflectPercent * 100)}%를 반사합니다!</span>`);
+      // 🌵 가시는 진영 버프이고 턴제다 (THORNS_TURNS).
+      //    🐛 예전엔 state.currentBoss.thorns에 영구 저장돼 한 번 걸리면 전투 끝까지 반사했고
+      //       초기화도 안 됐다. 유저 결정: N턴 후 소멸 (DECISIONS #94)
+      const turns = step.turns || THORNS_TURNS;
+      sides.boss.buffs.thorns = step.reflectPercent;
+      sides.boss.buffs.thornsTurns = turns;
+      addBattleLog(`<span class="text-emerald-300 font-bold">🌵 [가시 반사 결계] 보스가 ${turns}턴 동안 받은 피해의 ${Math.round(step.reflectPercent * 100)}%를 반사합니다!</span>`);
     }
     audio.playShield();
     addBattleLog(`<span class="text-blue-400">🛡️ [스텝/방어] 보스가 [${step.name}] 으로 방어막 +${val} 전개!</span>`);
@@ -1963,69 +2046,6 @@ async function executeSingleBossStep(step) {
         state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + healAmt);
         addBattleLog(`<span class="text-purple-300">🩸 보스가 흡혈로 체력 +${healAmt} 회복!</span>`);
       }
-    }
-  }
-}
-
-function applyDirectDamageToPlayer(dmg, pierceShield = false) {
-  if (playerBuffs.invulnerable > 0) {
-    addBattleLog(`<span class="text-cyan-300 font-bold">🛡️ 무적 결계가 피해를 완전 무효화했습니다!</span>`);
-    return;
-  }
-
-  let finalDmg = Math.max(0, Math.floor(dmg));
-
-  // 🛡️ 피해 경감 — 취약 배율보다 **먼저** 적용한다.
-  //    (경감 후 취약이 곱해지는 편이 "방어를 뚫고 약점을 노린다"는 감각에 맞다)
-  //    ⚠️ 주문으로 건 일시적 경감(playerBuffs)과 건축물 오라를 **합산**한다.
-  //       한쪽만 보면 오라를 깔아둔 게 무시된다.
-  const auraCut = auraDamageReduction();
-  const buffCut = (playerBuffs.damageReduction > 0 && playerBuffs.damageReductionTurns > 0)
-    ? playerBuffs.damageReduction : 0;
-  const totalCutPct = Math.min(75, buffCut + auraCut);
-  if (totalCutPct > 0) {
-    const cut = Math.floor(finalDmg * (totalCutPct / 100));
-    if (cut > 0) {
-      finalDmg -= cut;
-      const src = auraCut > 0 && buffCut > 0 ? '주문+건축물' : (auraCut > 0 ? '건축물 오라' : '피해 경감');
-      addBattleLog(`<span class="text-cyan-300">🛡️ [${src} ${totalCutPct}%] ${cut} 피해를 막아냈습니다. (${finalDmg} 관통)</span>`);
-    }
-  }
-
-  // 취약 등 받는 피해 배율 (status-effects가 단일 소스)
-  const mult = getIncomingDamageMultiplier(playerStatus);
-  if (mult !== 1) {
-    finalDmg = Math.floor(finalDmg * mult);
-    addBattleLog(`<span class="text-purple-400">💥 [취약 효과] 플레이어가 받는 피해가 증폭되었습니다! (x${mult})</span>`);
-  }
-
-  // ⚡ 감전: 피격될 때마다 추가 연쇄 피해
-  const shockBonus = getOnHitBonusDamage(playerStatus);
-  if (shockBonus > 0) {
-    finalDmg += shockBonus;
-    addBattleLog(`<span class="text-amber-300">⚡ [감전 연쇄] 추가 번개 피해 +${shockBonus}!</span>`);
-  }
-
-  if (pierceShield) {
-    addBattleLog(`<span class="text-purple-400 font-bold">🎯 [실드 관통] 공격이 방어막을 무시하고 체력을 직접 타격합니다!</span>`);
-  } else if (state.playerMaxShield > 0) {
-    const absorbed = Math.min(state.playerMaxShield, finalDmg);
-    state.playerMaxShield -= absorbed;
-    finalDmg -= absorbed;
-    if (absorbed > 0) {
-      addBattleLog(`<span class="text-slate-300">🛡️ 방어막이 ${absorbed} 피해를 흡수했습니다. (잔여 ${state.playerMaxShield})</span>`);
-    }
-  }
-
-  if (finalDmg > 0) {
-    const wasAbove = state.playerHp > state.playerMaxHp * 0.5;
-    state.playerHp -= finalDmg;
-    addBattleLog(`<span class="text-red-500 font-bold">🩸 플레이어가 ${finalDmg} 피해를 입었습니다!</span>`);
-
-    // 🐛 'damaged' 이벤트를 아무도 쏘지 않아 selfLowHp 함정이 죽어 있었다.
-    //    절반 아래로 **떨어지는 순간**에만 쏜다 (매 피격마다 쏘면 계속 터진다).
-    if (wasAbove && state.playerHp <= state.playerMaxHp * 0.5 && state.playerHp > 0) {
-      triggerTraps('boss', 'damaged', null);
     }
   }
 }
