@@ -11,6 +11,7 @@ import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js'
 import { validateCardPlan, buildRetryDirective } from './card-validator.js';
 import { applyLlmDescription } from './card-describe.js';
 import { proposeArchetype } from './archetype-proposal.js';
+import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 
 let currentLLMSkillData = null;
@@ -89,6 +90,8 @@ export async function generatePromptWithLLM(isRandom = false) {
     ? Math.max(1, Math.min(7, custom.cost))
     : rollCardCost(6);
 
+  // 🎯 이 타입 규칙만 싣는다 — 네 타입을 다 보내면 LLM이 특징을 섞는다
+  const typeRules = cardTypeRules(targetType);
   const systemPrompt = `You are a creative, imaginative Anime TCG Card Designer (inspired by Yu-Gi-Oh!, Hearthstone, Shadowverse, Magic: The Gathering).
 Design an authentic, natural, original fantasy TCG card of type: "${targetType}".
 
@@ -121,19 +124,7 @@ CRITICAL NUMERICAL RULES & STAT CAPS (스펙 인플레 방지 및 고정 정수 
 - ⚠️ 예산을 넘으면 시스템이 **효과를 잘라내거나 수치를 깎는다.** 반대로 너무
   빈약하면 **마나를 내려버린다.** 처음부터 ${plannedCost}마나에 맞춰 설계하라.
 
-🃏 VANILLA CARD (효과 없는 카드 — **소환수(unit)만** 가능):
-⚠️ 마법·함정·건축물은 효과가 **전부**다. 효과 없이 만들면 발동해도 아무 일이
-없는 백지 카드가 된다. 바닐라는 소환수에만 쓴다.
-1~2마나 소환수는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다.
-그럴 때는 **억지로 효과를 만들지 말고 바닐라로 만들어라.**
-- skill에 "isVanilla": true 를 넣고, 효과 수치는 전부 0/생략한다.
-- 대신 "flavorText"에 **세계관 한 줄**을 쓴다 (25자 이내, 한국어).
-  카드의 정체·유래·분위기를 담되 **효과처럼 읽히면 안 된다.**
-  * ✅ "이름 없는 자들이 전장을 채운다."
-  * ✅ "그가 지나간 자리에는 재만 남았다."
-  * ❌ "적에게 큰 피해를 준다."        — 효과 서술이다
-  * ❌ "매 턴 방어막을 얻는다."        — 구현되지 않는 거짓말이다
-- 바닐라는 약한 카드가 아니다. 효과가 없는 만큼 **스탯이 더 좋다.**
+${typeRules}
 
 TCG ARCHETYPE DECK COMBO (유희왕/TCG식 상호 연계 테마 덱):
 Cards belong to a Theme Archetype (카드군) and trigger interlocking combos when played or when theme allies exist!
@@ -220,28 +211,6 @@ ${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '
 - ✅ 좋은 범용 예: "결계 분쇄의 일격", "욕망의 항아리", "방랑 용병"
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
-🏛️ STRUCTURE PASSIVE (건축물 지속 효과 — "cardType": "structure"일 때만):
-건축물은 공격하지 않는다. 대신 전장에 남아 매 턴 또는 지속적으로 작동한다.
-skill 안에 "passiveEffect"를 넣어라. 두 종류가 있고 **성격이 완전히 다르다.**
-
-(1) 매 턴 누적형 — 턴마다 값이 쌓인다. **epic / legendary 에서만** 쓸 수 있다.
-    "passiveEffect": { "manaPerTurn": 1 }         매 턴 마나 +1 (최대 2)
-    "passiveEffect": { "endTurnShield": 10 }      턴 종료 시 본체 방어막 +N
-    "passiveEffect": { "endTurnAoeShield": 10 }   방어막 +N & 자기 내구도 수리
-    "passiveEffect": { "endTurnAoeHeal": 10 }     턴 종료 시 본체 체력 +N 회복
-
-(2) 오라 — "이 건축물이 전장에 있는 동안". 쌓이지 않고 부서지면 사라진다.
-    **모든 등급에서** 쓸 수 있다. common / rare 건축물은 이쪽을 써라.
-    "passiveEffect": { "aura": { "scope": "archetype", "attackBonus": 3 } }
-    - "scope": "all"(모든 아군) | "archetype"(같은 카드군만) | "element"(같은 속성만) | "cardType"(같은 종류만)
-    - "scopeValue": scope가 element면 속성명, cardType이면 unit|spell|structure|trap
-    - 효과: "attackBonus"(공격력 +N) / "defenseBonus"(방어력 +N) / "damageReduction"(받는 피해 N% 감소, 5~40)
-    💡 범위를 좁히면(archetype/element) 값을 더 크게 줄 수 있다. 조건을 만족시키는 값을 치른 것이다.
-    💡 카드군 전용 오라는 그 카드군 덱을 짜게 만드는 강력한 동기가 된다.
-
-❌ 위에 없는 필드를 지어내지 마라 ("enemyAttackDown", "everyTurnDraw" 등). 전부 무시된다.
-❌ common / rare 건축물에 매 턴 누적형을 쓰지 마라. 시스템이 삭제한다.
-
 ⚖️ 타입별 효과 예산 (카드 타입마다 넣을 수 있는 효과의 양이 다르다):
 - **소환수**는 스탯(공/체/방)이 예산을 많이 쓴다 → 효과는 **1~2개**로 절제하라.
   낮은 등급 소환수는 효과가 아예 없는 것도 정상이다 (바닐라 카드).
@@ -252,19 +221,6 @@ skill 안에 "passiveEffect"를 넣어라. 두 종류가 있고 **성격이 완�
    반대로 효과가 너무 적으면 **마나를 내린다** — 값을 치를 것이 없는 고코스트 카드는
    死카드이기 때문이다. 마나와 효과량을 애초에 맞춰서 내라.
 
-🪤 TRAP CARD (함정 카드 — 조건부 발동):
-"cardType": "trap"으로 만들면 뒷면으로 세트되고, **상대가 조건을 만족할 때 자동 발동**한다.
-즉발 카드와 달리 조건이 안 맞으면 아무 일도 없다. 그래서 강한 효과를 싸게 넣을 수 있다.
-- "trapTrigger": 아래 중 하나
-  * "foePlaysUnit"      상대가 소환수를 낼 때
-  * "foePlaysSpell"     상대가 주문을 쓸 때
-  * "foePlaysElement"   상대가 특정 속성 카드를 낼 때  → "condition": {"element":"fire"}
-  * "foePlaysArchetype" 상대가 특정 카드군 카드를 낼 때 → "condition": {"archetype":"홍련"}
-  * "foePlaysKeyword"   상대 카드가 특정 키워드를 가질 때 → "condition": {"keyword":"pierceShield"}
-  * "foeAttacks"        상대가 공격할 때
-  * "selfLowHp"         내 체력이 절반 이하가 될 때
-- 함정도 스탯(공격력/체력)은 없다. skill의 효과만 갖는다.
-- 💡 특정 속성·카드군·키워드를 노리는 함정이 가장 재미있다. 메타를 읽는 카드다.
 ⚖️ EFFECT BUDGET BY RARITY (등급별 효과 예산 — 반드시 지킬 것):
 카드 성능은 스탯 수치가 아니라 **효과의 개수와 강도**로 결정된다.
 - common    : 효과 1개. 피해 / 방어막 / 치유 / 상태이상 중 하나만.
@@ -335,9 +291,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "themeSynergyDesc": "카드군 테마 상호 연계 효과 설명",
   "rarity": "common|rare|epic|legendary",
   "cost": ${plannedCost},
-  "attack": 6-24,
-  "defense": 2-14,
-  "hp": 14-38,
+  ${cardTypeStatRule(targetType)},
   "skill": {
     "name": "컨셉에 맞춘 독창적인 스킬명",
     "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",

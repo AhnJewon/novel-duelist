@@ -14,6 +14,7 @@ import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from '
 import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
 import { applyLlmDescription } from './card-describe.js';
+import { cardTypeRules } from './card-type-rules.js';
 
 export const PACK_THEMES = {
   fire_dark: {
@@ -385,6 +386,9 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
       const seedText = packSeeds[Math.floor(Math.random() * packSeeds.length)];
       const nonce = `pack-${cardIndex}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
+      // 🎯 이 타입에만 해당하는 규칙만 싣는다. 네 타입 규칙을 다 보내면
+      //    LLM이 타입 특징을 섞는다 (소환수에 함정식 효과, 함정에 소환수 문구 등).
+      const typeRules = cardTypeRules(cardType);
       const promptMsg = `Create 1 authentic anime TCG card for Pack Theme: "${packThemeName || 'Fantasy Card Pack'}", Element: "${element}", Type: "${cardType}", Rarity: "${rarity}", Mana Cost: ${cost} (고정).
 
 💎 이 카드의 마나 코스트는 **${cost}**로 이미 정해져 있다. 바꾸지 마라.
@@ -394,13 +398,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   1~2마나 → 효과 1개, 작은 스탯 / 3~4마나 → 효과 1~2개 / 5마나 이상 → 효과 2~3개.
 - ⚠️ 넘치면 시스템이 효과를 잘라내거나 수치를 깎고, 너무 빈약하면 마나를 내린다.
 
-🃏 VANILLA CARD (효과 없는 카드 — **소환수(unit)만** 가능):
-⚠️ 마법·함정·건축물은 효과가 전부다 — 바닐라로 만들지 마라.
-1~2마나 소환수는 스탯만으로 예산이 차서 효과를 넣을 자리가 거의 없다. 그럴 때는
-억지로 효과를 만들지 말고 "isVanilla": true 로 두고 효과 수치를 비워라.
-대신 "flavorText"에 세계관 한 줄(25자 이내)을 쓴다. **효과처럼 읽히면 안 된다.**
-  ✅ "이름 없는 자들이 전장을 채운다."   ❌ "적에게 큰 피해를 준다."
-바닐라는 약한 카드가 아니다 — 효과가 없는 만큼 스탯이 더 좋다.
+${typeRules}
 Seed Nonce: ${nonce}
 Existing Archetypes list:
 ${knownThemes}
@@ -474,19 +472,6 @@ ${knownThemes}
 - ✅ 좋은 범용 예: "결계 분쇄의 일격", "욕망의 항아리", "방랑 용병"
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
-🪤 TRAP CARD (함정 카드 — 조건부 발동):
-"cardType": "trap"으로 만들면 뒷면으로 세트되고, **상대가 조건을 만족할 때 자동 발동**한다.
-즉발 카드와 달리 조건이 안 맞으면 아무 일도 없다. 그래서 강한 효과를 싸게 넣을 수 있다.
-- "trapTrigger": 아래 중 하나
-  * "foePlaysUnit"      상대가 소환수를 낼 때
-  * "foePlaysSpell"     상대가 주문을 쓸 때
-  * "foePlaysElement"   상대가 특정 속성 카드를 낼 때  → "condition": {"element":"fire"}
-  * "foePlaysArchetype" 상대가 특정 카드군 카드를 낼 때 → "condition": {"archetype":"홍련"}
-  * "foePlaysKeyword"   상대 카드가 특정 키워드를 가질 때 → "condition": {"keyword":"pierceShield"}
-  * "foeAttacks"        상대가 공격할 때
-  * "selfLowHp"         내 체력이 절반 이하가 될 때
-- 함정도 스탯(공격력/체력)은 없다. skill의 효과만 갖는다.
-- 💡 특정 속성·카드군·키워드를 노리는 함정이 가장 재미있다. 메타를 읽는 카드다.
 ⚖️ EFFECT BUDGET BY RARITY (등급별 효과 예산 — 반드시 지킬 것):
 카드 성능은 스탯 수치가 아니라 **효과의 개수와 강도**로 결정된다.
 - common    : 효과 1개. 피해 / 방어막 / 치유 / 상태이상 중 하나만.
@@ -530,27 +515,6 @@ Return ONLY JSON:
   "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
 
-🏛️ STRUCTURE PASSIVE (건축물 지속 효과 — cardType이 "structure"일 때만):
-건축물은 공격하지 않는다. 대신 전장에 남아 매 턴 또는 지속적으로 작동한다.
-두 종류가 있고, **성격이 완전히 다르다.**
-
-(1) 매 턴 누적형 — 턴마다 값이 쌓인다. **epic / legendary 에서만** 쓸 수 있다.
-    "passiveEffect": { "manaPerTurn": 1 }              매 턴 마나 +1 (최대 2)
-    "passiveEffect": { "endTurnShield": 10 }           턴 종료 시 본체 방어막 +N
-    "passiveEffect": { "endTurnAoeShield": 10 }        방어막 +N & 자기 내구도 수리
-    "passiveEffect": { "endTurnAoeHeal": 10 }          턴 종료 시 본체 체력 +N 회복
-
-(2) 오라 — "이 건축물이 전장에 있는 동안". 쌓이지 않고 부서지면 사라진다.
-    **모든 등급에서** 쓸 수 있다. common / rare 건축물은 이쪽을 써라.
-    "passiveEffect": { "aura": { "scope": "all", "attackBonus": 2 } }
-    - "scope": "all"(모든 아군) | "archetype"(같은 카드군만) | "element"(같은 속성만) | "cardType"(같은 종류만)
-    - "scopeValue": scope가 element면 속성명, cardType이면 unit|spell|structure|trap
-    - 효과: "attackBonus"(공격력 +N) / "defenseBonus"(방어력 +N) / "damageReduction"(받는 피해 N% 감소, 5~40)
-    💡 범위를 좁히면(archetype/element) 값을 더 크게 줄 수 있다. 조건을 만족시키는 값을 치른 것이다.
-    💡 카드군 전용 오라는 그 카드군 덱을 짜게 만드는 강력한 동기가 된다.
-
-❌ 위에 없는 필드를 지어내지 마라 ("enemyAttackDown", "everyTurnDraw" 등). 전부 무시된다.
-❌ common / rare 건축물에 매 턴 누적형을 쓰지 마라. 시스템이 삭제한다.
 
 💫 STATUS EFFECT 적용 범위 (중요):
 - **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.

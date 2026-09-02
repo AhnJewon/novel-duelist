@@ -108,6 +108,7 @@
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
 | 밸런스 수치 조정 | `js/config.js`의 `RARITY_BALANCE_CAPS` **+ 프롬프트 텍스트도 함께** |
 | 카드 생성 프롬프트 | `js/card-forge.js`(1장) / `js/card-pack.js`(5장) |
+| 카드 타입별 프롬프트 규칙 | `js/card-type-rules.js` **한 곳** |
 | 설명문 2단계 생성 · 검증 | `js/card-describe.js` **한 곳** |
 | LLM 파라미터 | `js/ai-service.js`의 `callOllamaChat()` |
 | 이미지 태그 규칙 (규칙 기반) | `js/dan-tag-gen.js` |
@@ -257,3 +258,12 @@
     sanitize는 원문이 있으면 숫자만 맞출 뿐 통째로 다시 쓰지 않습니다. 그래서
     "피해 160% 감소" 같은 미구현 서술이 살아남습니다.
     → [DECISIONS #77](docs/DECISIONS.md)
+
+44. **프롬프트에 네 타입 규칙을 한꺼번에 싣지 마세요.** 타입은 생성 전에 정해지므로
+    그 타입 규칙만 보냅니다 (`cardTypeRules()`). 다 보내면 LLM이 타입 특징을
+    섞습니다 — 소환수에 함정식 효과, 함정에 소환수 문구가 나옵니다.
+    → [DECISIONS #78](docs/DECISIONS.md)
+
+45. **설명문 검증 패턴에 한국어 활용형을 넣으세요.** `/훔치/`는 "훔**친**다"를
+    놓칩니다. 어간이 바뀌는 동사는 활용형도 함께 넣어야 합니다.
+    → [DECISIONS #78](docs/DECISIONS.md)
