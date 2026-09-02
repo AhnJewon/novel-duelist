@@ -315,6 +315,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "targetSide": "foe|ally|self|any",
     "targetScope": "single|multi|all|random",
     "targetCount": 1-3,
+    "damageTarget": "body|field|any",
     "statusEffect": {
       "type": "none|stun|freeze|burn|shock|poison|vulnerable",
       "duration": 1-2,

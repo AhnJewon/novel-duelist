@@ -6,7 +6,7 @@
 //  2) "전방 유닛 -> 본체 직격" 타겟 선택이 3곳에 복붙돼 있었다.
 
 import { escapeHtml } from './dom-utils.js';
-import { resolveTargetKey, readHpTarget, readTargetSpec } from './effect-targets.js';
+import { resolveTargetKey, readHpTarget, readTargetSpec, readDamageTarget } from './effect-targets.js';
 import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
 
@@ -214,7 +214,21 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     }
 
     // 🎯 대상 해석은 resolveEffectTargets 한 곳이 맡는다 (지정 / 전체 / 무작위)
-    const T = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+    const T0 = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
+
+    // 💥 피해 대상 강제 — 카드가 "본체만" / "기물만"이라고 선언했으면 그대로 지킨다.
+    //    ⚠️ 화면(collectTargetKeys)에서도 좁히지만, 규칙은 **해결 지점**에서
+    //       강제해야 한다. PvP 재생 경로는 상대가 보낸 키를 그대로 실행한다.
+    const dt = readDamageTarget(skill);
+    const T = (dt === 'any') ? T0 : {
+      ...T0,
+      minions: dt === 'body' ? [] : T0.minions,
+      foeFace: dt === 'field' ? false : T0.foeFace,
+      selfFace: dt === 'field' ? false : T0.selfFace,
+      // 본체 전용인데 고른 게 기물뿐이면 본체로 돌린다 (불발시키지 않는다)
+      explicit: dt === 'body' ? true : T0.explicit
+    };
+    if (dt === 'body') T.foeFace = true;
 
     if (T.explicit) {
       for (const e of T.minions) {

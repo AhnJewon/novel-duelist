@@ -36,7 +36,12 @@ import { seedBattleRng } from '/js/rng.js';
 import { isValidTarget, cancelTargeting } from '/js/targeting.js';
 import { getSkillBadgesHtml } from '/js/card-renderer.js';
 import { KEYWORD_DEFINITIONS } from '/js/keyword-service.js';
-import { describeSkillFromData, sanitizeAndClampCardData } from '/js/config.js';
+import { describeSkillFromData, sanitizeAndClampCardData, evaluateCardPower,
+         BOSS_STEP_DAMAGE_MULT, PLAYER_BASE_HP } from '/js/config.js';
+
+// 💥 보스 콤보 스텝 딜은 BOSS_STEP_DAMAGE_MULT로 하향된다 (DECISIONS #87).
+// 기대값을 숫자로 박으면 튜닝할 때마다 검사가 깨진다 — 상수에서 유도한다.
+const 스텝딜 = (v) => Math.max(1, Math.round(v * BOSS_STEP_DAMAGE_MULT));
 import { readDirectAttack } from '/js/card-keywords.js';
 import { attachCardDetail, hideCardDetail } from '/js/card-detail.js';
 
@@ -491,6 +496,51 @@ function suiteEffects() {
   check(S, 'silence: 효과 제거, 스탯 유지',
     state.bossMinions[0].skills.length === 0 &&
     state.bossMinions[0].attack === 10 && state.bossMinions[0].silenced === true);
+
+  // 💥 피해 대상 분리 — 본체용 / 기물용 (DECISIONS #87)
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
+  fireSkill({ damage: 12, damageTarget: 'body' }, { picked: ['foe:0'] });
+  check(S, 'damageTarget=body: 기물을 골라도 본체로 간다',
+    state.currentBoss.currentHp === 288 && state.bossMinions[0].currentHp === 40,
+    `보스=${state.currentBoss.currentHp} 기물=${state.bossMinions[0].currentHp}`);
+
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
+  fireSkill({ damage: 12, damageTarget: 'field' }, { picked: ['face'] });
+  check(S, 'damageTarget=field: 본체를 골라도 본체는 안 맞는다',
+    state.currentBoss.currentHp === 300, `보스=${state.currentBoss.currentHp}`);
+
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
+  fireSkill({ damage: 12, damageTarget: 'field' }, { picked: ['foe:0'] });
+  check(S, 'damageTarget=field: 기물은 정상으로 맞는다',
+    state.bossMinions[0].currentHp === 28 && state.currentBoss.currentHp === 300,
+    `기물=${state.bossMinions[0].currentHp}`);
+
+  resetBoard({ bossMinions: [minion({ name: 'X', currentHp: 40 })] });
+  fireSkill({ damage: 12 }, { picked: ['foe:0'] });
+  check(S, 'damageTarget 미지정(any)은 예전 그대로',
+    state.bossMinions[0].currentHp === 28, `${state.bossMinions[0].currentHp}`);
+
+  // 고를 수 있는 곳도 좁혀진다
+  resetBoard({ bossMinions: [minion({ name: 'X' }), minion({ name: 'Y' })] });
+  const bodyKeys = collectTargetKeys(state, readTargetSpec({ damage: 9, damageTarget: 'body' }));
+  const fieldKeys = collectTargetKeys(state, readTargetSpec({ damage: 9, damageTarget: 'field' }));
+  check(S, 'body는 본체만 고를 수 있다', JSON.stringify(bodyKeys) === JSON.stringify(['face']), bodyKeys.join(','));
+  check(S, 'field는 기물만 고를 수 있다',
+    JSON.stringify(fieldKeys) === JSON.stringify(['foe:0', 'foe:1']), fieldKeys.join(','));
+
+  // 가격 — 본체용이 기물용보다 비싸다
+  {
+    const p = (dt) => evaluateCardPower({ rarity: 'rare', cost: 3, cardType: 'spell',
+      attack: 0, defense: 0, hp: 0, skill: { damage: 14, damageTarget: dt } }).used;
+    const body = p('body'), any = p('any'), field = p('field');
+    check(S, `피해 대상 가격: 본체 ${body.toFixed(2)} > 아무나 ${any.toFixed(2)} > 전장 ${field.toFixed(2)}`,
+      body > any && any > field, `${body}/${any}/${field}`);
+  }
+
+  // 설명문이 어느 쪽인지 밝히는가
+  check(S, '설명문이 본체 전용임을 밝힌다',
+    String(describeSkillFromData({ damage: 14, damageTarget: 'body' }, 'spell')).includes('상대 본체'),
+    describeSkillFromData({ damage: 14, damageTarget: 'body' }, 'spell'));
 
   // 💀 파괴 (DECISIONS #85)
   resetBoard({ bossMinions: [minion({ name: 'A', currentHp: 99, maxHp: 99, defense: 20 }), minion({ name: 'B' })] });
@@ -1172,11 +1222,14 @@ async function suiteBossTurn() {
     state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 10,
     `${state.playerMinions.map(m => m.name + ':' + m.currentHp)}`);
 
-  resetBoard({ playerMinions: [minion({ name: '벽', defense: 14, currentHp: 32, maxHp: 32 })] });
-  await BE.__test.bossStep({ type: 'attack', name: '광역', value: 28, isAoe: true });
-  check(S, '보스 광역 스텝도 수비력을 적용 (28-14=14)',
-    state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 18,
-    `${state.playerMinions.map(m => m.name + ':' + m.currentHp)}`);
+  {
+    const 딜 = 스텝딜(28), 남을체력 = 32 - Math.max(1, 딜 - 14);
+    resetBoard({ playerMinions: [minion({ name: '벽', defense: 14, currentHp: 32, maxHp: 32 })] });
+    await BE.__test.bossStep({ type: 'attack', name: '광역', value: 28, isAoe: true });
+    check(S, `보스 광역 스텝도 수비력을 적용 (${딜}-14)`,
+      state.playerMinions.length === 1 && state.playerMinions[0].currentHp === 남을체력,
+      `${state.playerMinions.map(m => m.name + ':' + m.currentHp)} 기대=${남을체력}`);
+  }
 
   // 보스 광역 관통은 수비를 무시한다
   resetBoard({ playerMinions: [minion({ name: '벽', defense: 8, currentHp: 22, maxHp: 22 })] });
@@ -1293,28 +1346,49 @@ async function suiteBossTurn() {
   check(S, '가시 반사: 받은 피해의 30%를 되돌린다',
     state.playerHp === 50 - Math.floor((100 - 25) * 0.3), `php=${state.playerHp}`);
 
-  resetBoard({ playerMinions: [] });
-  await BE.__test.bossStep({ type: 'attack', name: '강타', value: 20 });
-  check(S, '스텝 attack: 본체 직격', state.playerHp === 30, `${state.playerHp}`);
+  {
+    const 딜 = 스텝딜(20);
+    resetBoard({ playerMinions: [] });
+    await BE.__test.bossStep({ type: 'attack', name: '강타', value: 20 });
+    check(S, `스텝 attack: 본체 직격 (20 → ${딜})`, state.playerHp === 50 - 딜, `${state.playerHp}`);
+  }
+  {
+    const 딜 = 스텝딜(4);
+    resetBoard({ playerMinions: [], playerHp: 10, playerMaxHp: 50 });
+    await BE.__test.bossStep({ type: 'attack', name: '처형', value: 4, executeThreshold: 0.3 });
+    check(S, '스텝 attack: 처형 배율 2.2',
+      state.playerHp === 10 - Math.floor(딜 * 2.2), `${state.playerHp}`);
+  }
+  {
+    const 총딜 = 스텝딜(30), 회당 = Math.max(1, Math.floor(총딜 / 3));
+    resetBoard({ playerMinions: [] });
+    await BE.__test.bossStep({ type: 'attack', name: '연타', value: 30, multiHit: 3 });
+    check(S, `스텝 attack: 연타 3회 (총 ${총딜} → 회당 ${회당})`,
+      state.playerHp === 50 - 회당 * 3, `${state.playerHp}`);
+  }
+  {
+    const 딜 = 스텝딜(10);
+    resetBoard({ playerMinions: [minion({ name: 'A' }), minion({ name: 'B' })] });
+    await BE.__test.bossStep({ type: 'attack', name: '광역', value: 10, isAoe: true });
+    check(S, '스텝 attack: 광역은 전부 + 본체 70%',
+      state.playerMinions.every(m => m.currentHp === 30 - 딜) &&
+      state.playerHp === 50 - Math.floor(딜 * 0.7),
+      `${state.playerMinions.map(m => m.currentHp)} php=${state.playerHp}`);
+  }
+  {
+    const 딜 = 스텝딜(20);
+    resetBoard({ playerMinions: [], boss: { maxHp: 300, currentHp: 100, shield: 0 } });
+    await BE.__test.bossStep({ type: 'attack', name: '흡혈', value: 20, lifestealPercent: 0.5 });
+    check(S, '스텝 attack: 흡혈로 보스 회복',
+      state.currentBoss.currentHp === 100 + Math.floor(딜 * 0.5), `${state.currentBoss.currentHp}`);
+  }
 
-  resetBoard({ playerMinions: [], playerHp: 10, playerMaxHp: 50 });
-  await BE.__test.bossStep({ type: 'attack', name: '처형', value: 4, executeThreshold: 0.3 });
-  check(S, '스텝 attack: 처형 배율 2.2', state.playerHp === 10 - Math.floor(4 * 2.2), `${state.playerHp}`);
-
-  resetBoard({ playerMinions: [] });
-  await BE.__test.bossStep({ type: 'attack', name: '연타', value: 30, multiHit: 3 });
-  check(S, '스텝 attack: 연타 3회 총 30', state.playerHp === 20, `${state.playerHp}`);
-
-  resetBoard({ playerMinions: [minion({ name: 'A' }), minion({ name: 'B' })] });
-  await BE.__test.bossStep({ type: 'attack', name: '광역', value: 10, isAoe: true });
-  check(S, '스텝 attack: 광역은 전부 + 본체 70%',
-    state.playerMinions.every(m => m.currentHp === 20) && state.playerHp === 43,
-    `${state.playerMinions.map(m => m.currentHp)} php=${state.playerHp}`);
-
-  resetBoard({ playerMinions: [], boss: { maxHp: 300, currentHp: 100, shield: 0 } });
-  await BE.__test.bossStep({ type: 'attack', name: '흡혈', value: 20, lifestealPercent: 0.5 });
-  check(S, '스텝 attack: 흡혈로 보스 회복',
-    state.currentBoss.currentHp === 110, `${state.currentBoss.currentHp}`);
+  // ❤️ 플레이어 기본 체력이 상수를 따르는가 (DECISIONS #87)
+  resetBoard();
+  BE.initBattle({ seed: 1 });
+  check(S, `플레이어 기본 체력 = PLAYER_BASE_HP (${PLAYER_BASE_HP})`,
+    state.playerMaxHp === PLAYER_BASE_HP && state.playerHp === PLAYER_BASE_HP,
+    `${state.playerHp}/${state.playerMaxHp}`);
 }
 
 // ============================================================

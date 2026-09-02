@@ -357,6 +357,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let llmTrapTrigger = null;     // 🪤 함정 발동조건 (없으면 sanitize가 기본값을 넣는다)
   let llmTrapCondition = null;   // 🪤 그 조건이 요구하는 값 (속성·카드군 등)
   let llmEffects = null;         // ⚙️ LLM이 정한 실제 효과 수치 (없으면 굴린 damage만)
+  let skillDamageTarget = null;  // 💥 피해를 본체에 꽂는가 전장에 꽂는가
   let skillName = `${baseConcept}의 비기`;
   // 🐛 수정: 예전에는 함정에도 소환수 문구를 붙여 **"0 공격을 가합니다"**가 나왔다
   //    (함정은 공격력이 0이다). 건축물 문구도 실제 패시브와 무관한 고정 문장이었다.
@@ -513,6 +514,7 @@ Return ONLY JSON:
   "targetSide": "foe|ally|self|any",
   "targetScope": "single|multi|all|random",
   "targetCount": 1-3,
+  "damageTarget": "body|field|any — 💥 피해를 어디에 꽂는가. body(상대 본체만·비쌈) / field(전장 기물만·쌈) / any(둘 다)",
   "damage": 0-24,
   "shield": 0-18,
   "heal": 0-18,
@@ -604,6 +606,7 @@ Return ONLY JSON:
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;
       if (cardJson.targetScope) skillTargetScope = cardJson.targetScope;
       if (cardJson.targetCount) skillTargetCount = parseInt(cardJson.targetCount) || 1;
+      if (cardJson.damageTarget) skillDamageTarget = String(cardJson.damageTarget);
       if (cardJson.passiveEffect) llmPassiveRaw = cardJson.passiveEffect;
       // 🪤 🐛 이걸 읽지 않아서 **생성된 함정이 전부 발동조건 없이** 나왔다.
       //    프롬프트로는 요구해놓고 응답에서 버리고 있었다 (보관함 함정 6/6이 死카드).
@@ -766,6 +769,7 @@ Return ONLY JSON:
     targetSide: skillTargetSide,
     targetScope: skillTargetScope,
     targetCount: skillTargetCount,
+    damageTarget: skillDamageTarget || undefined,
     passiveEffect: structPassive,
     // 🪤 함정 전용. sanitize가 비어 있으면 기본 조건을 채운다.
     trapTrigger: cardType === 'trap' ? (llmTrapTrigger || undefined) : undefined,

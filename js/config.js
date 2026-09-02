@@ -2,7 +2,8 @@
 import { normalizeTrapTrigger, TRAP_TRIGGERS } from './trap-system.js';
 import { STATUS_EFFECTS } from './status-effects.js';
 import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
-         HP_TARGETS, readHpTarget, hpTargetCostMultiplier } from './effect-targets.js';
+         HP_TARGETS, readHpTarget, hpTargetCostMultiplier,
+         DAMAGE_TARGETS, readDamageTarget, damageTargetCostMultiplier } from './effect-targets.js';
 
 export const ELEMENT_SVG_ART = {
   fire: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="%23ea580c"/><stop offset="60%" stop-color="%23991b1b"/><stop offset="100%" stop-color="%231a0505"/></radialGradient></defs><rect width="400" height="400" fill="url(%23g)"/><circle cx="200" cy="200" r="90" fill="%23fef08a" opacity="0.25"/><text x="200" y="240" font-size="110" text-anchor="middle">🔥</text></svg>`,
@@ -367,6 +368,31 @@ function listActiveEffects(skill = {}) {
  * ⚠️ 스탯 범위(RARITY_BALANCE_CAPS)나 STAT_POWER_DIVISOR를 바꾸면
  *    이 표도 함께 다시 계산해야 한다. 안 그러면 또 커브가 무너진다.
  */
+// ============================================================
+// ❤️ 플레이어 본체 체력 & 보스 콤보 딜 배율 — 전투 난이도의 두 축
+// ------------------------------------------------------------
+// 실측으로 정한 값이다. 바꾸기 전에 반드시 다시 재세요 (→ DECISIONS #87).
+//
+// 왜 이 둘인가:
+//   · 본체 체력 50은 **소환수 공격력에 비해 너무 낮았다.** 상대 전장이 3기면
+//     한 턴에 30~50이 들어오는데, 본체가 50이면 두 턴을 못 버틴다.
+//   · 보스 콤보의 attack/magic 스텝은 **마나 제한을 받지 않는** 유일한 딜이다.
+//     카드 수를 아무리 조여도 이 값이 그대로면 체감이 안 바뀐다.
+//
+// ⚠️ 이 둘은 서로 얽혀 있다. 한쪽만 바꾸면 반대쪽이 과보정된다.
+export const PLAYER_BASE_HP = 100;
+
+/**
+ * 보스 콤보 스텝(attack/magic)의 피해 배율.
+ *
+ * 데이터의 원래 수치(16~36)를 그대로 두고 여기서만 줄인다 —
+ * 보스 14개 패턴을 손으로 고치지 않아도 되고, 연성으로 생성되는
+ * 보스 패턴에도 자동으로 적용된다.
+ *
+ * ⚠️ 2페이즈 ×1.4는 이 배율 **뒤에** 곱해진다.
+ */
+export const BOSS_STEP_DAMAGE_MULT = 0.4;
+
 export const RARITY_POWER = {
   common:    { base: 1.5, perMana: 1.7, maxCost: 5 },
   rare:      { base: 2.2, perMana: 2.0, maxCost: 5 },
@@ -515,10 +541,16 @@ export function evaluateCardPower(cardData) {
   //    본체 체력은 패배까지의 거리를 늘리지만, 소환수 체력은 그 소환수가 죽으면 사라진다.
   const hMult = hpTargetCostMultiplier(skill);
 
+  // 💥 피해 대상 배수 — 본체 직격이 기물 제거보다 비싸다.
+  //    전장 차단 규칙(DECISIONS #81) 때문에 본체를 직접 때리는 마법은
+  //    "전장을 뚫지 않고 승리 조건에 다가가는" 유일한 수단이다.
+  const dMult = damageTargetCostMultiplier(skill);
+
   const effectPower = effects.reduce((sum, e) => {
     let c = e.cost;
     if (TARGET_SCALED.has(e.key)) c *= tMult;
     if (e.key === 'heal') c *= hMult;
+    if (e.key === 'damage' || e.key === 'multiHit') c *= dMult;
     return sum + c;
   }, 0);
   const stats = statPower(cardData || {});
@@ -622,10 +654,12 @@ export function enforcePowerBudget(cardData, skill) {
   const usedPower = () => {
     const m = targetCostMultiplier(out);
     const h = hpTargetCostMultiplier(out);
+    const d = damageTargetCostMultiplier(out);
     return listActiveEffects(out).reduce((s, e) => {
       let c = e.cost;
       if (TARGET_SCALED.has(e.key)) c *= m;
       if (e.key === 'heal') c *= h;      // ❤️ 본체 회복이 소환수 회복보다 비싸다
+      if (e.key === 'damage' || e.key === 'multiHit') c *= d;   // 💥 본체 직격이 더 비싸다
       return s + c;
     }, 0) + statPower({ ...cardData, attack: atk, hp, defense: def });
   };
@@ -991,9 +1025,13 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
 
   if (skill.damage > 0) {
     const total = skill.multiHit > 1 ? skill.damage * skill.multiHit : skill.damage;
+    // 💥 피해 대상이 지정돼 있으면 문장도 그걸 밝힌다 —
+    //    "적 본체"와 "적 전장"은 값도 다르고 쓰임도 완전히 다르다.
+    const dt = readDamageTarget(skill);
+    const 표적 = dt === 'body' ? '상대 본체' : (dt === 'field' ? `${tgt.replace(/\s*\d+체$|\s*전체$/, '')} 전장의 기물` : tgt);
     parts.push(skill.multiHit > 1
-      ? `${tgt}에게 ${skill.damage}씩 ${skill.multiHit}연타(총 ${total}) 피해`
-      : `${tgt}에게 ${skill.damage} 피해`);
+      ? `${표적}에게 ${skill.damage}씩 ${skill.multiHit}연타(총 ${total}) 피해`
+      : `${표적}에게 ${skill.damage} 피해`);
   }
   if (skill.pierceShield) parts.push('방어막 관통');
   if (skill.critChance > 0) parts.push(`${Math.round(skill.critChance * 100)}% 확률로 치명타 ${skill.critMultiplier || 1.8}배`);
@@ -1454,6 +1492,9 @@ export function sanitizeAndClampCardData(cardData) {
   //    여기서 확정된 값이 그대로 예산 계산(targetCostMultiplier)에 쓰인다.
   const tspec = readTargetSpec(skill);
   skill.targetSide = tspec.side;
+  // 💥 피해 대상 (본체 / 전장 / 아무나). 피해가 없으면 의미가 없으므로 지운다.
+  if (skill.damage > 0) skill.damageTarget = tspec.damageTarget;
+  else if (skill.damageTarget !== undefined) delete skill.damageTarget;
   skill.targetScope = tspec.scope;
   skill.targetCount = tspec.count;
 

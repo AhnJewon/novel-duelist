@@ -1,6 +1,6 @@
 // battle-engine.js - 정통 카드 배틀 엔진 (소환수 / 주문 / 건축물 & 보스 멀티액션)
 
-import { ELEMENT_CONFIG } from './config.js';
+import { ELEMENT_CONFIG, PLAYER_BASE_HP, BOSS_STEP_DAMAGE_MULT } from './config.js';
 import { audio } from './audio.js';
 import { state } from './storage.js';
 import { createCardElement } from './card-renderer.js';
@@ -327,8 +327,8 @@ export function initBattle({ seed = null } = {}) {
   state.turnCount = 1;
   // 🐛 보스 턴 도중에 전투를 리셋하면 isAnimating이 true로 남아 조작이 영구 잠겼다
   state.isAnimating = false;
-  state.playerHp = 50;
-  state.playerMaxHp = 50;
+  state.playerHp = PLAYER_BASE_HP;
+  state.playerMaxHp = PLAYER_BASE_HP;
   state.playerMaxShield = 0;
   state.playerMaxMana = 1; // 💎 정통 TCG 룰: 1턴 1마나로 시작하여 턴당 +1씩 증가!
   state.playerMana = 1;
@@ -1779,6 +1779,13 @@ function resolveBossSpell(card, skill) {
 
 async function executeSingleBossStep(step) {
   let val = step.value || 0;
+  // 💥 콤보 딜 하향 — 이 스텝은 마나 제한을 받지 않는 유일한 딜이라
+  //    카드 수를 조여도 체감이 안 바뀐다. 여기 한 곳에서 줄인다 (DECISIONS #87).
+  //    ⚠️ 데이터의 원래 수치는 건드리지 않는다 — 보스 14개 패턴과
+  //       연성으로 생성되는 패턴에 자동으로 적용된다.
+  if ((step.type === 'attack' || step.type === 'magic') && val > 0) {
+    val = Math.max(1, Math.round(val * BOSS_STEP_DAMAGE_MULT));
+  }
   if (bossPhase === 2 && val > 0) val = Math.floor(val * 1.4);
 
   if (step.type === 'summon_or_buff') {

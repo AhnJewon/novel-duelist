@@ -58,6 +58,46 @@ export function readHpTarget(skill = {}) {
   return HP_TARGETS[skill.hpTarget] ? skill.hpTarget : 'body';
 }
 
+// ── 피해 대상 ────────────────────────────────────────────────
+//
+// 💥 같은 "20 피해"라도 **어디를 때리느냐**로 값이 완전히 다르다.
+//
+//    전장에 소환수가 있으면 본체를 칠 수 없다(DECISIONS #81). 그래서
+//    **본체를 직접 때리는 마법은 그 규칙을 우회하는 유일한 수단**이고,
+//    승리 조건에 곧바로 다가간다. 반대로 기물만 때리는 마법은 판을
+//    정리할 뿐 보스 체력은 1도 줄이지 못한다.
+//
+//    예전에는 둘을 같은 값으로 쳤다. 그래서 본체 직격 마법이 언제나
+//    이득이었고, 기물 제거 마법은 같은 값을 내고 약했다.
+export const DAMAGE_TARGETS = {
+  body: {
+    label: '본체',
+    desc: '상대 본체만 때린다. 전장을 무시하므로 승리 조건에 직결된다',
+    costMult: 1.5
+  },
+  field: {
+    label: '전장',
+    desc: '전장의 기물만 때린다. 본체는 건드리지 못한다',
+    costMult: 0.7
+  },
+  any: {
+    label: '아무나',
+    desc: '상황에 따라 본체든 기물이든 고른다',
+    costMult: 1.0
+  }
+};
+
+/** 스킬의 피해 대상. 지정이 없으면 예전 동작대로 '아무나'. */
+export function readDamageTarget(skill = {}) {
+  return DAMAGE_TARGETS[skill.damageTarget] ? skill.damageTarget : 'any';
+}
+
+/** 피해 대상이 비용에 곱하는 배수 (피해가 없는 스킬은 영향 없음) */
+export function damageTargetCostMultiplier(skill = {}) {
+  if (!(skill.damage > 0)) return 1;
+  return DAMAGE_TARGETS[readDamageTarget(skill)].costMult;
+}
+
 /** 체력 대상이 비용에 곱하는 배수 */
 export function hpTargetCostMultiplier(skill = {}) {
   // 체력을 건드리지 않는 스킬은 영향 없음
@@ -78,7 +118,12 @@ export function readTargetSpec(skill = {}) {
   if (!Number.isFinite(count)) count = scope === 'multi' ? 2 : 1;
   count = Math.max(1, Math.min(MAX_TARGET_COUNT, count));
 
-  return { side, scope, count: scope === 'multi' ? count : (scope === 'single' ? 1 : 0) };
+  return {
+    side, scope,
+    count: scope === 'multi' ? count : (scope === 'single' ? 1 : 0),
+    // 💥 피해를 어디에 꽂는가 (본체 / 전장 / 아무나) — 값이 다르므로 가격도 다르다
+    damageTarget: readDamageTarget(skill)
+  };
 }
 
 /**
@@ -151,13 +196,17 @@ export function collectTargetKeys(game, spec) {
   const foes = (game.bossMinions || []).filter(m => m && m.currentHp > 0);
   const allies = (game.playerMinions || []).filter(m => m && m.currentHp > 0);
 
+  // 💥 피해 대상이 지정돼 있으면 고를 수 있는 곳도 그에 맞게 좁힌다.
+  //    'body'는 본체만, 'field'는 기물만. 기본 'any'는 예전 그대로 둘 다.
+  const dt = spec.damageTarget || 'any';
+
   if (spec.side === 'foe' || spec.side === 'any') {
-    foes.forEach(m => keys.push(`foe:${game.bossMinions.indexOf(m)}`));
-    keys.push('face');
+    if (dt !== 'body') foes.forEach(m => keys.push(`foe:${game.bossMinions.indexOf(m)}`));
+    if (dt !== 'field') keys.push('face');
   }
   if (spec.side === 'ally' || spec.side === 'any') {
-    allies.forEach(m => keys.push(`ally:${game.playerMinions.indexOf(m)}`));
-    keys.push('self-face');
+    if (dt !== 'body') allies.forEach(m => keys.push(`ally:${game.playerMinions.indexOf(m)}`));
+    if (dt !== 'field') keys.push('self-face');
   }
   return keys;
 }

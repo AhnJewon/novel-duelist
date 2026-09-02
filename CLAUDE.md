@@ -369,3 +369,18 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 66. **보스 생성기를 추가하면 `saveAndFightBoss`가 유일한 관문입니다.** 카드군
     선택(`readBossTheme`)을 생성기마다 붙이지 마세요 — 실제로 두 경로가
     빠뜨려서 UI 선택이 무시됐습니다. → [DECISIONS #86](docs/DECISIONS.md)
+
+67. **밸런스 두 축은 `config.js`의 `PLAYER_BASE_HP`(100)와 `BOSS_STEP_DAMAGE_MULT`(0.4)입니다.**
+    서로 얽혀 있어 한쪽만 바꾸면 반대쪽이 과보정됩니다. 바꾸기 전에 반드시
+    실측하세요. → [DECISIONS #87](docs/DECISIONS.md)
+
+68. **피해는 `damageTarget`(body/field/any)으로 값이 갈립니다.** 본체 직격은
+    전장 차단을 우회하므로 ×1.5, 기물 전용은 ×0.7입니다. 화면·해결·가격
+    **세 곳 모두**에 반영하세요. → [DECISIONS #87](docs/DECISIONS.md)
+
+69. **밸런스를 잴 때 보스 목록을 기준값으로 되돌리세요.** 연성으로 만든 보스가
+    `bossesList[0]`에 남으면 다른 보스와 싸운 결과를 비교하게 됩니다.
+    → [DECISIONS #87](docs/DECISIONS.md)
+
+70. **하네스 기대값을 숫자로 박지 마세요.** 밸런스 상수에서 유도하세요 —
+    안 그러면 튜닝할 때마다 검사가 깨집니다. → [DECISIONS #87](docs/DECISIONS.md)
