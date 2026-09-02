@@ -265,13 +265,20 @@ export function scaledEffectCost(key, baseCost, skill) {
     const units = mag.read(skill) / mag.perUnit;
     cost = baseCost * Math.max(1, units);
   }
-  // 💫 소환수 전용 상태이상을 본체에 걸겠다고 산 경우 할증
-  if (key === 'statusEffect' && skill.bodyStatus
-      && skill.statusEffect && ENTITY_ONLY_STATUSES.has(skill.statusEffect.type)) {
+  // 💫 소환수 전용 상태이상을 본체에 걸겠다고 산 경우 할증.
+  //    봉쇄(기절·빙결)는 bodyStatus로도 본체에 걸리지 않으므로 할증도 없다 — 값을 못 받는 걸 팔지 않는다.
+  if (key === 'statusEffect' && skill.bodyStatus && skill.statusEffect
+      && ENTITY_ONLY_STATUSES.has(skill.statusEffect.type) && !BLOCKING_STATUSES.has(skill.statusEffect.type)) {
     cost *= BODY_STATUS_COST_MULT;
   }
   return cost;
 }
+
+/**
+ * 행동 봉쇄 상태이상 목록 — 본체에는 **어느 진영도** 걸리지 않는다 (DECISIONS #94).
+ * ⚠️ status-effects.js의 `blocksTurn`과 반드시 같아야 한다 (ENTITY_ONLY_STATUSES와 같은 사정).
+ */
+export const BLOCKING_STATUSES = new Set(['stun', 'freeze']);
 
 /**
  * 소환수 전용 상태이상 목록.
@@ -595,6 +602,9 @@ export function enforcePowerBudget(cardData, skill) {
   //    바뀐다 (LLM 응답 객체가 조용히 변형되는 버그가 된다).
   const out = { ...skill };
   if (skill.statusEffect) out.statusEffect = { ...skill.statusEffect };
+  // 🚫 봉쇄(기절·빙결)는 bodyStatus로도 본체에 걸리지 않는다 (DECISIONS #94).
+  //    카드가 그 약속을 들고 있으면 지운다 — 할증도, 설명문의 "본체"도 함께 사라진다. 멱등하다.
+  if (out.bodyStatus && out.statusEffect && BLOCKING_STATUSES.has(out.statusEffect.type)) delete out.bodyStatus;
   if (skill.passiveEffect) {
     out.passiveEffect = { ...skill.passiveEffect };
     if (skill.passiveEffect.aura) out.passiveEffect.aura = { ...skill.passiveEffect.aura };

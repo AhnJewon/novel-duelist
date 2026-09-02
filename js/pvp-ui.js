@@ -227,8 +227,9 @@ function beginPvpBattle(seed, foeDeck) {
     _borrowedThemeIds.push(t.id);
   }
 
-  // 상대 덱을 "보스 덱" 자리에 앉힌다
-  initBattle({ seed });
+  // 상대 덱을 "보스 덱" 자리에 앉힌다. 호스트가 라운드 리더(선공) — 양 클라이언트가 같은
+  // turnCount를 가지려면 리더의 턴 시작에만 카운터가 올라야 한다 (battle-engine의 startTurn).
+  initBattle({ seed, leader: _isHost ? 'player' : 'boss' });
 
   state.bossDeck = foeCards.map((c, i) => ({ ...c, instanceId: c.instanceId || `foe-${i}` }));
   state.bossHand = state.bossDeck.splice(0, 4);
@@ -260,7 +261,7 @@ function beginPvpBattle(seed, foeDeck) {
     dialogueLowHp: '',
     isDuelist: true
   };
-  state.bossMana = 1;
+  // (상대 마나는 initBattle이 1로 두고, 상대 턴 시작(startTurn)이 키운다)
 
   setStatus('playing');
   // 대전이 시작되면 전장으로 데려간다 (대전 탭에는 매칭 UI만 있다)

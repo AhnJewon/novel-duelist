@@ -318,8 +318,9 @@ ${buildNamingRule(targetType)}
   * ❌ "상대를 2턴간 기절시킨다"   — 본체 지정은 걸리지 않는다
 - **shock(감전) / vulnerable(취약)** 은 본체에도 걸린다. 둘은 증폭기라서
   상대가 실제로 때려야 의미가 생긴다.
-- 꼭 본체에 걸어야 하는 컨셉이면 "bodyStatus": true 를 함께 넣어라.
+- 화상·맹독을 꼭 본체에 걸어야 하는 컨셉이면 "bodyStatus": true 를 함께 넣어라.
   다만 **파워 비용이 2.5배**로 붙으므로 마나가 크게 올라간다. 남용하지 마라.
+  ❌ 기절·빙결은 bodyStatus를 붙여도 **본체에 절대 걸리지 않는다** — 소환수로 돌아간다.
 
 OUTPUT SCHEMA (Return ONLY valid raw JSON):
 {

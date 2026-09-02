@@ -93,7 +93,13 @@ function bossMinionCapThisTurn() {
   return ramp ? Math.min(SLOT_CAP, ramp.minions) : SLOT_CAP;
 }
 
-let isPlayerTurn = true;
+// 🔁 누구의 턴인가 — 진영 키.
+//    🐛 예전 `isPlayerTurn` 불리언은 initBattle이 양 클라이언트에서 true로 두어
+//       PvP 게스트가 호스트 첫 턴에 행동할 수 있었다 (DECISIONS #94).
+let activeSideKey = SIDE_PLAYER;
+// 🎲 라운드 리더 — 이 진영의 턴이 **시작될 때만** turnCount가 오른다.
+//    PvE는 플레이어, PvP는 호스트(내 화면에서 player 또는 boss). 양 클라이언트가 같은 카운터를 가진다.
+let leaderKey = SIDE_PLAYER;
 let bossPhase = 1;
 
 // 상태이상은 status-effects.js가 단일 소스. { [type]: {turns, value} } 형태.
@@ -209,7 +215,11 @@ export const __test = {
   setTrap: (sideKey, card) => setTrap(sideKey, card),
   fireTraps: (actorKey, event, card) => triggerTraps(actorKey, event, card),
   bossStep: (step) => executeSingleBossStep(step),
-  isPlayerTurn: () => isPlayerTurn,
+  isPlayerTurn: () => activeSideKey === SIDE_PLAYER,
+  activeSide: () => activeSideKey,
+  /** 진영 공용 턴 경계를 직접 돈다 (봇/원격 경로를 흉내 낼 때) */
+  startTurn: (key) => startTurn(sides[key]),
+  endTurn: (key) => endTurn(sides[key]),
   /** 모듈 지역 전투 상태(상태이상·버프·함정)를 초기화한다 */
   reset() {
     bossStatus = createStatusState();
@@ -220,7 +230,8 @@ export const __test = {
     sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
     state.bossMana = 1;
     state.bossMaxMana = 1;
-    isPlayerTurn = true;
+    activeSideKey = SIDE_PLAYER;
+    leaderKey = SIDE_PLAYER;
     bossPhase = 1;
     // ⚠️ 대상 선택 모드도 반드시 끈다. 켜진 채로 남으면 다음 검사의
     //    attackWithMinion이 "취소"로 해석해 곧바로 반환한다 —
@@ -323,7 +334,7 @@ export function buildBossTacticalDeck(boss) {
  * @param opts.seed 난수 시드. 지정하면 전투가 그대로 재현된다.
  *                  P2P 대전에서는 양쪽이 같은 시드를 공유해 락스텝을 맞춘다.
  */
-export function initBattle({ seed = null } = {}) {
+export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   const usedSeed = seedBattleRng(seed);
   const bossTemplate = state.bossesList[state.currentBossIdx] || BOSS_DATA[0];
   state.currentBoss = {
@@ -341,12 +352,18 @@ export function initBattle({ seed = null } = {}) {
   state.playerMaxShield = 0;
   state.playerMaxMana = 1; // 💎 정통 TCG 룰: 1턴 1마나로 시작하여 턴당 +1씩 증가!
   state.playerMana = 1;
-  isPlayerTurn = true;
+  // 🎲 라운드 리더가 선공이다. PvE는 플레이어, PvP는 호스트(pvp-ui가 넘긴다).
+  //    🐛 예전엔 양 클라이언트가 모두 "내 턴"으로 시작해 게스트가 호스트 첫 턴에 행동할 수 있었다.
+  leaderKey = (leader === SIDE_BOSS) ? SIDE_BOSS : SIDE_PLAYER;
+  activeSideKey = leaderKey;
   bossPhase = 1;
   state.playerMinions = [];
   
   // 보스 전용 전술 덱 & 손패 구축 (손패 4장으로 적극적 카드 전개!)
   state.bossDeck = buildBossTacticalDeck(state.currentBoss);
+  // 📚 상대의 **고정 덱** — 덱이 비면 플레이어처럼 이 목록을 다시 섞는다.
+  //    🐛 예전엔 빌 때마다 buildBossTacticalDeck을 다시 돌려 덱 내용이 바뀌었다 (DECISIONS #94).
+  state.bossDeckSource = state.bossDeck.slice();
   state.bossHand = [state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift()].filter(Boolean);
   state.bossLastCastCard = null;
 
@@ -403,26 +420,34 @@ export function initBattle({ seed = null } = {}) {
   updateBossIntent();
 }
 
-export function drawCards(count = 1) {
-  for (let i = 0; i < count; i++) {
-    if (state.playerHand.length >= sides.player.maxHand) {
-      addBattleLog(`<span class="text-red-400">손패가 가득 차 카드를 더 뽑을 수 없습니다! (최대 ${sides.player.maxHand}장)</span>`);
-      break;
-    }
-    if (state.playerDeck.length === 0) {
-      const activeDeckCards = getActiveDeckCards();
-      if (activeDeckCards.length > 0) {
-        state.playerDeck = battleRng().shuffle(activeDeckCards);
-        addBattleLog(`<span class="text-purple-400">출전 덱(${activeDeckCards.length}장)을 다시 섞어 보충했습니다!</span>`);
-      } else {
-        addBattleLog(`<span class="text-red-400">덱이 비었습니다!</span>`);
-        break;
-      }
-    }
-    const card = state.playerDeck.pop();
-    state.playerHand.push(card);
-    audio.playDraw();
+/**
+ * 진영 공용 드로우. 덱이 비면 그 진영의 **고정 덱**을 다시 섞는다 — 양 진영 같은 규칙.
+ *   플레이어: 출전 덱(getActiveDeckCards)  /  상대: initBattle이 저장한 bossDeckSource
+ * 🐛 예전엔 플레이어만 이 규칙이었고, 상대는 낸 카드마다 1장 보충 + 빌 때마다 덱 재생성이었다.
+ */
+function drawFor(side, count = 1) {
+  const mine = side.key === SIDE_PLAYER;
+  if (side.hand.length >= side.maxHand) {
+    addBattleLog(`<span class="text-red-400">${mine ? '' : `${escapeHtml(side.name)}의 `}손패가 가득 차 카드를 더 뽑을 수 없습니다! (최대 ${side.maxHand}장)</span>`);
+    return [];
   }
+  return drawTo(side, count, {
+    onEmpty: (s) => {
+      const source = mine ? getActiveDeckCards() : (state.bossDeckSource || []).map(c => ({ ...c }));
+      if (source.length === 0) {
+        addBattleLog(`<span class="text-red-400">${mine ? '' : `${escapeHtml(s.name)}의 `}덱이 비었습니다!</span>`);
+        return;
+      }
+      s.deck = battleRng().shuffle(source);
+      addBattleLog(`<span class="text-purple-400">${mine ? '출전 덱' : `${escapeHtml(s.name)}의 덱`}(${source.length}장)을 다시 섞어 보충했습니다!</span>`);
+    },
+    onDraw: () => audio.playDraw()
+  });
+}
+
+/** 플레이어 드로우 (효과·하네스가 부르는 이름). drawFor(sides.player)와 같다. */
+export function drawCards(count = 1) {
+  return drawFor(sides.player, count);
 }
 
 export function renderBattleUI() {
@@ -707,7 +732,7 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   const isStructure = entity.cardType === 'structure';
   const div = document.createElement('div');
   
-  const canAtk = !isStructure && entity.canAttack && isPlayerTurn && !entity.frozen;
+  const canAtk = !isStructure && entity.canAttack && activeSideKey === SIDE_PLAYER && !entity.frozen;
   // 카드군은 스탯을 올리지 않는다 (오토체스식 종족 버프 없음).
   // 같은 카드군이 전개돼 있으면 테두리로만 표시해 연계 가능 상태임을 알린다.
   const inArchetypePlay = !!findSynergyForEntity(synergyInfo, entity);
@@ -895,7 +920,7 @@ function triggerTraps(actorKey, event, card = null) {
 }
 
 export function playCard(handIdx) {
-  if (!isPlayerTurn || state.isAnimating) return;
+  if (activeSideKey !== SIDE_PLAYER || state.isAnimating) return;
   const me = sides.player;
   const card = me.hand[handIdx];
   if (!card) return;
@@ -1075,7 +1100,7 @@ export function triggerBattlecry(card, picked = null) {
  * 고를 여지가 없으면(대상 1개) 예전처럼 즉시 처리한다.
  */
 export function attackWithMinion(slotIdx) {
-  if (!isPlayerTurn || state.isAnimating) return;
+  if (activeSideKey !== SIDE_PLAYER || state.isAnimating) return;
   if (isTargeting()) { cancelTargeting(); return; }
   const entity = state.playerMinions[slotIdx];
   if (!entity || !entity.canAttack || entity.cardType === 'structure' || entity.frozen) return;
@@ -1290,13 +1315,11 @@ export function dealDamageToBoss(dmg, sourceName) {
 }
 
 export function playerEndTurn() {
-  if (!isPlayerTurn || state.isAnimating) return;
-  isPlayerTurn = false;
-  addBattleLog(`<span class="text-slate-400">--- 플레이어 턴 종료 ---</span>`);
+  if (activeSideKey !== SIDE_PLAYER || state.isAnimating) return;
+  activeSideKey = SIDE_BOSS;
 
-  // 턴 종료 시 건축물 패시브 발동
-  triggerStructureEndTurnPassives();
-
+  // 턴 종료 — 양 진영 공용 (건축물 턴 종료 패시브)
+  endTurn(sides.player);
   renderBattleUI();
 
   // 🌐 PvP: 상대가 다음 턴을 진행한다. 스크립트 AI를 돌리면 안 된다.
@@ -1304,6 +1327,11 @@ export function playerEndTurn() {
   if (isPvpActive()) {
     endMyPvpTurn();
     addBattleLog(`<span class="text-cyan-300">⏳ ${escapeHtml(getFoeName())}의 턴을 기다리는 중...</span>`);
+    // 🪞 상대의 턴 시작을 **내 화면에서도** 돈다 — 마나 성장·버프 감소·상태 감쇠·후유증 해제·패시브.
+    //    🐛 예전엔 이게 없어 PvP 상대의 마나는 1에 머물고, 버프는 영구였고, 소환수는 후유증에서
+    //       풀리지 않았다. 드로우만 뽑지 않는다(원격) — 카드 정체는 상대 액션에 실려 온다.
+    startTurn(sides.boss);
+    renderBattleUI();
     return;
   }
 
@@ -1463,10 +1491,15 @@ export function tickMinionStatuses(minions, label = '아군') {
  *                  (config.js의 bodyStatus / BODY_STATUS_COST_MULT)
  */
 function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, value, allowBody = false) {
-  if (!isEntityOnly(type) || allowBody) {
+  const spec = STATUS_EFFECTS[type];
+  // 🚫 행동 봉쇄(기절·빙결)는 본체에 **절대** 걸리지 않는다 — bodyStatus로도 못 산다.
+  //    한 턴을 통째로 빼앗기는 건 게임이 아니라 벌칙이고, 양 진영 같은 규칙이어야 한다.
+  //    🐛 예전엔 보스 본체만 기절할 수 있었다(플레이어가 템포를 사는 수단) — 비대칭 → DECISIONS #94
+  //    지속 피해(화상·맹독)는 bodyStatus 할증을 치르면 본체에 걸 수 있다. 그건 이미 대칭이다.
+  const bodyOk = !isEntityOnly(type) || (allowBody && !(spec && spec.blocksTurn));
+  if (bodyOk) {
     return applyStatus(statuses, type, turns, value);
   }
-  const spec = STATUS_EFFECTS[type];
   const target = (minions || []).find(m => m && m.currentHp > 0);
   if (!target) {
     addBattleLog(`<span class="text-slate-500">${spec.icon} ${spec.name}은(는) 소환수 전용입니다 — ${sideLabel} 전장이 비어 불발.</span>`);
@@ -1479,88 +1512,64 @@ function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, v
   return applied;
 }
 
-export function triggerStructureEndTurnPassives() {
-  state.playerMinions.forEach(entity => {
+/** 로그용 진영 이름 — 플레이어는 '플레이어', 상대는 실제 이름(보스/원격 프로필) */
+function sideLabel(side) {
+  return side.key === SIDE_PLAYER ? '플레이어' : side.name;
+}
+
+/**
+ * 건축물 턴 종료 패시브 — **양 진영 공용**.
+ * 🐛 예전엔 state.playerMinions만 돌아 상대 건축물은 방어막도 회복도 없는 순수한 벽이었다 (DECISIONS #94).
+ */
+export function triggerStructureEndTurnPassives(side = sides.player) {
+  side.minions.forEach(entity => {
     if (entity.cardType === 'structure' && entity.skills && entity.skills[0] && entity.skills[0].passiveEffect) {
       const p = entity.skills[0].passiveEffect;
       if (p.endTurnShield) {
-        state.playerMaxShield += p.endTurnShield;
-        addBattleLog(`<span class="text-blue-300">🏛️ [${entity.name}] 패시브: 방어막 +${p.endTurnShield} 충전!</span>`);
+        side.shield += p.endTurnShield;
+        addBattleLog(`<span class="text-blue-300">🏛️ [${escapeHtml(entity.name)}] 패시브: ${sideLabel(side)} 방어막 +${p.endTurnShield} 충전!</span>`);
       }
       if (p.endTurnAoeShield) {
-        state.playerMaxShield += p.endTurnAoeShield;
+        side.shield += p.endTurnAoeShield;
         entity.currentHp = Math.min(entity.maxHp, entity.currentHp + (p.endTurnAoeHeal || 5));
-        addBattleLog(`<span class="text-blue-300">🏛️ [${entity.name}] 성벽 가호: 방어막 +${p.endTurnAoeShield} & 내구도 수리!</span>`);
+        addBattleLog(`<span class="text-blue-300">🏛️ [${escapeHtml(entity.name)}] 성벽 가호: 방어막 +${p.endTurnAoeShield} & 내구도 수리!</span>`);
       }
       if (p.endTurnAoeHeal) {
-        state.playerHp = Math.min(state.playerMaxHp, state.playerHp + p.endTurnAoeHeal);
-        addBattleLog(`<span class="text-emerald-300">💖 [${entity.name}] 생명력 회복: 플레이어 +${p.endTurnAoeHeal} HP</span>`);
+        side.hp = Math.min(side.maxHp, side.hp + p.endTurnAoeHeal);
+        addBattleLog(`<span class="text-emerald-300">💖 [${escapeHtml(entity.name)}] 생명력 회복: ${sideLabel(side)} +${p.endTurnAoeHeal} HP</span>`);
       }
     }
   });
 }
 
-export function triggerStructureStartTurnPassives() {
-  state.playerMinions.forEach(entity => {
+/** 건축물 턴 시작 패시브 — **양 진영 공용** (마나 공급 등) */
+export function triggerStructureStartTurnPassives(side = sides.player) {
+  side.minions.forEach(entity => {
     if (entity.cardType === 'structure' && entity.skills && entity.skills[0] && entity.skills[0].passiveEffect) {
       const p = entity.skills[0].passiveEffect;
       if (p.manaPerTurn) {
-        state.playerMana = Math.min(10, state.playerMana + p.manaPerTurn);
-        addBattleLog(`<span class="text-blue-400 font-bold">💎 [${entity.name}] 마나 수정탑: 추가 마나 +${p.manaPerTurn} 공급!</span>`);
+        side.mana = Math.min(10, side.mana + p.manaPerTurn);
+        addBattleLog(`<span class="text-blue-400 font-bold">💎 [${escapeHtml(entity.name)}] 마나 수정탑: ${sideLabel(side)} 추가 마나 +${p.manaPerTurn} 공급!</span>`);
       }
     }
   });
 }
 
 // 👹 보스 멀티 액션 콤보 턴 실행기
-export async function executeBossTurn() {
+export async function executeBossTurn({ handOff = true } = {}) {
   state.isAnimating = true;
   addBattleLog(`<span class="text-red-400 font-bold">👹 [${state.currentBoss.name}] 의 다단계 콤보 턴!</span>`);
 
-  // 💫 상대 소환수 상태이상 처리. 봉쇄를 소모하고 `blockedBy`를 세운다.
-  tickMinionStatuses(state.bossMinions, '상대');
-
-  // 👾 지난 턴에 소환된 소환수를 행동 가능으로 풀어준다 (소환 후유증 해제).
-  //    ⚠️ **콤보 실행보다 앞에** 와야 한다. 뒤에 두면 이번 턴에 소환된
-  //       소환수까지 풀려서 소환 후유증이 무효가 된다.
-  refreshMinions(sides[SIDE_BOSS]);
-
-  // 1. 보스 지속 피해(화상/맹독) 적용
-  // 🐛 수정: 예전에는 burn/poison을 보스에게 걸어도 읽는 쪽이 없어 완전히 무효과였다.
-  applyDamageOverTime(bossStatus, {
-    label: '보스',
-    onDamage: (dmg) => {
-      // 화상/맹독은 방어막을 무시하고 체력에 직접 들어간다
-      state.currentBoss.currentHp -= dmg;
-    }
-  });
-
-  if (state.currentBoss.currentHp <= 0) {
-    renderBattleUI();
-    checkBattleStatus();
+  // 🔁 턴 시작은 **양 진영 공용**이다 — 마나 성장·버프 감소·본체 지속 피해·상태 감쇠·
+  //    소환수 상태 처리·후유증 해제·건축물 패시브·드로우 1장. 플레이어와 한 글자도 다르지 않다.
+  //    🐛 예전엔 이 함수 안에 보스 전용 사본이 있었다: 버프는 안 줄고, 건축물 패시브는 없고,
+  //       상태 감쇠는 턴 끝에, 드로우는 낸 카드마다. 본체 기절이면 턴을 통째로 넘겼다 (DECISIONS #94).
+  const bossSide = sides[SIDE_BOSS];
+  if (!startTurn(bossSide)) {
     state.isAnimating = false;
     return;
   }
-
-  // 2. 행동 봉쇄 상태이상 (기절/빙결) — 걸려 있으면 1턴 소모하고 턴을 넘긴다
-  const blocked = consumeBlockingStatus(bossStatus);
-  if (blocked) {
-    addBattleLog(`<span class="${blocked.spec.color} font-bold">${blocked.spec.icon} 보스가 ${blocked.spec.name} 상태로 이번 턴 행동하지 못합니다!</span>`);
-    reportExpiredStatuses(decayStatuses(bossStatus), '보스');
-    renderBattleUI();
-    setTimeout(() => startPlayerTurn(), 250);
-    return;
-  }
-  // 2. 🎴 보스 전술 카드 플레이 단계
-  //
-  // 💎 보스도 **마나를 쓴다.** 플레이어와 같은 성장 규칙(턴 수만큼, 상한 10).
-  //    🐛 예전에는 마나가 없어서(가상 99) 매 턴 카드를 2~3장씩 몰아 냈다.
-  //       플레이어가 1마나일 때 보스는 이미 전장을 채우고 있었다 —
-  //       "보스 행동이 너무 많다"의 원인이 이것이다.
-  //    이제 낼 수 있는 만큼만 낸다. 자원이 곧 제한이므로 램프의 카드 수 상한은
-  //    보조 장치로만 남는다.
-  const bossSide = sides[SIDE_BOSS];
-  growMana(bossSide, state.turnCount);
+  // 💎 보스도 **마나를 쓴다.** 낼 수 있는 만큼만 낸다 — 램프의 카드 수 상한은 보조 장치다.
   addBattleLog(`<span class="text-slate-400">💎 보스 마나 ${bossSide.mana}/${bossSide.maxMana}</span>`);
 
   const baseCardLimit = (bossPhase === 2 || state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5) ? 3 : 2;
@@ -1601,14 +1610,7 @@ export async function executeBossTurn() {
       await playBossCard(cardToPlay);
       renderBattleUI();
       await new Promise(r => setTimeout(r, 400));
-
-      // 덱에서 새 카드 보충
-      if (state.bossDeck && state.bossDeck.length > 0) {
-        state.bossHand.push(state.bossDeck.shift());
-      } else {
-        state.bossDeck = buildBossTacticalDeck(state.currentBoss);
-        if (state.bossDeck.length > 0) state.bossHand.push(state.bossDeck.shift());
-      }
+      // (드로우는 턴 시작에 1장 — 플레이어와 같다. 🐛 예전엔 낸 카드마다 1장씩 보충해 손패가 마르지 않았다)
     }
   }
 
@@ -1651,13 +1653,14 @@ export async function executeBossTurn() {
   }
 
 
-  // 보스 턴 종료: 보스에게 걸린 상태이상 1턴 감쇠
-  reportExpiredStatuses(decayStatuses(bossStatus), '보스');
+  // 턴 종료 — 양 진영 공용 (건축물 턴 종료 패시브). 상태 감쇠는 이제 **턴 시작**에 한다.
+  endTurn(bossSide);
 
   renderBattleUI();
   checkBattleStatus();
 
-  if (state.playerHp > 0 && state.currentBoss.currentHp > 0) {
+  // handOff=false는 하네스용 — 다음 턴을 예약하지 않고 여기서 멈춘다
+  if (handOff && state.playerHp > 0 && state.currentBoss.currentHp > 0) {
     setTimeout(() => startPlayerTurn(), 250);
   } else {
     state.isAnimating = false;
@@ -2027,53 +2030,83 @@ function applyDirectDamageToPlayer(dmg, pierceShield = false) {
   }
 }
 
-export function startPlayerTurn() {
-  state.turnCount++;
-  isPlayerTurn = true;
-  state.isAnimating = false;
+/**
+ * 턴 시작 — **양 진영 공용.** 플레이어·PvE 봇·PvP 상대(내 화면의 거울)가 전부 이 함수를 지난다.
+ *
+ * 순서: 리더면 turnCount++ → 버프 감소(무적·경감·가시) → 본체 지속 피해 → 상태 감쇠 → 사망 확인
+ *       → 마나 성장 → 소환수 상태 처리 → 후유증 해제 → 건축물 턴 시작 패시브 → 드로우 1장.
+ *
+ * 🐛 예전엔 플레이어 버전(startPlayerTurn)과 보스 버전(executeBossTurn 앞부분)이 따로 있었고
+ *    보스 버전에는 버프 감소·건축물 패시브가 없었으며 상태 감쇠는 턴 **끝**에 했다. PvP 상대는
+ *    아무것도 돌지 않았다 (DECISIONS #94).
+ *
+ * ⚠️ 상태 감쇠는 여기 한 곳(그 진영의 턴 시작)에서만 한다. 봉쇄 상태이상은 본체에 걸리지
+ *    않으므로(applyStatusRespectingScope) 본체 턴 스킵 분기는 없다.
+ *
+ * @returns {boolean} 살아서 턴을 이어가는가. false면 본체가 지속 피해로 쓰러졌다.
+ */
+export function startTurn(side) {
+  const label = sideLabel(side);
+  activeSideKey = side.key;
+  // 🎲 라운드 카운터는 리더의 턴 시작에만 오른다 — 양 진영이 같은 turnCount로 마나를 키운다
+  if (side.key === leaderKey) state.turnCount++;
 
-  // 버프 틱 차감
-  if (playerBuffs.invulnerable > 0) playerBuffs.invulnerable--;
-
-  // 🛡️ 피해 경감도 턴마다 줄어든다. 안 하면 한 번 걸면 전투 내내 유지된다.
-  if (playerBuffs.damageReductionTurns > 0) {
-    playerBuffs.damageReductionTurns--;
-    if (playerBuffs.damageReductionTurns === 0) {
-      const was = playerBuffs.damageReduction;
-      playerBuffs.damageReduction = 0;
-      if (was > 0) addBattleLog(`<span class="text-slate-400">🛡️ 피해 경감 효과가 사라졌습니다.</span>`);
+  // 버프 틱 차감 — 한 번 걸면 전투 내내 유지되지 않도록
+  const b = side.buffs;
+  if (b.invulnerable > 0) b.invulnerable--;
+  if (b.damageReductionTurns > 0) {
+    b.damageReductionTurns--;
+    if (b.damageReductionTurns === 0) {
+      const was = b.damageReduction;
+      b.damageReduction = 0;
+      if (was > 0) addBattleLog(`<span class="text-slate-400">🛡️ ${escapeHtml(label)}의 피해 경감 효과가 사라졌습니다.</span>`);
+    }
+  }
+  // 🌵 가시(피해 반사)도 턴제다 — 예전엔 보스 전용·영구였다
+  if (b.thornsTurns > 0) {
+    b.thornsTurns--;
+    if (b.thornsTurns === 0 && b.thorns > 0) {
+      b.thorns = 0;
+      addBattleLog(`<span class="text-slate-400">🌵 ${escapeHtml(label)}의 가시 결계가 사라졌습니다.</span>`);
     }
   }
 
-  // 🔥 플레이어 지속 피해(화상/맹독) 적용 후 상태이상 1턴 감쇠
-  // 🐛 수정: 이전에는 playerDebuffs에 burn/poison 칸만 있고 적용/감쇠가 없어
-  //          취약(vulnerable)이 한 번 걸리면 전투 끝까지 유지됐다.
-  applyDamageOverTime(playerStatus, {
-    label: '플레이어',
-    onDamage: (dmg) => { state.playerHp -= dmg; }
-  });
-  reportExpiredStatuses(decayStatuses(playerStatus), '플레이어');
+  // 🔥 본체 지속 피해(화상/맹독) → 상태이상 1턴 감쇠. 지속 피해는 방어막을 무시한다.
+  applyDamageOverTime(side.statuses, { label, onDamage: (dmg) => { side.hp -= dmg; } });
+  reportExpiredStatuses(decayStatuses(side.statuses), label);
 
-  if (state.playerHp <= 0) {
+  if (side.hp <= 0) {
     renderBattleUI();
     checkBattleStatus();
-    return;
+    return false;
   }
 
   // 💎 정통 TCG 룰: 턴 수에 맞춰 마나 최대치가 1씩 성장 (턴 1: 1마나, 턴 2: 2마나...)
-  growMana(sides.player, state.turnCount);
+  growMana(side, state.turnCount);
 
-  // 모든 아군 소환수 공격 가능 상태 해제 (빙결 해제)
-  // 💫 내 소환수 상태이상 처리 (지속 피해 → 봉쇄 소모 → 감쇠)
-  //    ⚠️ refreshMinions **앞에** 와야 한다. refreshMinions는 여기서 세운
-  //       `m.blockedBy`를 읽어 canAttack을 결정한다.
-  tickMinionStatuses(state.playerMinions, '내');
-  refreshMinions(sides.player);
+  // 💫 소환수 상태이상 처리 (지속 피해 → 봉쇄 소모 → 감쇠)
+  //    ⚠️ refreshMinions **앞에** 와야 한다. refreshMinions는 여기서 세운 `m.blockedBy`를 읽는다.
+  tickMinionStatuses(side.minions, side.key === SIDE_PLAYER ? '내' : '상대');
+  refreshMinions(side);
 
-  // 턴 시작 시 건축물 패시브 (마나 공급 등)
-  triggerStructureStartTurnPassives();
+  // 🏛️ 건축물 턴 시작 패시브 (마나 공급 등) — 상대 건축물도 일한다
+  triggerStructureStartTurnPassives(side);
 
-  drawCards(1);
+  // 📥 드로우 1장. 원격 상대는 카드 정체가 액션에 실려 오므로 여기서 뽑지 않는다.
+  if (side.controller !== 'remote') drawFor(side, 1);
+  return true;
+}
+
+/** 턴 종료 — **양 진영 공용** (건축물 턴 종료 패시브) */
+export function endTurn(side) {
+  triggerStructureEndTurnPassives(side);
+  addBattleLog(`<span class="text-slate-400">--- ${escapeHtml(sideLabel(side))} 턴 종료 ---</span>`);
+}
+
+/** 플레이어 턴 시작 — startTurn(sides.player) + 내 화면 갱신 */
+export function startPlayerTurn() {
+  state.isAnimating = false;
+  if (!startTurn(sides.player)) return;
   updateBossIntent();
   renderBattleUI();
   addBattleLog(`<span class="text-emerald-400 font-bold">✨ [턴 ${state.turnCount}] 플레이어 턴 시작! 마나(${state.playerMana}) 충전 완료.</span>`);
@@ -2201,8 +2234,8 @@ registerPvpHandlers({
   // 상대 하수인 한 기의 공격
   foeMinionAttack: (slotIdx) => foeMinionAttack(slotIdx),
 
-  // 상대 턴이 끝났다 → 내 턴 시작
-  beginMyTurn: () => startPlayerTurn(),
+  // 상대 턴이 끝났다 → 상대의 턴 종료(건축물 패시브)를 내 화면에서도 돌리고 내 턴 시작
+  beginMyTurn: () => { endTurn(sides.boss); startPlayerTurn(); },
 
   foeSurrendered: () => {
     addBattleLog(`<span class="text-emerald-300 font-bold">🏳️ ${escapeHtml(getFoeName())}이(가) 항복했습니다. 승리!</span>`);

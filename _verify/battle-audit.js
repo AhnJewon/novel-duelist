@@ -25,6 +25,7 @@ import { COMBO_TRIGGERS, COMBO_SCALINGS, COMBO_SCOPES, SCOPE_POWER_MULT,
          selfView, foeView, HAND_CAP } from '/js/archetype-identity.js';
 import { ARCHETYPE_COMBO_ACTIONS, runArchetypeCombo, belongsToTheme } from '/js/archetype-combos.js';
 import { triggerArchetypeCombo } from '/js/archetype-service.js';
+import { attachPvpSession, detachPvpSession, handleRemoteAction } from '/js/pvp-battle.js';
 import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          collectDamageOverTime, decayStatuses, consumeBlockingStatus,
          getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
@@ -1697,7 +1698,7 @@ async function suiteBossTurn() {
 // ============================================================
 // 11. 턴 사이클
 // ============================================================
-function suiteTurnCycle() {
+async function suiteTurnCycle() {
   const S = '턴 사이클';
 
   // 마나 성장 + 드로우 + 상태 감쇠
@@ -1764,6 +1765,55 @@ function suiteTurnCycle() {
   resetBoard({ playerDeck: [card(), card()], playerHand: Array.from({ length: 7 }, () => card()) });
   BE.drawCards(2);
   check(S, '손패 상한 7', state.playerHand.length === 7, `${state.playerHand.length}`);
+
+  // ── 상대 진영도 **같은** 턴 경계를 지난다 (DECISIONS #94)
+  // 상대 건축물의 턴 종료 패시브 → 상대 방어막 (🐛 예전엔 인자를 안 받고 플레이어 전장만 돌았다)
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 },
+    bossMinions: [minion({ name: '상대성벽', cardType: 'structure', skills: [{ passiveEffect: { endTurnShield: 7 } }] })] });
+  BE.triggerStructureEndTurnPassives(BE.getSide('boss'));
+  check(S, '상대 건축물 턴 종료 패시브 → 상대 방어막 +7', state.currentBoss.shield === 7, `${state.currentBoss.shield}`);
+
+  // 상대 턴 시작: 버프·가시 감소, 드로우 정확히 1장, 본체 기절은 턴을 건너뛰지 않는다
+  //   (덱 카드는 cost 9 — 낼 수 없어야 손패 수로 드로우를 잴 수 있다)
+  resetBoard({ turnCount: 3, playerHp: 100,
+    boss: { maxHp: 300, currentHp: 300, shield: 0, comboPatterns: [{ name: '검사', steps: [{ type: 'attack', name: '타격', value: 10 }] }] },
+    bossHand: [], bossDeck: [card({ cost: 9 }), card({ cost: 9 }), card({ cost: 9 })] });
+  BE.__test.buffs().boss.invulnerable = 1;
+  BE.__test.buffs().boss.thorns = 0.3; BE.__test.buffs().boss.thornsTurns = 1;
+  applyStatus(BE.__test.statuses().boss, 'stun', 1, 0);   // 본체에 직접 심어도 턴은 넘어가지 않아야 한다
+  await BE.executeBossTurn({ handOff: false });
+  check(S, '상대 턴 시작: 무적·가시 턴 감소 (예전: 상대 버프는 영구)',
+    BE.__test.buffs().boss.invulnerable === 0 && BE.__test.buffs().boss.thorns === 0, JSON.stringify(BE.__test.buffs().boss));
+  check(S, '상대 턴 시작: 드로우 정확히 1장 (예전: 낸 카드 수만큼)', state.bossHand.length === 1, `${state.bossHand.length}`);
+  check(S, '상대 턴 시작: 마나 = 턴 수, 리더가 아니라 turnCount는 그대로',
+    state.bossMana === 3 && state.turnCount === 3, `mana=${state.bossMana} t=${state.turnCount}`);
+  check(S, '본체 기절은 상대 턴을 건너뛰지 않는다 (양쪽 불가)', state.playerHp < 100, `php=${state.playerHp}`);
+
+  // 본체 봉쇄는 bodyStatus로도 걸리지 않는다 — 소환수가 없으면 불발
+  resetBoard({ bossMinions: [] });
+  const gate = BE.__test.helpers('player').setBossStatus('stun', 1, 0, true);
+  check(S, '본체 기절은 bodyStatus로도 걸리지 않는다 (예전: 보스 본체만 가능)',
+    gate === null && !BE.getBattleStatusSnapshot().boss.some(s => s.type === 'stun'),
+    JSON.stringify(BE.getBattleStatusSnapshot().boss));
+
+  // PvP 게스트: 호스트가 라운드 리더 — 호스트 endTurn 전엔 행동 불가, 첫 턴은 턴 1·마나 1
+  //   (🐛 예전엔 initBattle이 양 클라이언트를 "내 턴"으로 시작시켰고 게스트 첫 턴이 턴 2였다)
+  {
+    const dummy = { sendAction() {} };
+    try {
+      attachPvpSession(dummy, { foeName: '검증상대', isHost: false });
+      BE.initBattle({ seed: 7, leader: 'boss' });
+      state.playerHand = [card({ cost: 0 })]; state.playerMana = 1;
+      BE.playCard(0);
+      const acted = state.playerHand.length === 0;
+      await handleRemoteAction({ kind: 'endTurn' });
+      check(S, 'PvP 게스트: 호스트 endTurn 전엔 카드를 못 낸다 (예전: 양쪽 다 자기 턴)', acted === false, `acted=${acted}`);
+      check(S, 'PvP 게스트: 첫 턴은 턴 1·마나 1 (예전: 턴 2·마나 2)',
+        state.turnCount === 1 && state.playerMana === 1, `t=${state.turnCount} mana=${state.playerMana}`);
+    } finally {
+      detachPvpSession();
+    }
+  }
 }
 
 // ============================================================
