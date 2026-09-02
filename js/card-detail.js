@@ -82,6 +82,10 @@ function detailHtml(card) {
         <div class="border-t border-slate-700/60 pt-1.5 space-y-1">
           <div class="font-black text-amber-300 text-[11px]">⚔️ ${escapeHtml(skill.name || '효과')}</div>
           <div class="text-slate-300 leading-relaxed text-[11px] break-words">${escapeHtml(skill.description || '설명 없음')}</div>
+          ${/* 📜 규칙 텍스트와 플레이버를 나눠 보여준다 → DECISIONS #91 */''}
+          ${skill.flavorText
+            ? `<div class="text-slate-500 italic leading-relaxed text-[10px] break-words border-t border-slate-800 pt-1">${escapeHtml(skill.flavorText)}</div>`
+            : ''}
         </div>`) : ''}
 
       ${card.frozen ? `<div class="text-cyan-300 font-bold text-[10px]">❄️ 빙결 — 이번 턴 행동 불가</div>` : ''}

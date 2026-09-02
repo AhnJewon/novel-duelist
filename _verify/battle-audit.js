@@ -36,6 +36,7 @@ import { seedBattleRng } from '/js/rng.js';
 import { isValidTarget, cancelTargeting, beginTargeting } from '/js/targeting.js';
 import { getSkillBadgesHtml } from '/js/card-renderer.js';
 import { KEYWORD_DEFINITIONS } from '/js/keyword-service.js';
+import { validateFlavor } from '/js/card-describe.js';
 import { describeSkillFromData, sanitizeAndClampCardData, evaluateCardPower,
          BOSS_STEP_DAMAGE_MULT, PLAYER_BASE_HP } from '/js/config.js';
 
@@ -1834,44 +1835,70 @@ function suiteKeywordDisplay() {
       오탐.length === 0, `오탐: ${오탐.join(', ')}`);
   }
 
-  // 🚫 거짓말 관문 — 설명문이 스킬로 뒷받침되지 않으면 교체된다 (DECISIONS #85)
-  const 거짓말들 = [
-    ['미구현 동작(부활)', { damage: 14 }, '쓰러진 아군을 부활시킨다.'],
-    ['미구현 동작(강탈)', { damage: 14 }, '상대 카드를 훔친다.'],
-    ['없는 효과(드로우)', { damage: 7 }, '손패에서 1장을 드로우한다.'],
-    ['없는 효과(파괴)', { damage: 14 }, '상대 소환수 1체를 제거하고 공격한다.'],
-    ['없는 효과(방어막)', { damage: 10 }, '10 피해를 주고 방어막 8을 얻는다.'],
-    ['없는 효과(회복)', { damage: 10 }, '아군 체력을 10 회복시킨다.'],
-    ['미구현 동작(변신)', { damage: 10 }, '적을 양으로 변신시킨다.']
-  ];
-  for (const [label, skill, desc] of 거짓말들) {
+  // 📜 규칙 텍스트는 **언제나 데이터에서 만들어진다** (DECISIONS #91)
+  //
+  //    이전 구조에서는 LLM 산문을 규칙 텍스트로 쓰고 정규식으로 수리했다.
+  //    이제 산문이 무엇이든 규칙 텍스트는 describeSkillFromData의 결과여야 한다 —
+  //    거짓말이 **구조적으로 불가능**하다.
+  {
+    const 산문들 = [
+      ['거짓말(부활)', '쓰러진 아군을 부활시킨다.'],
+      ['거짓말(강탈)', '상대 카드를 훔친다.'],
+      ['없는 드로우', '손패에서 1장을 드로우한다.'],
+      ['없는 파괴', '소환수 1체를 제거하고 공격한다.'],
+      ['없는 방어막', '12 피해를 주고 방어막 8을 얻는다.'],
+      ['과장 수치', '200 피해를 입힌다.'],
+      ['빈 문장', ''],
+      ['정직한 문장', '적 1체에게 14 피해.']
+    ];
+    const 불일치 = [];
+    for (const [라벨, desc] of 산문들) {
+      const out = sanitizeAndClampCardData({
+        name: '검증', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
+        skills: [{ name: '효과', damage: 14, description: desc }]
+      });
+      const 기대 = describeSkillFromData(out.skills[0], 'unit');
+      if (out.skills[0].description !== 기대) 불일치.push(`${라벨}: "${out.skills[0].description}" ≠ "${기대}"`);
+    }
+    check(S, `규칙 텍스트는 산문과 무관하게 데이터에서 생성된다 (${산문들.length}종)`,
+      불일치.length === 0, 불일치.join(' | '));
+  }
+
+  // 🃏 플레이버는 규칙 텍스트를 흉내 내면 버려진다
+  {
+    const 통과 = ['그림자는 주인을 묻지 않는다.', '불꽃은 약속을 기억하지 못한다.'];
+    const 폐기 = [
+      '적에게 18 피해를 입힌다.',      // 숫자 + 기능 어휘
+      '방어막을 얻고 카드를 뽑는다.',   // 기능 어휘
+      '매 턴 마나를 공급한다.',        // 기능 어휘
+      ''                              // 빈 문장
+    ];
+    const 오탐 = 통과.filter(t => validateFlavor(t) !== null);
+    const 놓침 = 폐기.filter(t => validateFlavor(t) === null);
+    check(S, '플레이버 검증: 분위기 문장은 통과', 오탐.length === 0, 오탐.join(' | '));
+    check(S, '플레이버 검증: 효과 서술은 폐기', 놓침.length === 0, 놓침.join(' | '));
+  }
+
+  // 🃏 효과가 있는 카드의 플레이버가 규칙 텍스트를 덮지 않는다
+  {
     const out = sanitizeAndClampCardData({
       name: '검증', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
-      skills: [{ name: '효과', ...skill, description: desc }]
+      skills: [{ name: '효과', damage: 14, flavorText: '그림자는 주인을 묻지 않는다.' }]
     });
-    check(S, `거짓말 관문: ${label}`, out.skills[0].description !== desc,
-      `그대로 남음: "${out.skills[0].description}"`);
-  }
-  // 정직한 설명문은 건드리지 않는다 (오탐 방지)
-  {
-    const honest = sanitizeAndClampCardData({
+    check(S, '플레이버가 있어도 규칙 텍스트는 데이터에서 나온다',
+      out.skills[0].description === describeSkillFromData(out.skills[0], 'unit') &&
+      out.skills[0].flavorText === '그림자는 주인을 묻지 않는다.',
+      `규칙="${out.skills[0].description}" 플레이버="${out.skills[0].flavorText}"`);
+
+    // 수치를 주장하는 플레이버는 저장 단계에서 떨어진다
+    const bad = sanitizeAndClampCardData({
       name: '검증', cardType: 'unit', rarity: 'rare', cost: 3, attack: 10, defense: 4, hp: 24,
-      skills: [{ name: '효과', damage: 14, description: '적 1체에게 14 피해.' }]
+      skills: [{ name: '효과', damage: 14, flavorText: '적에게 18 피해를 입힌다.' }]
     });
-    check(S, '거짓말 관문: 정직한 문장은 그대로 둔다',
-      honest.skills[0].description === '적 1체에게 14 피해.', honest.skills[0].description);
+    check(S, '수치를 주장하는 플레이버는 버려진다', !bad.skills[0].flavorText,
+      String(bad.skills[0].flavorText));
   }
-  // 새 효과를 실제로 가진 카드는 그 문장을 유지한다
-  {
-    const real = sanitizeAndClampCardData({
-      name: '검증', cardType: 'spell', rarity: 'epic', cost: 5,
-      skills: [{ name: '효과', destroy: 1, searchDeck: 1,
-                 description: '적 1체를 파괴하고 덱에서 카드 1장을 서치한다.' }]
-    });
-    check(S, '거짓말 관문: 진짜로 구현된 파괴·서치는 통과',
-      real.skills[0].description.includes('파괴') && real.skills[0].description.includes('서치'),
-      real.skills[0].description);
-  }
+
 
   // ♻️ sanitize는 **멱등**해야 한다 (DECISIONS #89)
   //    카드 연성은 기획 때 한 번, 이미지 생성/저장 때 한 번 총 **두 번** 돌린다.

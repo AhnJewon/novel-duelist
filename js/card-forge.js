@@ -298,7 +298,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "name": "컨셉에 맞춘 독창적인 스킬명",
     "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",
     "isVanilla": "효과 없는 바닐라로 만들 때만 true. 그러면 아래 수치는 전부 0/생략.",
-    "flavorText": "isVanilla가 true일 때만: 세계관 한 줄 (25자 이내). 효과 서술 금지.",
+    "flavorText": "카드의 분위기 한 줄 (40자 이내). ⚠️ 효과·수치를 쓰지 마라 — 규칙 텍스트는 시스템이 데이터에서 만든다.",
     "cost": 1-3,
     "damage": 0-22,
     "shield": 0-16,

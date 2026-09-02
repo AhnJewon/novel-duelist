@@ -238,7 +238,13 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
         // 🃏 바닐라는 효과가 아니라 **플레이버 텍스트**다. 기울임 + 흐린 색으로
         //    효과 설명과 구분한다. 안 그러면 "효과가 안 적힌 카드"로 보인다.
         ? `<p class="text-slate-400/80 italic leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>`
-        : `<p class="text-slate-300 leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>`}
+        // 📜 규칙 텍스트(데이터 생성) + 플레이버(LLM 산문)를 **나눠서** 보여준다.
+        //    실제 TCG와 같은 구조다 — 규칙은 정확하게, 분위기는 따로.
+        //    → DECISIONS #91
+        : `<p class="text-slate-300 leading-snug text-[8.5px]">${escapeHtml(skill.description)}</p>
+           ${skill.flavorText
+             ? `<p class="text-slate-500 italic leading-snug text-[8px] border-t border-slate-700/50 pt-0.5 mt-0.5">${escapeHtml(skill.flavorText)}</p>`
+             : ''}`}
     </div>
 
     <!-- 하단 스탯 바 -->

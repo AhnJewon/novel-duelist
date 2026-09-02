@@ -1609,84 +1609,18 @@ export function sanitizeAndClampCardData(cardData) {
 
   // 구버전 필드와 어긋나지 않게 맞춰둔다 (isAoeSpell == 전체 대상)
   skill.isAoeSpell = tspec.scope === 'all';
-
-  // 3. 설명문 내 % 표기 완전 제거 및 정수 치환
-  if (skill.description) {
-    let desc = skill.description;
-    // (A) % 증가 / 상승 -> 정수치로 변환
-    //     ⚠️ **확률·치명타는 예외.** "치명타 확률 25% 증가"의 25%는 스탯 배율이 아니라
-    //        비율 그 자체다. 정수로 바꾸면 "치명타 확률 +3 증가"라는 헛소리가 된다.
-    desc = desc.replace(/(\d+)\s*%\s*(공격력\s*)?(증가|상승|강화|증폭)/g, (m, p1, p2, p3, offset, whole) => {
-      const before = whole.slice(Math.max(0, offset - 12), offset);
-      if (/(확률|치명|크리|흡혈|명중|회피)\s*$/.test(before)) return m;   // 비율이므로 그대로
-      const val = Math.min(caps.buffValue[1], Math.max(caps.buffValue[0], Math.round(parseInt(p1) / 10) || 2));
-      return `${p2 || ''}+${val} ${p3}`;
-    });
-    // (B) % 회복 -> 정수치로 변환
-    desc = desc.replace(/(\d+)\s*%\s*(체력\s*)?(회복|치유)/g, (m, p1, p2, p3) => {
-      return `${p2 || ''}체력 ${caps.healValue[0]} ${p3}`;
-    });
-    // (C) % 피해 -> 정수치로 변환
-    desc = desc.replace(/(\d+)\s*%\s*(추가\s*)?(피해|데미지)/g, (m, p1, p2, p3) => {
-      return `${caps.spellDamage[0]} ${p3}`;
-    });
-    // (D) 남은 % 처리.
-    //
-    // 🐛 예전에는 **모든 %를 무조건 지웠다.** 그래서 정당한 확률 표기가
-    //    "20% 확률로" → "20 확률로" 같은 말이 안 되는 문장이 됐다.
-    //
-    //    %가 문제가 되는 건 **스탯 배율**일 때다 ("공격력 20% 증가" → 스펙 인플레).
-    //    그건 위 (A)(B)(C)에서 이미 정수로 바꿨다.
-    //    **확률·비율**은 %가 있어야 뜻이 통한다 — 남긴다.
-    //    화이트리스트로 "살릴 %"를 고르려 했더니 계속 빠뜨렸다
-    //    ("50% 줄인다"의 '줄'을 놓쳐 "50 줄인다"가 됐다).
-    //    → 기본을 **살리는 쪽**으로 뒤집는다. 위험한 경우는 (A)(B)(C)가 이미
-    //      정수로 바꿨으므로, 남은 %는 대부분 정당한 비율이다.
-    //      스탯 이름에 바로 붙은 %만 정수로 떨어뜨린다 (스펙 인플레 방지).
-    //      ⚠️ **증감 표현일 때만** 바꾼다.
-    //      🐛 예전에는 스탯 이름 뒤의 %를 무조건 정수로 눌렀다. 그래서
-    //         문턱 표현까지 망가뜨렸다:
-    //           "상대 체력 30% 이하면 처형(2배)" → "상대 체력 +3 이하면 처형(2배)"
-    //         30%는 스탯 배율이 아니라 **처형 사거리**다. 뜻이 통째로 달라진다.
-    desc = desc.replace(/(공격력|체력|방어력|방어막|실드)\s*(\d+)\s*%\s*(증가|상승|강화|증폭|감소|하락|약화)/g,
-      (m, stat, num, verb) =>
-        `${stat} ${/(감소|하락|약화)/.test(verb) ? '-' : '+'}${Math.min(caps.buffValue[1], Math.max(1, Math.round(parseInt(num) / 10)))} ${verb}`);
-
-    // (D-2) 분수·모호한 배율 표기를 정수 %로 굳힌다.
-    //   "피해를 1/2로 줄이고" 처럼 읽는 사람마다 다르게 해석되는 표기를 없앤다.
-    desc = desc
-      .replace(/1\s*\/\s*2/g, '50%')
-      .replace(/1\s*\/\s*3/g, '33%')
-      .replace(/1\s*\/\s*4/g, '25%')
-      .replace(/절반으로\s*(줄|감소)/g, '50% $1');
-
-    // (E) 🐛 설명문의 숫자를 **클램프된 실제 값**과 맞춘다.
-    //     예전에는 이 단계가 없어서 LLM이 "200 피해를 준다"라고 쓰면
-    //     skill.damage는 24로 깎이는데 카드에는 200이라 적혀 있었다.
-    //     플레이어에게 거짓말을 하는 셈이고, 밸런스가 망가진 것처럼 보인다.
-    desc = syncDescriptionNumbers(desc, skill);
-
-    // (F) 🐛 "체력"이 **누구 것인지** 명시한다.
-    //   카드에 찍힌 ❤️는 그 소환수 자신의 체력인데,
-    //   엔진의 heal/lowHp는 **플레이어 본체 체력**을 본다.
-    //   그냥 "체력"이라고만 쓰면 둘 중 뭔지 알 수 없다.
-    //   ⚠️ 숫자 동기화(E) **뒤에** 와야 한다. 앞에 오면 "체력 15 를 회복"처럼
-    //      조사가 끼어들어 (E)의 정규식이 숫자를 못 잡는다.
-    desc = clarifyHpSubject(desc, skill.hpTarget);
-
-    // (G) 🪤 함정이 아닌데 반응형 문구를 썼으면 그 절을 걷어낸다.
-    //     걷어낸 뒤 남는 게 없으면 **데이터로부터 설명을 만든다** —
-    //     빈 설명보다 정확한 자동 문장이 낫다.
-    //     ⚠️ 조건절만 지우면 **남은 서술도 대개 구현되지 않은 효과**다.
-    //        ("어떤 적 카드가 소환될 때 그 카드를 즉시 제거하고 1 마나를 획득한다"
-    //         → 조건만 빼면 "그 카드를 즉시 제거하고..." 라는 여전히 없는 효과)
-    //        그래서 어중간하게 자르지 않고 **통째로 데이터에서 다시 만든다.**
-    if (cardType !== 'trap' && stripReactiveClauses(desc) !== desc) {
-      desc = describeSkillFromData(skill, cardType);
-    }
-
-    skill.description = desc;
-  }
+  // 3. 📜 설명문은 여기서 손대지 않는다.
+  //
+  //    🗑️ 예전에는 여기서 LLM 산문을 **수리**했다:
+  //       (A)(B)(C) % → 정수 치환 · (D) 남은 % 처리 · (D-2) 분수 표기 ·
+  //       (E) 숫자 동기화 · (F) 체력 주어 명시 · (G) 반응형 절 제거.
+  //       약 70줄이었고, 실패하는 방식이 나빴다 —
+  //       놓치면 카드가 거짓말하고, 오탐이면 문장이 손상됐다.
+  //       ("상대 체력 30% 이하면 처형" → "상대 체력 +3 이하면 처형")
+  //
+  //    이제 규칙 텍스트는 예산 정산 **뒤에** describeSkillFromData가 만든다.
+  //    산문을 고칠 이유가 없다 — 애초에 규칙 텍스트로 쓰지 않기 때문이다.
+  //    LLM 산문은 flavorText로 따로 간다. → DECISIONS #91
 
   // 4. ⚖️ 통합 파워 예산 적용
   //    효과를 지우기 전에 **마나 코스트를 먼저 올려** 값을 치른다.
@@ -1709,112 +1643,57 @@ export function sanitizeAndClampCardData(cardData) {
     console.log(`[Balance] "${cardData.name || '무명'}" (${rarity}/${cardType}) 값을 치를 것이 없어 마나 -${budgeted.costLowered} → ${cost}`);
   }
 
-  // 📏 크기를 깎았으면 **설명문의 숫자를 다시 맞춘다.**
-  //    ⚠️ 이게 없으면 카드에 "28 피해"라고 적혀 있는데 20이 들어간다.
-  //       숫자 동기화(3-E단계)는 예산 적용 **전**에 끝나므로 여기서 한 번 더 돈다.
-  if (budgeted.trimmedValues > 0) {
-    const before = finalSkill.description;
-    finalSkill.description = syncDescriptionNumbers(finalSkill.description, finalSkill);
-    // 건축물 패시브는 문장 전체가 데이터에서 생성되므로 통째로 다시 만든다
-    if (cardType === 'structure' && finalSkill.passiveEffect) {
-      finalSkill.description = describeStructurePassive(finalSkill.passiveEffect);
-    }
-    console.log(`[Balance] "${cardData.name || '무명'}" 크기 ${budgeted.trimmedValues}단계 하향 → 설명문 재동기화: "${before}" → "${finalSkill.description}"`);
-  }
-  if (budgeted.removed.length > 0) {
-    console.log(
-      `[Balance] "${cardData.name || '무명'}" (${rarity}/마나${cost}) 효과 ${budgeted.removed.length}건 제거: ` +
-      budgeted.removed.map(r => `${r.label}(${r.reason})`).join(', ')
-    );
-
-    // 🐛 수정: 예산에서 잘려나간 효과가 설명문에 그대로 남아 카드가 거짓말을 했다.
-    //    ("매 턴 마나 +1 공급"이라 적힌 커먼 건축물의 패시브가 조용히 삭제됨)
-    //    설명 교정(3단계)이 예산 적용(4단계)보다 **먼저** 일어나기 때문이다.
-    //    잘린 효과가 문장에 실제로 언급된 경우에만 데이터에서 다시 만든다.
-    const ghost = budgeted.removed.find(
-      r => r.key !== 'targetScope' && descMentionsEffect(finalSkill.description, r.key)
-    );
-    if (ghost) {
-      const before = finalSkill.description;
-      finalSkill.description = describeSkillFromData(finalSkill, cardType);
-      console.log(`[Balance] 설명문 재생성 (제거된 "${ghost.label}"이 문장에 남아 있었음): "${before}" → "${finalSkill.description}"`);
-    }
-  }
-
-  // 🃏 바닐라로 확정됐으면 설명 슬롯을 **플레이버 텍스트**로 채운다.
-  //    LLM이 flavorText를 줬으면 그걸 쓰고, 없으면 짧은 기본 문구를 만든다.
-  //    ⚠️ 예산으로 효과가 잘려 바닐라가 된 경우, 남아 있는 효과 설명문은
-  //       전부 거짓이므로 반드시 갈아치운다.
+  // ============================================================
+  // ✍️ 규칙 텍스트는 **언제나 데이터에서 만든다** → DECISIONS #91
+  // ------------------------------------------------------------
+  // 예전에는 LLM 산문을 규칙 텍스트로 쓰고, 데이터와 어긋나면 정규식으로
+  // **수리**했다 (스탯% 변환 · 분수 변환 · 숫자 동기화 · 체력 주어 명시 ·
+  // 반응형 절 제거 · 거짓말 관문). 그 더미가 실패하는 방식이 나빴다:
+  //   놓치면 → 카드가 거짓말한다
+  //   오탐이면 → 문장이 손상된다 ("체력 30% 이하면" → "체력 +3 이하면")
+  // 게다가 지켜내는 것도 적었다 — 실측: 유저 카드 43장 중 24장(56%)의
+  // 산문이 어차피 통째로 교체되고 있었다.
+  //
+  // 이제 규칙 텍스트는 `describeSkillFromData`가 만든다. **거짓말이 구조적으로
+  // 불가능하다** — 데이터가 곧 문장이기 때문이다. 멱등성도 공짜로 따라온다.
+  // LLM의 산문은 `flavorText`(플레이버)로 따로 간다. 효과를 주장하지 않으므로
+  // 검증할 것이 없다. 실제 TCG가 규칙 텍스트와 플레이버를 나누는 이유다.
+  //
+  // ⚠️ 여기에 "산문을 살려보려는" 분기를 다시 추가하지 마세요.
+  //    그 순간 위의 수리 더미가 통째로 되돌아옵니다.
+  // ============================================================
   if (finalSkill.isVanilla) {
+    // 🃏 바닐라는 효과가 없는 것이 정의다 — 플레이버가 곧 설명이다.
     finalSkill.description = String(finalSkill.flavorText || cardData.flavorText || '').trim()
+      || defaultFlavorText(cardData.name, cardType);
+  } else {
+    finalSkill.description = describeSkillFromData(finalSkill, cardType)
       || defaultFlavorText(cardData.name, cardType);
   }
 
-  // ✍️ 설명문이 비어 있으면 **확정된 수치로 만든다.**
-  //
-  //   🐛 예전에는 `if (skill.description)`일 때만 문장을 손봤다. 그래서 빈 설명이
-  //      그대로 나갔다 (검사: 60장 중 55장이 설명문 없음).
-  //   ⚠️ 2단계 생성에서는 **1단계가 설명문을 안 쓰는 게 정상**이다.
-  //      (수치를 먼저 정하고 확정된 뒤에 문장을 쓴다 → card-describe.js)
-  //      그러니 여기서 만드는 문장이 **기준선**이다. 2단계가 실패해도
-  //      최소한 정확한 문장은 남는다.
-  if (!String(finalSkill.description || '').trim()) {
-    finalSkill.description = describeSkillFromData(finalSkill, cardType);
-  }
-  // ⚠️ 그래도 비면 카드가 **글자 없이** 나간다. 최후의 안전망.
-  //    (실측: 오라가 예산에 잘린 건축물이 빈 설명으로 나왔다)
-  if (!String(finalSkill.description || '').trim()) {
-    finalSkill.description = cardType === 'trap'
-      ? '조건 충족 시 발동합니다.'
-      : defaultFlavorText(cardData.name, cardType);
-  }
-
-  // 🎯 예산이 효과를 잘라냈으면 **대상 진영을 다시 판정한다.**
-  //    🐛 안 하면 피해가 잘려 나갔는데도 targetSide가 'foe'로 남고, 그 카드를
-  //       다시 sanitize할 때 비로소 'ally'로 바뀐다 (= 멱등하지 않다).
-  //       연성은 기획 때 한 번, 저장 때 한 번 총 두 번 돌리므로
-  //       **유저가 확인한 카드가 저장 시점에 조용히 달라졌다.**
+  // 🎯 예산이 효과를 잘라냈으면 대상 진영을 다시 판정한다 (멱등성).
+  //    ⚠️ 설명문 생성 **뒤**에 오면 안 된다 — 문장이 옛 대상을 가리키게 된다.
+  //    (그래서 위 생성보다 앞이 아니라, 아래에서 다시 생성한다)
   {
     const post = fixTargetSide(finalSkill);
-    if (post.reason) {
-      console.log(`[Target] "${cardData.name || '무명'}" (예산 정산 후) ${post.reason}`);
-      finalSkill.description = describeSkillFromData(finalSkill, cardType) || finalSkill.description;
-    }
-    // 💥 피해가 사라졌으면 피해 관련 부속 필드도 함께 정리한다.
+    // 💥 피해가 사라졌으면 피해 관련 부속 필드도 정리한다.
     //    (damage 없이 남은 multiHit·damageTarget은 예산만 먹는 유령이다)
     if (!(finalSkill.damage > 0)) {
       if (finalSkill.multiHit > 1) finalSkill.multiHit = 1;
       if (finalSkill.damageTarget !== undefined) delete finalSkill.damageTarget;
     }
-  }
-
-  // 🚫 **거짓말 관문** — 설명문이 스킬로 뒷받침되지 않는 주장을 하면 통째로 버린다.
-  //
-  //    🐛 왜 여기여야 하나: 같은 검사가 card-describe.js에도 있지만 그건
-  //       **2단계 LLM 경로에서만** 돈다. fastMode이거나 Ollama가 꺼져 있으면
-  //       그 경로를 건너뛰므로 1단계 LLM이 쓴 소설이 그대로 카드가 된다.
-  //       실팩 유저 덱 14종 중 6종(43%)이 그 상태였다:
-  //         "소환수 1체를 제거하고 덱에서 1장 드로우" → 실제로는 14 피해뿐
-  //         "손패에서 1장을 드로우한다"              → 실제로는 7 피해뿐
-  //       sanitize는 **항상** 지나므로 여기가 최후의 관문이다.
-  //
-  //    ⚠️ 바닐라는 예외다 — 플레이버 텍스트는 효과를 주장하지 않는다.
-  if (!finalSkill.isVanilla) {
-    const lies = findDescriptionLies(finalSkill.description, finalSkill, cardType);
-    if (lies.length > 0) {
-      const before = finalSkill.description;
-      finalSkill.description = describeSkillFromData(finalSkill, cardType)
-        || defaultFlavorText(cardData.name, cardType);
-      console.warn(`[Balance] "${cardData.name || '무명'}" 설명문이 카드와 달라 교체했습니다 (${lies.join(', ')}): "${before}" → "${finalSkill.description}"`);
+    if (post.reason && !finalSkill.isVanilla) {
+      console.log(`[Target] "${cardData.name || '무명'}" (예산 정산 후) ${post.reason}`);
+      finalSkill.description = describeSkillFromData(finalSkill, cardType) || finalSkill.description;
     }
   }
 
-  // 🗡️ 마지막으로 **확정된 스탯**까지 설명문에 반영한다.
-  //    3-E단계의 동기화는 예산 적용 **전**이라 깎인 공격력을 모른다.
-  //    (실측: "15 공격을 가합니다"인데 실제 공격력은 11이었다)
-  if (!finalSkill.isVanilla) {
-    finalSkill.description = syncDescriptionNumbers(
-      finalSkill.description, finalSkill, { attack: atk, hp, defense: def });
+  // 🃏 플레이버는 **효과를 주장하면 안 된다.** 규칙 텍스트가 따로 있으므로
+  //    플레이버가 기능을 설명하면 두 줄이 서로 다른 말을 하게 된다.
+  //    (바닐라는 플레이버가 곧 설명이라 여기서 건드리지 않는다)
+  if (!finalSkill.isVanilla && finalSkill.flavorText) {
+    const f = String(finalSkill.flavorText).trim();
+    finalSkill.flavorText = (f.length > 40 || /\d/.test(f)) ? undefined : f;
   }
 
   const power = evaluateCardPower({ ...cardData, rarity, cost, attack: atk, hp, defense: def, cardType, skill: finalSkill });

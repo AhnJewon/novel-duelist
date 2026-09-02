@@ -429,3 +429,16 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 81. **자연어를 정규식으로 "수리"하지 마세요.** 놓치면 거짓말 카드, 오탐이면 문장
     손상입니다. `describeSkillFromData`로 다시 만들고 산문은 **채택/폐기**만
     하세요 — 최악이 "건조한 문장"입니다. → [DECISIONS #90](docs/DECISIONS.md)
+
+82. **규칙 텍스트는 `describeSkillFromData`가 만듭니다. LLM 산문을 규칙 텍스트로
+    쓰지 마세요.** 산문이 규칙 노릇을 하는 순간 검증·수리가 필요해지고, 정규식
+    수리는 놓치면 거짓말·오탐이면 문장 손상입니다. 산문은 `flavorText`로.
+    → [DECISIONS #91](docs/DECISIONS.md)
+
+83. **`sanitizeAndClampCardData`에 "산문을 살려보는" 분기를 다시 넣지 마세요.**
+    지운 수리 더미(% 치환·분수·숫자 동기화·체력 주어·반응형 절·거짓말 관문)가
+    통째로 되돌아옵니다. → [DECISIONS #91](docs/DECISIONS.md)
+
+84. **플레이버는 애매하면 버리세요.** 규칙 텍스트가 따로 정확하므로 플레이버를
+    버려도 손해가 없습니다 — 이게 이 구조의 핵심입니다.
+    → [DECISIONS #91](docs/DECISIONS.md)
