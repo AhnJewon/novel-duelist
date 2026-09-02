@@ -442,3 +442,16 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 84. **플레이버는 애매하면 버리세요.** 규칙 텍스트가 따로 정확하므로 플레이버를
     버려도 손해가 없습니다 — 이게 이 구조의 핵심입니다.
     → [DECISIONS #91](docs/DECISIONS.md)
+
+85. **같은 값을 정하는 입력을 두 곳에 두지 마세요.** 등급이 `#forge-rarity`와
+    `#custom-rarity` 두 칸에 있었고, 확정값을 셀렉트에 **되써서** 값이 원을
+    그렸습니다 — 유저는 어느 쪽이 이기는지 알 수 없었습니다. 입력은 하나,
+    확정값은 모듈 변수(`currentForgeRarity`), 우선순위는 `forgeRarity()` 한 곳.
+    → [DECISIONS #92](docs/DECISIONS.md)
+
+86. **카드군을 골랐을 때 잠그는 것은 `custom-theme-name`뿐입니다.** 키워드는
+    기본값만 채우고 열어두세요 — 키워드는 카드군에 종속적이지 않습니다.
+    대신 `themeId`를 **코드에서** 주입하고(`applyCustomOverrides`),
+    `themeId`가 실재하면 `proposeArchetype`을 **건너뛰세요.** 안 그러면 키워드를
+    바꿨을 뿐인데 병합·재명명·`seeds` 오염으로 소속이 끌려갑니다.
+    → [DECISIONS #92](docs/DECISIONS.md)

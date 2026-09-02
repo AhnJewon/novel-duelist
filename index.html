@@ -627,19 +627,11 @@
                          class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
                 </div>
                 <div>
-                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">🔑 키워드</label>
-                  <input type="text" id="custom-theme-keyword" placeholder="예: 홍련 (2~4글자)"
+                  <!-- 🔑 키워드는 카드군에 종속되지 않는다. 카드군을 고르면 기본값으로
+                       채워주되 잠그지 않는다 — 소속 판정의 권위는 themeId다 (DECISIONS #17). -->
+                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">🔑 키워드 <span class="font-normal text-slate-500">— 카드군과 별개로 지정 가능</span></label>
+                  <input type="text" id="custom-theme-keyword" placeholder="예: 홍련 (카드군을 고르면 기본값이 채워집니다)"
                          class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
-                </div>
-                <div>
-                  <label class="block text-[10.5px] font-bold text-slate-400 mb-1">⭐ 등급</label>
-                  <select id="custom-rarity" class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
-                    <option value="">AI 결정 / 가챠</option>
-                    <option value="common">COMMON</option>
-                    <option value="rare">RARE</option>
-                    <option value="epic">EPIC</option>
-                    <option value="legendary">LEGENDARY</option>
-                  </select>
                 </div>
 
                 <div>
@@ -730,13 +722,20 @@
 
               </div>
             </details>
+            <!-- ⭐ 등급 입력은 여기 한 곳뿐이다.
+                 예전에는 세부 커스터마이즈에도 #custom-rarity가 있어서, 같은 값을
+                 정하는 칸이 둘이었고 우선순위를 유저가 알 수 없었다 → DECISIONS #92 -->
             <div class="space-y-1.5">
-              <label class="text-xs font-bold text-slate-300">희귀도 (Rarity)</label>
-              <select id="forge-rarity" class="w-full bg-[#191d33] border border-brand-border text-amber-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+              <label class="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>희귀도 (Rarity)</span>
+                <span id="forge-rarity-resolved" class="text-[10px] font-normal text-slate-500"></span>
+              </label>
+              <select id="forge-rarity" onchange="_updateForgePromptPreview()" class="w-full bg-[#191d33] border border-brand-border text-amber-300 text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="" selected>🎲 AI 결정 / 가챠</option>
                 <option value="common">COMMON</option>
                 <option value="rare">RARE</option>
                 <option value="epic">EPIC</option>
-                <option value="legendary" selected>LEGENDARY (홀로그램)</option>
+                <option value="legendary">LEGENDARY (홀로그램)</option>
               </select>
             </div>
             <div class="space-y-1.5">

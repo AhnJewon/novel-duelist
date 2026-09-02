@@ -24,7 +24,11 @@ export function readCustomOverrides() {
     themeId: selectedThemeId(),
     themeName: v('custom-theme-name'),
     themeKeyword: v('custom-theme-keyword'),
-    rarity: v('custom-rarity'),
+    // ⭐ 등급은 본 폼의 #forge-rarity **한 곳**에서만 읽는다.
+    //    예전에는 여기 #custom-rarity가 따로 있어서 값이 두 곳에서 들어왔고,
+    //    저장은 #forge-rarity를 읽어 어느 쪽이 이기는지 알 수 없었다 → DECISIONS #92
+    //    빈 값('')은 "AI 결정 / 가챠" — null로 넘겨야 LLM이 정한다.
+    rarity: v('forge-rarity'),
     cost: n('custom-cost'),
     attack: n('custom-attack'),
     hp: n('custom-hp'),
@@ -47,7 +51,16 @@ export function customOverridesToPrompt(o) {
   } else if (o.themeName) {
     lines.push(`- 카드군은 반드시 "${o.themeName}"으로 할 것 (기존에 있으면 그 id 재사용)`);
   }
-  if (o.themeKeyword) lines.push(`- 카드군 키워드는 "${o.themeKeyword}"로 할 것`);
+  if (o.themeKeyword) {
+    // 🔑 키워드는 카드군에 종속되지 않는다. 기존 카드군을 고른 채로 다른 키워드를
+    //    넣으면 그건 **이 카드의** 키워드다 — 카드군을 갈아타라는 뜻이 아니다.
+    //    (소속 판정의 권위는 themeId — DECISIONS #17)
+    // ⚠️ 조사가 받침에 따라 갈리는 문장은 피한다 ("역린"다 / "홍련"이다) — korean-grammar.js가
+    //    닿지 않는 프롬프트 문자열이므로 애초에 조사가 붙지 않게 쓴다.
+    lines.push(o.themeId
+      ? `- 이 카드의 핵심 키워드: "${o.themeKeyword}" — 이름과 컨셉에 자연스럽게 녹일 것. 단 소속 카드군은 위에 지정한 대로이며 "themeId"를 바꾸지 말 것.`
+      : `- 카드군 키워드는 "${o.themeKeyword}"로 할 것`);
+  }
   if (o.rarity) lines.push(`- 등급(rarity)은 반드시 "${o.rarity}"로 할 것`);
   if (o.cost !== null) lines.push(`- 마나 코스트는 ${o.cost}로 할 것`);
   if (o.attack !== null) lines.push(`- 공격력은 ${o.attack}로 할 것`);
@@ -72,6 +85,10 @@ export function customOverridesToPrompt(o) {
 export function applyCustomOverrides(data, o) {
   if (!o) return data;
   const out = { ...data };
+  // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"
+  //    지시에만 기대면 4B 모델이 흘려서 소속이 조용히 새 카드군으로 샌다.
+  //    코드에서 못을 박아야 키워드를 바꿔도 소속이 안 바뀐다.
+  if (o.themeId) out.themeId = o.themeId;
   if (o.themeName) out.themeName = o.themeName;
   if (o.themeKeyword) out.themeKeyword = o.themeKeyword;
   if (o.rarity) out.rarity = o.rarity;
@@ -106,6 +123,7 @@ export function applyCustomOverrides(data, o) {
 //
 // 이제 목록에서 고르면 이름·키워드·id가 한 번에 채워진다.
 // '직접 입력'을 고르면 예전처럼 자유 창작도 된다 — 둘 다 필요하다.
+// ⚠️ 잠그는 것은 **이름뿐**이다. 키워드는 기본값만 채우고 열어둔다 (DECISIONS #92).
 // ============================================================
 
 /** 카드군 선택기를 현재 DB로 채운다. 연성소 탭을 열 때마다 호출한다. */
@@ -132,7 +150,14 @@ export function refreshCustomThemeOptions(archetypes = []) {
 
 /**
  * 선택 변경 처리.
- * 기존 카드군을 고르면 이름·키워드를 채우고 잠근다 (오타로 새 카드군이 생기는 걸 막는다).
+ * 기존 카드군을 고르면 이름은 채우고 잠근다 (오타로 새 카드군이 생기는 걸 막는다).
+ *
+ * 🔑 키워드는 잠그지 않는다.
+ *    예전에는 이름과 함께 readOnly로 묶어서 "카드군을 고르면 키워드도 그 카드군 것"이
+ *    강제됐다. 그런데 키워드는 꼭 카드군에 종속적인 게 아니다 — 같은 카드군 안에서도
+ *    카드마다 다른 낱말을 축으로 삼고 싶을 수 있다.
+ *    소속 판정의 권위는 어차피 `themeId`이므로(DECISIONS #17), 키워드를 바꿔도
+ *    소속은 흔들리지 않는다. 그래서 **기본값만 채워주고 편집은 열어둔다.**
  */
 export function onCustomThemePick(archetypes = []) {
   const sel = document.getElementById('custom-theme-select');
@@ -140,19 +165,21 @@ export function onCustomThemePick(archetypes = []) {
   const kwEl = document.getElementById('custom-theme-keyword');
   if (!sel || !nameEl || !kwEl) return;
 
+  // 키워드 칸은 어떤 선택에서도 항상 편집 가능하다
+  kwEl.readOnly = false;
+  kwEl.classList.remove('opacity-60');
+
   const val = sel.value;
 
   if (val === '' ) {                    // AI 결정 — 비운다
     nameEl.value = ''; kwEl.value = '';
-    nameEl.readOnly = false; kwEl.readOnly = false;
+    nameEl.readOnly = false;
     nameEl.classList.remove('opacity-60');
-    kwEl.classList.remove('opacity-60');
     return;
   }
   if (val === '__new__') {              // 자유 창작 — 직접 쓰게 둔다
-    nameEl.readOnly = false; kwEl.readOnly = false;
+    nameEl.readOnly = false;
     nameEl.classList.remove('opacity-60');
-    kwEl.classList.remove('opacity-60');
     nameEl.focus();
     return;
   }
@@ -160,11 +187,12 @@ export function onCustomThemePick(archetypes = []) {
   const t = archetypes.find(a => a && a.id === val);
   if (!t) return;
   nameEl.value = t.name || '';
+  // 카드군 키워드는 **기본값**이다. 유저가 덮어쓰면 그 값이 그대로 쓰인다.
+  // (onchange는 선택이 실제로 바뀔 때만 오므로 같은 카드군을 다시 골라 덮어쓸 일은 없다)
   kwEl.value = t.keyword || '';
-  // 고른 카드군은 수정 불가 — 이름을 손대면 새 카드군이 만들어진다
-  nameEl.readOnly = true; kwEl.readOnly = true;
+  // 고른 카드군의 **이름**만 수정 불가 — 이름을 손대면 새 카드군이 만들어진다
+  nameEl.readOnly = true;
   nameEl.classList.add('opacity-60');
-  kwEl.classList.add('opacity-60');
 }
 
 /** 지금 선택된 기존 카드군의 id (자유 입력이면 null) */

@@ -18,6 +18,39 @@ let currentLLMSkillData = null;
 let currentForgeCardType = 'unit';
 let currentCardTheme = null;
 
+// ⭐ 이번 카드의 **확정된** 등급.
+//    등급 입력은 #forge-rarity 한 곳뿐이고, 값은 한 방향으로만 흐른다:
+//      #forge-rarity(유저 의도) → readCustomOverrides → applyCustomOverrides → data.rarity
+//                                                                                  ↓
+//                                                          currentForgeRarity(확정) → 미리보기·저장
+//    코드가 셀렉트를 되쓰지 않는다. 예전에는 되썼기 때문에 "AI 결정"이 한 번
+//    기획하면 조용히 고정값으로 변했다 → DECISIONS #92
+let currentForgeRarity = null;
+
+/**
+ * ⭐ 지금 쓸 등급 하나를 정한다. 저장·미리보기가 모두 여기를 통과한다.
+ *
+ * 우선순위: 유저가 고른 값 > AI가 정한 값 > 가챠 추첨(한 번만 굴려 기억한다).
+ * 가챠를 매번 굴리면 미리보기와 저장이 어긋나므로 결과를 기억해 둔다.
+ */
+function forgeRarity() {
+  const el = document.getElementById('forge-rarity');
+  const picked = el ? el.value : '';
+  if (picked) return picked;                       // 유저가 명시적으로 골랐다
+  if (currentForgeRarity) return currentForgeRarity; // AI가 정했다
+  currentForgeRarity = rollRandomRarity();          // 🎲 아직 아무도 안 정했다
+  return currentForgeRarity;
+}
+
+/** "AI 결정"일 때 실제로 무엇이 정해졌는지 라벨에 보여준다 (셀렉트는 건드리지 않는다) */
+function renderForgeRarityHint() {
+  const hint = document.getElementById('forge-rarity-resolved');
+  if (!hint) return;
+  const el = document.getElementById('forge-rarity');
+  const picked = el ? el.value : '';
+  hint.textContent = picked ? '' : `→ ${String(forgeRarity()).toUpperCase()}`;
+}
+
 export function shuffleConceptInput() {
   const input = document.getElementById('llm-concept-input');
   if (input) {
@@ -563,7 +596,9 @@ export async function applyGeneratedCardData(rawData) {
     if (titleEl) titleEl.value = data.title;
   }
   if (data.element) document.getElementById('forge-element').value = data.element;
-  if (data.rarity) document.getElementById('forge-rarity').value = data.rarity;
+  // ⭐ 확정 등급은 모듈 변수에만 담는다. #forge-rarity(유저 의도)를 되쓰면
+  //    "AI 결정"이 한 번 기획하는 것만으로 고정값으로 변한다 → DECISIONS #92
+  if (data.rarity) currentForgeRarity = data.rarity;
   if (data.cardType) {
     currentForgeCardType = data.cardType;
     const radios = document.getElementsByName('forge-card-type-radio');
@@ -615,7 +650,20 @@ export async function applyGeneratedCardData(rawData) {
 
   // 테마/카드군 매칭 또는 신규 테마 자동 등록 및 DB 누적
   let matchedTheme = null;
-  if (data.themeName) {
+
+  // ⚜️ 이미 소속이 정해진 카드는 제안기를 태우지 않는다.
+  //    `themeId`가 실재하는 카드군을 가리키면 그게 소속의 **권위**다 (DECISIONS #17).
+  //    proposeArchetype/registerNewArchetype은 이름·키워드 유사도로 다른 카드군에
+  //    병합하거나 재명명할 수 있고, 유저가 넣은 키워드를 그 카드군의 seeds에 심는다.
+  //    → 키워드만 바꿨는데 소속이 따라 움직인다. 그래서 여기서 끊는다.
+  const pinnedTheme = data.themeId
+    ? (state.archetypesList || []).find(a => a && a.id === data.themeId) || null
+    : null;
+
+  if (pinnedTheme) {
+    matchedTheme = pinnedTheme;
+    console.log(`[Archetype] pinned: themeId "${data.themeId}" → [${pinnedTheme.name}] (키워드 변경과 무관하게 소속 고정)`);
+  } else if (data.themeName) {
     // 🔁 카드군 중복 피드백 루프
     // 게이트가 확실히 판정하면 그대로 흡수하고, 회색지대일 때만 LLM에게 되묻는다.
     // (같은 컨셉인데 표기가 달라 문자열 유사도로 못 잡는 경우를 여기서 걸러낸다)
@@ -690,7 +738,8 @@ export function expandCurrentPromptWithDanTagGen() {
 
 export function updateForgePromptPreview() {
   const element = document.getElementById('forge-element') ? document.getElementById('forge-element').value : 'fire';
-  const rarity = document.getElementById('forge-rarity') ? document.getElementById('forge-rarity').value : 'common';
+  const rarity = forgeRarity();
+  renderForgeRarityHint();
   const name = document.getElementById('forge-name') ? (document.getElementById('forge-name').value.trim() || '이름 없는 영웅') : '이름 없는 영웅';
   const prompt = document.getElementById('forge-prompt') ? (document.getElementById('forge-prompt').value.trim() || 'masterpiece, fantasy') : 'masterpiece, fantasy';
   const cardType = currentForgeCardType || 'unit';
@@ -726,7 +775,7 @@ export async function generateAICard() {
 
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
   const element = document.getElementById('forge-element').value;
-  const rarity = document.getElementById('forge-rarity').value;
+  const rarity = forgeRarity();
   const userPrompt = document.getElementById('forge-prompt').value.trim() || 'fantasy elemental hero';
   const cardType = currentForgeCardType || 'unit';
 
@@ -767,7 +816,7 @@ export async function generateAICard() {
 export async function generateMockCard() {
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
   const element = document.getElementById('forge-element').value;
-  const rarity = document.getElementById('forge-rarity').value;
+  const rarity = forgeRarity();
   const prompt = document.getElementById('forge-prompt').value.trim() || 'fantasy elemental hero';
 
   const mockImages = {
