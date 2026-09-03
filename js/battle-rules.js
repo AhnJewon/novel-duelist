@@ -19,3 +19,6 @@ export const HAND_CAP = 7;
  * 그 진영의 턴 시작마다 1씩 줄고 0이 되면 반사가 사라진다 (2 = 상대 턴 두 번 동안 반사).
  */
 export const THORNS_TURNS = 2;
+
+/** 🤖 봇이 액션 사이에 두는 간격(ms) — 사람이 로그를 따라 읽을 수 있게. 하네스는 0을 넘긴다. */
+export const BOT_PACE_MS = 400;

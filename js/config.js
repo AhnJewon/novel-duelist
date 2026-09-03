@@ -404,6 +404,12 @@ export const PLAYER_BASE_HP = 100;
  */
 export const BOSS_STEP_DAMAGE_MULT = 0.4;
 
+/**
+ * 💥 콤보 **스텝**의 광역이 본체에 튀는 비율. 카드 광역은 양 진영 100%다 (DECISIONS #94) —
+ * 이건 보스 고유 콤보 스텝의 내부 수치라 그대로 두고 이름만 붙였다. 바꾸기 전에 실측하세요.
+ */
+export const BOSS_STEP_AOE_FACE_MULT = 0.7;
+
 export const RARITY_POWER = {
   common:    { base: 1.5, perMana: 1.7, maxCost: 5 },
   rare:      { base: 2.2, perMana: 2.0, maxCost: 5 },

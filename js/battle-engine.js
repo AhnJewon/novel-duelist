@@ -1,11 +1,12 @@
 // battle-engine.js - 정통 카드 배틀 엔진 (소환수 / 주문 / 건축물 & 보스 멀티액션)
 
-import { ELEMENT_CONFIG, PLAYER_BASE_HP, BOSS_STEP_DAMAGE_MULT } from './config.js';
+import { ELEMENT_CONFIG, PLAYER_BASE_HP } from './config.js';
 import { audio } from './audio.js';
 import { state } from './storage.js';
 import { createCardElement } from './card-renderer.js';
 import { triggerLiveBossReaction } from './boss-forge.js';
-import { BOSS_DATA, BOSS_ADD_POOL, ELEMENT_BOSS_MINIONS, BOSS_POWER_CARDS } from './data.js';
+import { BOSS_DATA, BOSS_POWER_CARDS } from './data.js';
+import { createBossController } from './boss-ai.js';
 import {
   evaluateFieldSynergy, findSynergyForEntity,
   triggerArchetypeCombo
@@ -16,7 +17,7 @@ import {
   getIncomingDamageMultiplier, getOnHitBonusDamage, describeStatuses
 } from './status-effects.js';
 import {
-  applyPlayerSkillEffects, selectFrontTarget, strikeFrontLine,
+  applyPlayerSkillEffects, selectFrontTarget,
   damageEntity, removeDead, describeDamageExtras
 } from './skill-effects.js';
 import { escapeHtml, escapeJsString } from './dom-utils.js';
@@ -68,30 +69,8 @@ export function canAttackFace(defenderMinions, attacker) {
   return readDirectAttack(attacker);
 }
 
-// ============================================================
-// 🐌 보스 공세 램프 — 초반 턴에는 보스도 천천히 전개한다
-// ------------------------------------------------------------
-// 🐛 왜 필요한가: 보스는 마나를 쓰지 않는다(foeVirtualMana 99). 그래서
-//    플레이어가 1마나뿐인 1턴에 소환수를 3기까지 채우고 카드도 2~3장 냈다.
-//    측정 결과 턴1 보스 딜이 34~59였고 플레이어 체력은 50이라,
-//    **첫 손패에 싼 카드가 없으면 아무것도 못 하고 2턴에 죽었다.**
-//
-//    플레이어의 마나 커브(1→2→3…)에 맞춰 보스도 초반을 늦춘다.
-//    후반 난이도는 그대로다 — 압박을 없애는 게 아니라 **뒤로 미루는 것**이다.
-//
-// ⚠️ 여기 수치를 올리면 초반 난이도가 그대로 돌아온다. 바꾸기 전에
-//    "패스만 하며 몇 턴 버티는가"를 반드시 측정하세요 → DECISIONS #75
-const BOSS_RAMP = {
-  1: { minions: 1, cards: 1 },
-  2: { minions: 2, cards: 1 }
-  // 3턴 이후는 제한 없음 (SLOT_CAP / 기본 카드 수)
-};
-
-/** 이번 턴 보스가 채울 수 있는 최대 소환수 수 */
-function bossMinionCapThisTurn() {
-  const ramp = BOSS_RAMP[state.turnCount];
-  return ramp ? Math.min(SLOT_CAP, ramp.minions) : SLOT_CAP;
-}
+// 🤖 보스의 판단(카드·대상 선택, 램프 BOSS_RAMP, 콤보 스텝, 격노)은 boss-ai.js에 있다.
+//    이 파일에는 **규칙**만 남는다 — 봇은 그 규칙을 ops로 받아 쓴다 (DECISIONS #94).
 
 // 🔁 누구의 턴인가 — 진영 키.
 //    🐛 예전 `isPlayerTurn` 불리언은 initBattle이 양 클라이언트에서 true로 두어
@@ -100,7 +79,6 @@ let activeSideKey = SIDE_PLAYER;
 // 🎲 라운드 리더 — 이 진영의 턴이 **시작될 때만** turnCount가 오른다.
 //    PvE는 플레이어, PvP는 호스트(내 화면에서 player 또는 boss). 양 클라이언트가 같은 카운터를 가진다.
 let leaderKey = SIDE_PLAYER;
-let bossPhase = 1;
 
 // 상태이상은 status-effects.js가 단일 소스. { [type]: {turns, value} } 형태.
 let bossStatus = createStatusState();
@@ -116,6 +94,29 @@ let trapZones = { player: [], boss: [] };
 // 진영 접근자. 저장 구조는 그대로 두고 대칭 인터페이스만 씌운다.
 // 새 전투 로직은 state.playerHp가 아니라 sides.player.hp를 쓰세요.
 let sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
+
+/** 판이 끝났는가 — 봇 루프가 액션 사이마다 확인한다 */
+export function isGameOver() {
+  return state.playerHp <= 0 || !state.currentBoss || state.currentBoss.currentHp <= 0;
+}
+
+// 🤖 PvE 봇 컨트롤러 — 상대 진영을 조종한다. 규칙은 전부 이 엔진 함수(ops)로 받고,
+//    판단(카드·대상 선택)과 보스 고유 콤보 스텝·격노만 스스로 갖는다.
+//    엔진 → 봇 한 방향 import라 순환이 없다. sides는 게터로 넘긴다 (initBattle마다 새로 만들어진다).
+const botController = createBossController({
+  sides: () => sides,
+  startTurn: (side) => startTurn(side),
+  endTurn: (side) => endTurn(side),
+  applyFoeAction: (action) => applyFoeAction(action),
+  dealFaceDamage: (target, dmg, opts) => dealFaceDamage(target, dmg, opts),
+  applyStatusRespectingScope: (...args) => applyStatusRespectingScope(...args),
+  addBattleLog: (msg) => addBattleLog(msg),
+  renderBattleUI: () => renderBattleUI(),
+  checkBattleStatus: () => checkBattleStatus(),
+  isGameOver: () => isGameOver(),
+  viewFor: (side) => viewFor(side),
+  triggerLiveBossReaction: (kind) => triggerLiveBossReaction(kind)
+});
 
 // 🎯 슬롯을 눌러 소환할 때의 목표 위치. 카드를 그냥 클릭하면 null(맨 뒤).
 let _pendingSummonSlot = null;
@@ -214,7 +215,10 @@ export const __test = {
   traps: () => trapZones,
   setTrap: (sideKey, card) => setTrap(sideKey, card),
   fireTraps: (actorKey, event, card) => triggerTraps(actorKey, event, card),
-  bossStep: (step) => executeSingleBossStep(step),
+  /** 보스 콤보 스텝 하나 (봇 컨트롤러의 실행기) */
+  bossStep: (step) => botController.executeStep(step),
+  /** 봇 턴 하나를 다음 턴 예약 없이 돈다 — 하네스용 */
+  takeBotTurn: (opts = {}) => executeBossTurn({ ...opts, handOff: false }),
   isPlayerTurn: () => activeSideKey === SIDE_PLAYER,
   activeSide: () => activeSideKey,
   /** 진영 공용 턴 경계를 직접 돈다 (봇/원격 경로를 흉내 낼 때) */
@@ -232,7 +236,7 @@ export const __test = {
     state.bossMaxMana = 1;
     activeSideKey = SIDE_PLAYER;
     leaderKey = SIDE_PLAYER;
-    bossPhase = 1;
+    botController.reset();
     // ⚠️ 대상 선택 모드도 반드시 끈다. 켜진 채로 남으면 다음 검사의
     //    attackWithMinion이 "취소"로 해석해 곧바로 반환한다 —
     //    기능이 고장난 것처럼 보이지만 실은 앞 검사가 남긴 찌꺼기다.
@@ -356,7 +360,7 @@ export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   //    🐛 예전엔 양 클라이언트가 모두 "내 턴"으로 시작해 게스트가 호스트 첫 턴에 행동할 수 있었다.
   leaderKey = (leader === SIDE_BOSS) ? SIDE_BOSS : SIDE_PLAYER;
   activeSideKey = leaderKey;
-  bossPhase = 1;
+  botController.reset();
   const phaseBadge = document.getElementById('boss-phase-badge');
   if (phaseBadge) phaseBadge.classList.add('hidden');
   state.playerMinions = [];
@@ -1127,25 +1131,6 @@ function castSkill(side, card, picked, { sourceLabel, allowAoe }) {
   }
 }
 
-/**
- * 🤖 봇의 대상 선택 정책 — 사람이 대상을 고르는 자리에서 봇은 이렇게 고른다.
- *   상대(=플레이어) 전장이 있으면 **최전방부터**, 없으면 본체. 아군 효과는 첫 후보.
- *   "보스 주문은 최전방을 친다"는 엔진 규칙이 아니라 이 정책이다 — 규칙은 플레이어와 같다.
- *   (7단계에서 boss-ai.js로 옮긴다)
- */
-function botPickTargets(card) {
-  const skill = (card.skills && card.skills[0]) || card.skill || null;
-  if (!skill) return null;
-  const spec = readTargetSpec(skill);
-  if (spec.scope === 'all' || spec.scope === 'random') return null;   // 효과가 스스로 정한다
-  const keys = collectTargetKeys(viewFor(sides.boss), spec);          // 거울 기준: foe:N = 내 소환수, face = 내 본체
-  if (keys.length === 0) return null;
-  const need = spec.scope === 'multi' ? Math.max(1, spec.count || 1) : 1;
-  const foes = keys.filter(k => k.startsWith('foe:'));
-  const ordered = spec.side === 'foe' ? [...foes, ...keys.filter(k => k === 'face')] : keys;
-  return ordered.slice(0, need);
-}
-
 /** (호환) 플레이어 주문 효과 1회 적용 — castSkill이 더블캐스트까지 처리하므로 새 코드는 그쪽을 쓴다 */
 export function triggerSpellEffect(card, picked = null) {
   const skill = card.skills && card.skills[0];
@@ -1413,16 +1398,13 @@ export function dealFaceDamage(target, dmg, { pierce = false, source = '', attac
   return remaining;
 }
 
-/** 본체가 낮은 체력에 들어섰을 때의 훅 — 지금은 보스 격노(2페이즈)만. 7단계에서 봇 컨트롤러로 옮긴다. */
+/** 본체가 낮은 체력에 들어섰을 때의 훅 — 봇 컨트롤러가 격노(2페이즈)를 판단한다 (원격 상대에겐 없다) */
 function onFaceLowHp(target) {
-  if (target.key !== SIDE_BOSS || bossPhase !== 1) return;
-  if (target.hp <= target.maxHp * 0.4) {
-    bossPhase = 2;
-    addBattleLog(`<span class="text-red-500 font-black text-sm">🔥 [광폭화] ${escapeHtml(target.name)}이(가) 격노하여 모든 콤보 패턴의 위력이 폭증합니다!</span>`);
+  if (target.key !== SIDE_BOSS || target.controller !== 'bot') return;
+  if (botController.onLowHp(target)) {
     // 🐛 이 배지는 만들어진 뒤 한 번도 켜진 적이 없었다 (index.html의 #boss-phase-badge)
     const badge = document.getElementById('boss-phase-badge');
     if (badge) badge.classList.remove('hidden');
-    triggerLiveBossReaction('lowHp');
   }
 }
 
@@ -1661,120 +1643,85 @@ export function triggerStructureStartTurnPassives(side = sides.player) {
 }
 
 // 👹 보스 멀티 액션 콤보 턴 실행기
-export async function executeBossTurn({ handOff = true } = {}) {
+/**
+ * PvE 봇의 턴 — boss-ai.js의 컨트롤러가 판단하고, 모든 행동은 applyFoeAction을 지난다.
+ * 여기 남은 것은 입력 잠금(isAnimating)과 다음 턴 예약(핸드오프)뿐이다.
+ *
+ * 🐛 예전엔 이 함수가 보스 턴 전체를 들고 있었다 — 턴 시작 사본, 카드 선택, 보스 전용 시전기,
+ *    콤보 스텝, 보스 전용 공격, 턴 끝 감쇠. 그 사본들이 규칙을 다시 쓰며 갈라졌다 (DECISIONS #94).
+ *
+ * @param handOff false면 다음 턴을 예약하지 않는다 (하네스)
+ * @param pace    봇 액션 사이 간격(ms). 생략하면 BOT_PACE_MS, 하네스는 0.
+ */
+export async function executeBossTurn({ handOff = true, pace } = {}) {
   state.isAnimating = true;
-  addBattleLog(`<span class="text-red-400 font-bold">👹 [${state.currentBoss.name}] 의 다단계 콤보 턴!</span>`);
-
-  // 🔁 턴 시작은 **양 진영 공용**이다 — 마나 성장·버프 감소·본체 지속 피해·상태 감쇠·
-  //    소환수 상태 처리·후유증 해제·건축물 패시브·드로우 1장. 플레이어와 한 글자도 다르지 않다.
-  //    🐛 예전엔 이 함수 안에 보스 전용 사본이 있었다: 버프는 안 줄고, 건축물 패시브는 없고,
-  //       상태 감쇠는 턴 끝에, 드로우는 낸 카드마다. 본체 기절이면 턴을 통째로 넘겼다 (DECISIONS #94).
-  const bossSide = sides[SIDE_BOSS];
-  if (!startTurn(bossSide)) {
-    state.isAnimating = false;
-    return;
-  }
-  // 💎 보스도 **마나를 쓴다.** 낼 수 있는 만큼만 낸다 — 램프의 카드 수 상한은 보조 장치다.
-  addBattleLog(`<span class="text-slate-400">💎 보스 마나 ${bossSide.mana}/${bossSide.maxMana}</span>`);
-
-  const baseCardLimit = (bossPhase === 2 || state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5) ? 3 : 2;
-  // 🐌 초반 램프 — 플레이어가 1~2마나일 때 보스가 카드를 몰아 내지 않게 한다
-  const rampNow = BOSS_RAMP[state.turnCount];
-  const cardsToPlayLimit = rampNow ? Math.min(baseCardLimit, rampNow.cards) : baseCardLimit;
-
-  for (let playCount = 0; playCount < cardsToPlayLimit; playCount++) {
-    if (!state.bossHand || state.bossHand.length === 0 || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
-
-    // 💎 낼 수 있는 카드만 후보가 된다 (마나 + 전장 슬롯 — 플레이어와 같은 검사).
-    //    🐌 초반 램프(BOSS_RAMP)는 봇의 **페이싱 정책**이다 — 소환수는 이번 턴 상한 아래일 때만 후보.
-    const affordable = state.bossHand
-      .map((c, i) => ({ c, i }))
-      .filter(x => canPlayCard(bossSide, x.c).ok
-        && !((x.c.cardType === 'unit' || x.c.cardType === 'structure') && state.bossMinions.length >= bossMinionCapThisTurn()));
-    if (affordable.length === 0) {
-      addBattleLog(`<span class="text-slate-500">💤 보스가 낼 수 있는 카드가 없습니다. (마나 ${bossSide.mana})</span>`);
-      break;
-    }
-
-    // 우선순위: 체력 위기면 치유/방어 → 전장이 비었으면 소환 → 그 외 주문.
-    // ⚠️ 어느 경우든 **후보 안에서만** 고른다. 예전에는 손패 전체에서 골라
-    //    낼 수 없는 카드를 집기도 했다.
-    const pickFrom = (pred) => affordable.find(x => pred(x.c));
-    let chosen = null;
-    if (state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.6) {
-      chosen = pickFrom(c => c.skills && c.skills[0] && (c.skills[0].heal > 0 || c.skills[0].shield > 0));
-    } else if (state.bossMinions.length < bossMinionCapThisTurn()) {
-      chosen = pickFrom(c => c.cardType === 'unit' || c.cardType === 'structure');
+  try {
+    await botController.takeTurn(pace === undefined ? {} : { pace });
+  } finally {
+    if (handOff && !isGameOver()) {
+      setTimeout(() => startPlayerTurn(), 250);
     } else {
-      chosen = pickFrom(c => c.cardType === 'spell');
+      state.isAnimating = false;
     }
-    // 우선순위에 맞는 게 없으면 **가장 비싼 것**부터 (마나를 놀리지 않는다)
-    if (!chosen) chosen = affordable.slice().sort((a, b) => (b.c.cost || 0) - (a.c.cost || 0))[0];
+  }
+}
 
-    const cardToPlay = chosen.c;
-    if (cardToPlay) {
-      // 🎴 시전은 플레이어와 **같은 함수** — 관문·지불·연계·함성·함정 반응이 전부 같다.
-      //    대상만 봇 정책(최전방 우선)으로 고른다. 🐛 예전엔 여기서 손패를 미리 빼고 마나를 깎은 뒤
-      //    보스 전용 해석기를 태웠다.
-      if (!playCardFor(bossSide, cardToPlay, { picked: botPickTargets(cardToPlay) })) break;
+/**
+ * 🌐🤖 상대 행동의 **단일 파이프.** PvP 원격 상대의 액션과 PvE 봇의 액션이 똑같이 여기를 지난다.
+ * 규칙 함수(playCardFor / resolveAttack / endTurn·startTurn)로 넘기기만 하고, 스스로 규칙을 쓰지 않는다.
+ *
+ * kinds:
+ *   playCard  { instanceId, card, slot, picked } — 손패에서 정체로 찾는다. 원격은 스냅샷 폴백 + trusted
+ *   attack    { slotIdx, targetKey }
+ *   comboStep { step }  — 봇 컨트롤러일 때만. 원격 피어가 스텝을 주입할 수 없다.
+ *   endTurn   — 상대 턴 종료 → 내 턴 시작
+ *   surrender
+ * @returns {Promise<boolean>} 적용됐는가
+ */
+export async function applyFoeAction(action) {
+  if (!action || !action.kind) return false;
+  const foe = sides.boss;
+  const remote = foe.controller === 'remote';
+
+  switch (action.kind) {
+    case 'playCard': {
+      let card = null;
+      if (!remote && action.card && foe.hand.includes(action.card)) card = action.card;   // 봇은 손패 객체를 직접 준다
+      if (!card && action.instanceId) {
+        card = foe.hand.find(c => c.instanceId === action.instanceId || c.id === action.instanceId) || null;
+      }
+      if (!card && action.card && remote) {
+        // 덱 셔플이 어긋난 상황에서도 대전이 멈추지는 않게 한다 (8단계에서 좌석 덱으로 뿌리를 뽑는다)
+        console.warn('[PvP] 상대 카드를 손패에서 찾지 못해 스냅샷으로 재생합니다:', action.instanceId);
+        card = action.card;
+      }
+      if (!card) return false;
+      return playCardFor(foe, card, { slot: Number.isInteger(action.slot) ? action.slot : null, picked: action.picked || null, trusted: remote });
+    }
+    case 'attack':
+      return resolveAttack(foe, action.slotIdx, action.targetKey || null);
+    case 'comboStep': {
+      if (foe.controller !== 'bot') {
+        console.warn('[대전] 봇이 아닌 상대의 comboStep은 무시합니다.');
+        return false;
+      }
+      await botController.executeStep(action.step || {});
+      return true;
+    }
+    case 'endTurn':
+      // 상대 턴이 끝났다 → 상대의 턴 종료(건축물 패시브)를 내 화면에서도 돌리고 내 턴 시작
+      endTurn(foe);
+      startPlayerTurn();
+      return true;
+    case 'surrender':
+      addBattleLog(`<span class="text-emerald-300 font-bold">🏳️ ${escapeHtml(foe.name)}이(가) 항복했습니다. 승리!</span>`);
+      foe.hp = 0;
       renderBattleUI();
-      await new Promise(r => setTimeout(r, 400));
-      // (드로우는 턴 시작에 1장 — 플레이어와 같다. 🐛 예전엔 낸 카드마다 1장씩 보충해 손패가 마르지 않았다)
-    }
-  }
-
-  // 3. 보스 멀티 액션 콤보 패턴 추출
-  const combos = state.currentBoss.comboPatterns || [
-    {
-      name: '기본 연계',
-      steps: [
-        { type: 'summon_or_buff', name: '부하 소환/강화', value: 1 },
-        { type: 'attack', name: '일반 강타', value: 16 }
-      ]
-    }
-  ];
-
-  const combo = combos[state.currentBoss.actionIdx % combos.length];
-  state.currentBoss.actionIdx++;
-
-  addBattleLog(`<span class="text-amber-400 font-bold">⚡ [보스 콤보 개시: ${combo.name}]</span>`);
-
-  // 4. 콤보 스텝 순차 실행
-  for (const step of combo.steps) {
-    if (state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
-
-    await executeSingleBossStep(step);
-    renderBattleUI();
-  }
-
-  // 4. 보스 부하들의 연계 합동 공격
-  //    ⚠️ canAttack을 반드시 본다. 예전에는 검사가 없어서 **이번 턴에 소환된
-  //       소환수까지 같은 턴에 공격**했다 (스텝1 소환 → 스텝4 공격).
-  //       플레이어 소환수는 소환 후유증이 있으므로 그쪽만 불리한 비대칭이었다.
-  //    슬롯 **스냅샷**으로 순회한다 — 함정이 도중에 전장을 바꿔도 인덱스가 밀리지 않는다.
-  for (const bm of [...state.bossMinions]) {
-    if (state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
-    const idx = state.bossMinions.indexOf(bm);
-    if (idx < 0) continue;                          // 함정 등으로 이미 사라졌다
-    if (bm.canAttack === false) {
-      addBattleLog(`<span class="text-slate-500">💤 [${escapeHtml(bm.name)}]은(는) 소환된 턴이라 공격하지 못합니다.</span>`);
-      continue;
-    }
-    resolveAttack(bossSide, idx);
-  }
-
-
-  // 턴 종료 — 양 진영 공용 (건축물 턴 종료 패시브). 상태 감쇠는 이제 **턴 시작**에 한다.
-  endTurn(bossSide);
-
-  renderBattleUI();
-  checkBattleStatus();
-
-  // handOff=false는 하네스용 — 다음 턴을 예약하지 않고 여기서 멈춘다
-  if (handOff && state.playerHp > 0 && state.currentBoss.currentHp > 0) {
-    setTimeout(() => startPlayerTurn(), 250);
-  } else {
-    state.isAnimating = false;
+      checkBattleStatus();
+      return true;
+    default:
+      console.warn('[대전] 알 수 없는 행동:', action.kind);
+      return false;
   }
 }
 
@@ -1786,127 +1733,7 @@ export async function executeBossTurn({ handOff = true } = {}) {
  *    효과 13종 흉내·함정 즉발·광역 ×0.7·만석 +2)가 통째로 있었다 (DECISIONS #94).
  */
 export async function playBossCard(card) {
-  return playCardFor(sides.boss, card, { picked: botPickTargets(card), trusted: true });
-}
-
-async function executeSingleBossStep(step) {
-  let val = step.value || 0;
-  // 💥 콤보 딜 하향 — 이 스텝은 마나 제한을 받지 않는 유일한 딜이라
-  //    카드 수를 조여도 체감이 안 바뀐다. 여기 한 곳에서 줄인다 (DECISIONS #87).
-  //    ⚠️ 데이터의 원래 수치는 건드리지 않는다 — 보스 14개 패턴과
-  //       연성으로 생성되는 패턴에 자동으로 적용된다.
-  if ((step.type === 'attack' || step.type === 'magic') && val > 0) {
-    val = Math.max(1, Math.round(val * BOSS_STEP_DAMAGE_MULT));
-  }
-  if (bossPhase === 2 && val > 0) val = Math.floor(val * 1.4);
-
-  if (step.type === 'summon_or_buff') {
-    const el = state.currentBoss.element || 'fire';
-    const minionPool = (ELEMENT_BOSS_MINIONS && ELEMENT_BOSS_MINIONS[el]) ? ELEMENT_BOSS_MINIONS[el] : BOSS_ADD_POOL;
-    if (state.bossMinions.length < bossMinionCapThisTurn()) {
-      const randomAdd = battleRng().pick(minionPool);
-      // 소환 후유증 — 이게 없어서 스텝1에 소환된 소환수가 같은 턴 스텝4에 때렸다
-      state.bossMinions.push({ ...randomAdd, currentHp: randomAdd.maxHp, canAttack: false, summonedTurn: state.turnCount });
-      audio.playSummon();
-      addBattleLog(`<span class="text-purple-400 font-bold">👾 [스텝 1/소환] 보스가 [${randomAdd.name}] 을(를) 소환했습니다!</span>`);
-    } else {
-      state.bossMinions.forEach(bm => bm.attack += 3);
-      addBattleLog(`<span class="text-red-400">🔥 [스텝 1/강화] 보스가 모든 부하의 공격력을 +3 강화했습니다!</span>`);
-    }
-  } else if (step.type === 'debuff') {
-    // 🐛 수정: 이전에는 burn/poison/shock이 그 자리에서 HP만 깎고 사라져
-    //          "3턴 지속 맹독" 같은 카드 설명과 실제 동작이 달랐다.
-    //          이제 상태이상으로 등록되어 매 턴 시작 시 지속 피해가 들어간다.
-    if (step.status && step.status.type) {
-      const st = step.status;
-      // 💫 소환수 전용 상태이상은 관문이 최전방 소환수로 돌린다.
-      //    보스 콤보가 플레이어 본체를 맹독·화상으로 녹이던 것을 막는다.
-      const applied = applyStatusRespectingScope(
-        playerStatus, state.playerMinions, '내', st.type, st.duration || 2, st.value || 0);
-      if (applied && !isEntityOnly(st.type)) {
-        const spec = STATUS_EFFECTS[st.type];
-        addBattleLog(`<span class="text-purple-400">${spec.icon} [스텝/${spec.name}] 플레이어가 ${spec.name} 상태가 되었습니다! (${applied.turns}턴${applied.value ? ` / 턴당 ${applied.value}` : ''})</span>`);
-        // 감전은 즉발로 마나도 1 방전시킨다
-        if (st.type === 'shock') state.playerMana = Math.max(0, state.playerMana - 1);
-      }
-    }
-  } else if (step.type === 'heal') {
-    state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + val);
-    audio.playMagic();
-    addBattleLog(`<span class="text-emerald-400 font-bold">💖 [스텝/치유] 보스가 [${step.name}] 으로 체력 +${val} 자가 회복!</span>`);
-  } else if (step.type === 'disrupt') {
-    if (step.manaBurn) {
-      state.playerMana = Math.max(0, state.playerMana - step.manaBurn);
-      addBattleLog(`<span class="text-indigo-400">🌀 [스텝/방해] 보스가 플레이어의 마나 ${step.manaBurn}를 강탈했습니다!</span>`);
-    }
-    if (step.breakShield) {
-      state.playerMaxShield = 0;
-      addBattleLog(`<span class="text-red-400 font-bold">💔 [스텝/파쇄] 아군의 모든 방어막이 산산조각났습니다!</span>`);
-    }
-    if (step.discardCard && state.playerHand.length > 0) {
-      const discarded = discardRandom(sides.player, battleRng());
-      audio.playSlash();
-      addBattleLog(`<span class="text-purple-400 font-black">🃏 [스텝/패 파괴] 보스의 사악한 주술로 손패 [${discarded.name}] 이(가) 파기되었습니다!</span>`);
-    }
-  } else if (step.type === 'shield') {
-    state.currentBoss.shield = (state.currentBoss.shield || 0) + val;
-    if (step.reflectPercent) {
-      // 🌵 가시는 진영 버프이고 턴제다 (THORNS_TURNS).
-      //    🐛 예전엔 state.currentBoss.thorns에 영구 저장돼 한 번 걸리면 전투 끝까지 반사했고
-      //       초기화도 안 됐다. 유저 결정: N턴 후 소멸 (DECISIONS #94)
-      const turns = step.turns || THORNS_TURNS;
-      sides.boss.buffs.thorns = step.reflectPercent;
-      sides.boss.buffs.thornsTurns = turns;
-      addBattleLog(`<span class="text-emerald-300 font-bold">🌵 [가시 반사 결계] 보스가 ${turns}턴 동안 받은 피해의 ${Math.round(step.reflectPercent * 100)}%를 반사합니다!</span>`);
-    }
-    audio.playShield();
-    addBattleLog(`<span class="text-blue-400">🛡️ [스텝/방어] 보스가 [${step.name}] 으로 방어막 +${val} 전개!</span>`);
-  } else if (step.type === 'magic' || step.type === 'attack') {
-    audio.playCrit();
-    
-    let baseDmg = val;
-    if (step.executeThreshold && state.playerHp <= state.playerMaxHp * step.executeThreshold) {
-      baseDmg = Math.floor(baseDmg * 2.2);
-      addBattleLog(`<span class="text-red-600 font-black">💀 [처형 발동] 플레이어 체력 위기로 보스의 공격력이 2.2배 증폭됩니다!</span>`);
-    }
-
-    const hits = step.multiHit || 1;
-    for (let h = 0; h < hits; h++) {
-      if (state.playerHp <= 0) break;
-      const hitDmg = Math.max(1, Math.floor(baseDmg / hits));
-      addBattleLog(`<span class="text-red-400 font-bold">💥 [스텝/타격 ${h + 1}/${hits}] ${step.name} (${hitDmg} 피해)</span>`);
-
-      if (step.isAoe) {
-        // 광역 공격: 모든 아군 및 플레이어 피격
-        // 🐛 여기도 직접 차감이라 수비력을 무시했다 (위 resolveBossSpell과 같은 버그).
-        //    32체력/14수비 건축물이 28 광역 한 방에 4까지 깎였다 — 정상이면 14.
-        state.playerMinions.forEach(m => {
-          const hit = damageEntity(m, hitDmg, { pierce: !!step.pierceShield });
-          addBattleLog(`<span class="text-yellow-400">💥 광역 피해: [${escapeHtml(m.name)}] -${hit.dealt} HP${describeDamageExtras(hit)}</span>`);
-        });
-        state.playerMinions = removeDead(state.playerMinions);
-
-        if (playerBuffs.invulnerable <= 0) {
-          applyDirectDamageToPlayer(Math.floor(hitDmg * 0.7), step.pierceShield);
-        }
-      } else {
-        // 단일 공격: 도발 건축물/소환수 우선 타격 (실드관통이 아닐 때)
-        const res = strikeFrontLine(state.playerMinions, hitDmg, {
-          addBattleLog,
-          pierceShield: step.pierceShield,
-          absorbLabel: '이(가) 보스의 공격을 대신 흡수했습니다!',
-          onDirectHit: (d, pierce) => applyDirectDamageToPlayer(d, pierce)
-        });
-        state.playerMinions = res.minions;
-      }
-
-      if (step.lifesteal || step.lifestealPercent) {
-        const healAmt = Math.floor(hitDmg * (step.lifestealPercent || 0.5));
-        state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + healAmt);
-        addBattleLog(`<span class="text-purple-300">🩸 보스가 흡혈로 체력 +${healAmt} 회복!</span>`);
-      }
-    }
-  }
+  return playCardFor(sides.boss, card, { picked: botController.chooseTargets(card), trusted: true });
 }
 
 /**
@@ -2029,7 +1856,8 @@ export function updateBossIntent() {
     return;
   }
 
-  const enraged = state.currentBoss.currentHp <= state.currentBoss.maxHp * 0.5;
+  // 🐛 예전엔 50%에서 "격노"라 썼지만 실제 격노(2페이즈)는 40%였다 — 봇 컨트롤러의 상태를 그대로 보인다
+  const enraged = botController.phase === 2;
   intentEl.innerHTML = enraged
     ? `<div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/60 border border-red-500/50 text-red-300 text-xs font-bold shadow-md">
          <span class="animate-pulse">🔥</span><span>격노 — 보스의 공세가 거세집니다</span>
@@ -2106,23 +1934,9 @@ export function restartBattle() {
 // 순환 import를 피하려고 "브릿지가 엔진을 호출"하는 방향으로 뒤집었다.
 // (엔진 → 브릿지는 import, 브릿지 → 엔진은 콜백)
 // ============================================================
+// 🌐 원격 상대의 액션은 봇과 **같은 파이프**로 들어온다 (applyFoeAction).
 registerPvpHandlers({
-  // 상대가 낸 카드 = 내 화면에서는 보스가 내는 카드
-  playFoeCard: (card, slot, picked) => playFoeCardPvp(card, slot, picked),
-
-  // 상대 하수인 한 기의 공격 — 상대가 고른 대상까지 그대로 재생한다.
-  //    🐛 예전엔 targetKey를 여기서 버려 상대가 어떤 소환수를 골랐든 내 최전방이 맞았다 (판 어긋남).
-  foeMinionAttack: (slotIdx, _minion, targetKey) => resolveAttack(sides.boss, slotIdx, targetKey || null),
-
-  // 상대 턴이 끝났다 → 상대의 턴 종료(건축물 패시브)를 내 화면에서도 돌리고 내 턴 시작
-  beginMyTurn: () => { endTurn(sides.boss); startPlayerTurn(); },
-
-  foeSurrendered: () => {
-    addBattleLog(`<span class="text-emerald-300 font-bold">🏳️ ${escapeHtml(getFoeName())}이(가) 항복했습니다. 승리!</span>`);
-    state.currentBoss.currentHp = 0;
-    renderBattleUI();
-    checkBattleStatus();
-  }
+  applyFoeAction: (action) => applyFoeAction(action)
 });
 
 // ============================================================

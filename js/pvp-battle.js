@@ -77,46 +77,15 @@ export function sendPvpAction(action) {
 /**
  * 상대 행동을 내 화면에 재생한다.
  * pvp-session의 onFoeAction에 이 함수를 물린다.
+ *
+ * 카드 찾기·손패 제거·대상·턴 넘김은 전부 엔진의 applyFoeAction이 한다 — PvE 봇과 **같은 파이프**다.
+ * 🐛 예전엔 여기서 카드를 찾고 손패를 빼고 종류별로 다른 핸들러를 불렀고, attack 핸들러는
+ *    targetKey를 버렸다. 파이프가 둘이면 한쪽만 고쳐지는 일이 반복된다 (DECISIONS #94).
  */
 export async function handleRemoteAction(action) {
   if (!isPvpActive() || !action || !action.kind) return;
-
-  switch (action.kind) {
-    case 'playCard': {
-      // 상대가 낸 카드를 내 화면의 "보스"가 내는 것으로 재생한다
-      const card = findFoeCard(action.instanceId, action.card);
-      if (!card) {
-        console.warn('[PvP] 상대 카드를 찾지 못했습니다:', action.instanceId);
-        return;
-      }
-      removeFromFoeHand(action.instanceId);
-      // 🐛 action.picked를 넘기지 않았다. 받는 쪽(playFoeCardPvp)은 선언되지도
-      //    않은 `picked`를 참조하고 있어서 **상대의 주문·전투의 함성이
-      //    전부 ReferenceError로 죽었다.** 고른 대상까지 그대로 넘긴다.
-      if (_handlers.playFoeCard) await _handlers.playFoeCard(card, action.slot, action.picked || null);
-      break;
-    }
-
-    case 'attack': {
-      if (_handlers.foeMinionAttack) await _handlers.foeMinionAttack(action.slotIdx, null, action.targetKey);
-      break;
-    }
-
-    case 'endTurn': {
-      // 상대 턴이 끝났다 → 이제 내 턴
-      _myTurn = true;
-      if (_handlers.beginMyTurn) _handlers.beginMyTurn();
-      break;
-    }
-
-    case 'surrender': {
-      if (_handlers.foeSurrendered) _handlers.foeSurrendered();
-      break;
-    }
-
-    default:
-      console.warn('[PvP] 알 수 없는 행동:', action.kind);
-  }
+  if (action.kind === 'endTurn') _myTurn = true;   // 상대 턴이 끝났다 → 이제 내 턴
+  if (_handlers.applyFoeAction) await _handlers.applyFoeAction(action);
 }
 
 /** 내 턴을 끝내고 상대에게 넘긴다 */
@@ -124,22 +93,6 @@ export function endMyPvpTurn() {
   if (!isPvpActive()) return;
   _myTurn = false;
   sendPvpAction({ kind: 'endTurn' });
-}
-
-/** 상대 손패(= 내 화면의 bossHand)에서 카드를 찾는다 */
-function findFoeCard(instanceId, fallbackCard) {
-  const hand = state.bossHand || [];
-  const hit = hand.find(c => c.instanceId === instanceId || c.id === instanceId);
-  if (hit) return hit;
-  // 손패에 없으면 상대가 보낸 카드 스냅샷을 쓴다.
-  // (덱 셔플이 어긋난 상황에서도 대전이 멈추지는 않게 한다)
-  return fallbackCard || null;
-}
-
-function removeFromFoeHand(instanceId) {
-  if (!Array.isArray(state.bossHand)) return;
-  const idx = state.bossHand.findIndex(c => c.instanceId === instanceId || c.id === instanceId);
-  if (idx >= 0) state.bossHand.splice(idx, 1);
 }
 
 /**

@@ -1643,6 +1643,77 @@ async function suiteCastSymmetry() {
 }
 
 // ============================================================
+// 9f. 봇 컨트롤러 — 판단은 boss-ai.js, 규칙은 엔진, 파이프는 applyFoeAction (DECISIONS #94)
+// ============================================================
+async function suiteBotController() {
+  const S = '봇 컨트롤러';
+  const T = BE.__test;
+
+  // 격노(2페이즈)는 공격·마법에만 — 치유·방어막은 그대로 (🐛 예전엔 val>0이면 전부 ×1.4)
+  //   격노는 **실제 피격**으로 켠다(40% 이하) — 수정 전 코드도 같은 길로 켜지므로 fail-first가 성립한다
+  resetBoard({ boss: { maxHp: 300, currentHp: 200, shield: 0 } });
+  BE.dealDamageToBoss(90, '격노 유발');            // 200 → 110 (36%) → 2페이즈
+  await T.bossStep({ type: 'heal', name: '재생', value: 20 });
+  await T.bossStep({ type: 'shield', name: '결계', value: 10 });
+  check(S, '격노가 치유·방어막을 키우지 않는다 (20/10 그대로)',
+    state.currentBoss.currentHp === 130 && state.currentBoss.shield === 10,
+    `hp=${state.currentBoss.currentHp} sh=${state.currentBoss.shield}`);
+  {
+    const 딜 = Math.floor(스텝딜(20) * 1.4);
+    resetBoard({ playerMinions: [], playerHp: 50, boss: { maxHp: 300, currentHp: 100, shield: 0 } });
+    BE.dealDamageToBoss(1, '격노 유발');             // 100 → 99 (33%) → 2페이즈
+    await T.bossStep({ type: 'attack', name: '강타', value: 20 });
+    check(S, `격노 공격 스텝은 ×1.4 (20 → ${딜})`, state.playerHp === 50 - 딜, `${state.playerHp}`);
+  }
+
+  // 죽어 있던 minion_buff 스텝이 실제로 부하를 강화한다
+  resetBoard({ bossMinions: [minion({ name: 'A', attack: 5 }), minion({ name: 'B', attack: 5 })] });
+  await T.bossStep({ type: 'minion_buff', name: '지옥불 고양', buffAtk: 4 });
+  check(S, 'minion_buff 스텝: 부하 공격력 +4 (예전: 처리기 없음 → 무동작)',
+    state.bossMinions.every(m => m.attack === 9), `${state.bossMinions.map(m => m.attack)}`);
+
+  // 의도 표시는 실제 격노 상태를 따른다 (예전: 50%에서 "격노"라 썼지만 격노는 40%였다)
+  resetBoard({ boss: { maxHp: 300, currentHp: 135, shield: 0 } });   // 45% — 격노 아님
+  BE.updateBossIntent();
+  const intent = (document.getElementById('boss-intent') || {}).innerText || '';
+  check(S, '의도 표시: 45%에서는 격노가 아니다 (격노는 40%)', !intent.includes('격노'), intent.replace(/\s+/g, ' ').slice(0, 40));
+
+  // applyFoeAction: endTurn은 내 턴을 시작한다 (PvE — 플레이어가 리더라 turnCount가 오른다)
+  resetBoard({ turnCount: 3, playerDeck: [card()] });
+  if (typeof BE.applyFoeAction === 'function') await BE.applyFoeAction({ kind: 'endTurn' });
+  check(S, 'applyFoeAction(endTurn) → 내 턴 시작 (턴 4, 마나 4)',
+    state.turnCount === 4 && state.playerMana === 4 && T.activeSide() === 'player',
+    `t=${state.turnCount} mana=${state.playerMana} active=${T.activeSide()}`);
+
+  // applyFoeAction: 봇이 아닌 상대(원격)의 comboStep은 거절한다
+  {
+    const dummy = { sendAction() {} };
+    try {
+      attachPvpSession(dummy, { foeName: '검증상대', isHost: true });
+      resetBoard({ playerHp: 50, playerMinions: [] });
+      const ok = typeof BE.applyFoeAction === 'function'
+        ? await BE.applyFoeAction({ kind: 'comboStep', step: { type: 'attack', name: '주입', value: 50 } })
+        : undefined;
+      check(S, '원격 상대의 comboStep은 거절된다 (피어가 스텝을 주입할 수 없다)',
+        ok === false && state.playerHp === 50, `ok=${ok} php=${state.playerHp}`);
+    } finally {
+      detachPvpSession();
+    }
+  }
+
+  // 봇 턴 전체가 파이프를 지나 끝난다 — 낼 수 없는 카드는 남고, 콤보가 돌고, 준비된 소환수만 친다
+  resetBoard({ turnCount: 5, playerHp: 100, playerMinions: [],
+    boss: { maxHp: 300, currentHp: 300, shield: 0, comboPatterns: [{ name: '검사', steps: [{ type: 'attack', name: '타격', value: 10 }] }] },
+    bossHand: [card({ name: '비쌈', cost: 9 })], bossDeck: [card({ cost: 9 })],
+    bossMinions: [minion({ name: '준비됨', attack: 6, canAttack: true, summonedTurn: 1 }), minion({ name: '후유증', attack: 6, canAttack: false, summonedTurn: 5 })] });
+  await (typeof T.takeBotTurn === 'function' ? T.takeBotTurn({ pace: 0 }) : BE.executeBossTurn({ handOff: false }));
+  const expected = 100 - 스텝딜(10) - 6;
+  check(S, '봇 턴: 콤보 스텝 + 준비된 소환수 1기만 공격, 비싼 카드는 손패에 남는다',
+    state.playerHp === expected && state.bossHand.length === 2 && state.bossMinions[0].canAttack === false && state.isAnimating === false,
+    `php=${state.playerHp} (기대 ${expected}) hand=${state.bossHand.length} anim=${state.isAnimating}`);
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -2405,7 +2476,7 @@ export async function runAll() {
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
-    ['공격 대칭', suiteAttackSymmetry], ['시전 대칭', suiteCastSymmetry],
+    ['공격 대칭', suiteAttackSymmetry], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
