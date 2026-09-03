@@ -84,7 +84,7 @@ export function supportsThinking(modelName = '') {
  * 🤖 로컬 Ollama /api/chat 호출 및 클린 JSON 추출
  * 넉넉한 300초(5분) 심층 추론 타임아웃
  */
-export async function callOllamaChat({ messages, model = null, temperature = 0.7, timeoutMs = 300000, reasoningMode = null, format = 'json', think = undefined }) {
+export async function callOllamaChat({ messages, model = null, temperature = 0.7, timeoutMs = 300000, reasoningMode = null, format = 'json', think = undefined, _formatRetry = false, _parseJson = false }) {
   const baseUrl = state.settings.llmUrl || 'http://127.0.0.1:11434';
   let targetModel = model || state.settings.llmModel || 'qwen3.5:4b';
   const mode = reasoningMode || state.settings.reasoningMode || 'fast';
@@ -110,17 +110,31 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
   //       코드는 그 thinking 텍스트를 JSON으로 파싱하려다 "JSON 파싱 실패"를 냈다 — 추론 모드의
   //       카드팩·보스 연성·프로필처럼 think를 안 넘긴 호출이 전부 이 길이었다. (DECISIONS #96)
   //    → JSON 호출은 항상 think:false. 심층 추론은 **두 단계**로 나눈다:
-  //       1) think:true · 자유 서술로 기획   2) 그 기획안을 붙여 think:false · JSON 정형화.
-  //       (card-forge의 심층 파이프라인이 이미 이렇게 하고 있었다 — 그것을 모든 호출부의 기본으로 올린다)
+  //       1) think:true · **토큰 제한 해제**(num_predict -1, 타임아웃만) · 자유 서술 — 모델이 원하는 만큼 생각한 뒤
+  //          짧은 기획 메모를 본문으로 쓴다 (유저 설계: "심층 추론은 추론을 허용하고 토큰 제한도 푼 것")
+  //       2) 그 메모(없으면 생각 자체)를 붙여 think:false · JSON 정형화.
+  //    ⚠️ 1단계에 상한을 두면 안 된다. Qwen3.5-4B의 생각은 개방형 기획 질문에 3072토큰을 넘긴다 —
+  //       예산 1500(옛 코드)·3072(중간 시도) 모두 생각만 하다 잘려 본문 0자였다 (실측: thinking 11,623자, 70초).
+  //       1단계가 타임아웃·오류로 죽어도 판을 접지 않는다 — 기획 없이 2단계로 간다.
   const wantsThinking = think === true || (think === undefined && isDeep && supportsThinking(targetModel));
   if (format && wantsThinking) {
-    const plan = await callOllamaChat({
-      messages, model: targetModel, temperature, timeoutMs, reasoningMode: 'deep', think: true, format: null
-    });
-    let planText = (typeof plan === 'string') ? plan.trim() : '';
-    if (planText.length > 3000) planText = planText.slice(-2800);
+    let planText = '';
+    try {
+      // 1단계는 요청의 **머리**(팩 테마·속성·타입·콘셉트)만 본다. 규격·규칙 전문(5~15k자)까지 주면 이 모델은
+      // 300초 안에 생각을 끝내지 못한다 (실측: 팩 규격 프롬프트 → 타임아웃 → 기획 없이 2단계). 연성 1단계의
+      // 짧은 브레인스토밍 프롬프트(376자)는 126~148초에 끝났다. 규격은 2단계(JSON)가 온전히 받는다.
+      const planMessages = appendToLastUserMessage(headOfLastUserMessage(messages, DEEP_PLAN_HEAD_CHARS), DEEP_PLAN_DIRECTIVE);
+      const plan = await callOllamaChat({
+        messages: planMessages, model: targetModel, temperature, timeoutMs, reasoningMode: 'deep', think: true, format: null
+      });
+      planText = (typeof plan === 'string') ? plan.trim() : '';
+    } catch (e) {
+      console.warn('[Ollama] 심층 1단계(생각) 실패 — 기획 없이 정형화 단계로 진행:', e.message);
+    }
+    if (planText.length > 3000) planText = planText.slice(0, 2800);
+    if (planText) window.__lastPlan = planText;
     const withPlan = planText.length > 30 ? appendToLastUserMessage(messages,
-      `\n\n[1단계 심층 기획안 — 이 내용을 충실히 반영하되, 지금은 위 규격의 JSON 객체 하나만 출력할 것]\n${planText}`) : messages;
+      `\n\n[1단계 기획 메모 — 이 내용을 충실히 반영하되, 지금은 위 규격의 JSON 객체 하나만 출력할 것]\n${planText}`) : messages;
     return callOllamaChat({
       messages: withPlan, model: targetModel, temperature, timeoutMs, reasoningMode: 'deep', think: false, format
     });
@@ -158,9 +172,10 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
         seed: randomSeed,
         repeat_last_n: 64,
         num_ctx: 16384,
-        // 🐛 예전엔 think:true에 1500이었다 — Qwen3.5는 생각만 700토큰을 넘겨 본문을 쓰기 전에 잘렸다.
+        // 🧠 생각(think:true)은 **제한 없음**(-1) — 심층 추론의 설계다. 상한은 timeoutMs(기본 300초)만.
+        //    🐛 예전엔 1500이었다 — Qwen3.5-4B는 생각만 3천 토큰을 넘겨 본문을 쓰기 전에 잘렸다 (DECISIONS #96).
         //    JSON은 생각을 끄므로 예산 전부가 본문이다. 보스 연성(콤보 3패턴)처럼 긴 JSON도 1024를 넘길 수 있어 2048.
-        num_predict: (think === true) ? 3072 : 2048,
+        num_predict: (think === true) ? -1 : 2048,
         stop: STOP_TOKENS
       }
     };
@@ -189,6 +204,17 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
+      // 🛡️ Ollama 0.33의 JSON 문법 강제(format)는 모델 출력이 문법과 어긋나면 **서버가 500**을 낸다
+      //    ("The model produced output that does not match the expected peg-native format"). 간헐적이며 모델 탓이다.
+      //    같은 요청을 format 없이 한 번 다시 보내고, 우리 복구 파서(repairAndParseJson)가 JSON을 건진다.
+      //    🐛 예전엔 여기서 그대로 던져 팩·연성이 랜덤 생성기로 떨어졌다 (DECISIONS #96).
+      if (format && response.status >= 500 && !_formatRetry) {
+        console.warn(`[Ollama] format=${format} 응답이 HTTP ${response.status} — format 없이 1회 재시도:`, errText.slice(0, 160));
+        return callOllamaChat({
+          messages: appendToLastUserMessage(messages, '\n\n(출력은 JSON 객체 하나만. 설명·코드펜스 없이.)'),
+          model: targetModel, temperature, timeoutMs, reasoningMode: mode, think: false, format: null, _formatRetry: true, _parseJson: true
+        });
+      }
       throw new Error(`Ollama HTTP ${response.status} 응답 오류 (모델: ${targetModel}): ${errText}`);
     }
 
@@ -206,6 +232,8 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
     // 🐛 예전엔 thinking을 **우선** 돌려줬다 — 모델이 생각을 끝내고 정리해 쓴 본문(진짜 기획안)을 버리고
     //    중언부언하는 사고 과정을 2단계 프롬프트에 붙였다. 본문이 비었을 때만 생각을 대신 쓴다.
     if (!format) {
+      // format 500 재시도로 들어온 호출은 자유 텍스트에서 JSON을 건진다
+      if (_parseJson) return repairAndParseJson(raw || thinkingText);
       return raw || thinkingText;
     }
 
@@ -220,6 +248,35 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
     clearTimeout(timeoutId);
     throw err;
   }
+}
+
+/**
+ * 🧠 심층 추론 1단계 지시문 — 생각은 자유롭게(think:true·제한 없음), **본문**은 짧은 기획 메모.
+ * JSON 요청 프롬프트 뒤에 붙여 "아직 JSON은 말고 메모부터". 본문 길이를 못 박아야 2단계 프롬프트가 비대해지지 않는다 (DECISIONS #96).
+ */
+export const DEEP_PLAN_DIRECTIVE = `
+
+[1단계 · 기획 메모] 아직 JSON을 출력하지 마라. 충분히 생각한 뒤, 위 요청을 설계하는 **기획 메모**를 한국어 산문으로만 쓴다:
+1) 콘셉트와 서사 — 이 카드가 누구/무엇이며 어떤 장면인가 (1~2문장)
+2) 전투 스타일과 핵심 효과 — 어떤 효과를 어떤 수치로 넣을지, 왜 그 수치인지 (2~3문장)
+3) 스탯 vs 효과 예산 배분 — 어느 쪽을 살리고 어느 쪽을 깎는지 근거 (1~2문장)
+4) 이름 후보 2개와 플레이버 한 줄
+전체 600자 이내. 목록 번호만 쓰고 제목·인사말·JSON은 쓰지 않는다.`;
+
+/** 심층 1단계가 보는 요청 머리 길이 — 콘셉트는 프롬프트 앞머리에 있고, 뒤는 JSON 규격·규칙이다 */
+const DEEP_PLAN_HEAD_CHARS = 900;
+
+/** 마지막 user 메시지를 앞 n자로 자른 사본 (잘렸으면 표시) — 심층 1단계용 */
+function headOfLastUserMessage(messages, n) {
+  const out = messages.map(m => ({ ...m }));
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role === 'user') {
+      const c = String(out[i].content || '');
+      if (c.length > n) out[i].content = c.slice(0, n) + '\n…(출력 규격은 다음 단계에서 준다)';
+      return out;
+    }
+  }
+  return out;
 }
 
 /** 마지막 user 메시지 뒤에 텍스트를 붙인 사본 (원본 배열은 건드리지 않는다) */

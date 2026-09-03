@@ -123,6 +123,19 @@ export function openSettingsModal() {
   document.getElementById('settings-modal').classList.add('flex');
 }
 
+/**
+ * 🧠 추론 모드 선택칸 넷(설정·연성·카드팩·보스 연성)을 저장된 설정으로 맞춘다.
+ * 🐛 예전엔 저장 시 연성 칸만 맞췄고 부팅 시엔 아무 칸도 맞추지 않았다 — 설정에서 "심층"을 골라도
+ *    카드팩·보스 연성은 HTML 기본값 "초고속"으로 돌았다 (DECISIONS #96). 각 화면 칸은 그 자리에서 바꿔 쓸 수 있다.
+ */
+export function syncReasoningSelects() {
+  const mode = state.settings.reasoningMode || 'fast';
+  for (const id of ['setting-reasoning-mode', 'forge-reasoning-mode', 'pack-reasoning-select', 'boss-forge-reasoning-mode']) {
+    const el = document.getElementById(id);
+    if (el) el.value = mode;
+  }
+}
+
 export function closeSettingsModal() {
   document.getElementById('settings-modal').classList.add('hidden');
   document.getElementById('settings-modal').classList.remove('flex');
@@ -151,9 +164,7 @@ export function saveSettingsFromModal() {
 
   const rModeEl = document.getElementById('setting-reasoning-mode');
   if (rModeEl) state.settings.reasoningMode = rModeEl.value;
-
-  const forgeModeEl = document.getElementById('forge-reasoning-mode');
-  if (forgeModeEl) forgeModeEl.value = state.settings.reasoningMode || 'fast';
+  syncReasoningSelects();
 
   state.settings.resolution = document.getElementById('setting-resolution').value;
   state.settings.steps = Math.min(28, parseInt(document.getElementById('setting-steps').value) || 28);
@@ -178,5 +189,5 @@ export function saveSettingsFromModal() {
 
   saveSettingsToStorage();
   closeSettingsModal();
-  alert(`설정이 저장되었습니다!\n적용된 이미지 모델: ${state.settings.model}\n적용된 LLM: ${state.settings.llmModel}\n추론 모드: ${state.settings.reasoningMode === 'deep' ? '🧠 심층 추론 (20~40초)' : '⚡ 초고속 모드 (3~6초)'}`);
+  alert(`설정이 저장되었습니다!\n적용된 이미지 모델: ${state.settings.model}\n적용된 LLM: ${state.settings.llmModel}\n추론 모드: ${state.settings.reasoningMode === 'deep' ? '🧠 심층 추론 (생각 무제한 · 카드당 1.5~3분)' : '⚡ 초고속 모드 (3~6초)'}`);
 }

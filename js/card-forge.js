@@ -448,7 +448,9 @@ ${customDirective}`;
 2. 속성과 카드 타입에 걸맞은 전투 스타일 추론
 3. 독창적인 시그니처 스킬의 전략적 메커니즘 및 밸런스 추론 (피해, 방어막, 회복, 연타, 상태이상 등)
 4. 스탯 vs 스킬 파워 분배 근거 (기초 스탯보다 고유 스킬 효과를 우선 살리는 근거)
-5. 한 줄 명대사 (플레이버 텍스트) 및 비주얼 키워드`;
+5. 한 줄 명대사 (플레이버 텍스트) 및 비주얼 키워드
+
+각 항목 1~3문장, 전체 700자 이내의 한국어 산문으로. 제목·인사말·JSON은 쓰지 않는다.`;
 
       let planText = '';
       try {
@@ -457,10 +459,14 @@ ${customDirective}`;
             { role: 'system', content: 'You are a master Anime TCG card designer. Analyze the character concept deeply in Korean: lore, combat style, innovative skill mechanics, and stat power budget reasoning.' },
             { role: 'user', content: brainstormPrompt }
           ],
-          timeoutMs: 120000,
+          timeoutMs: 300000,   // 생각은 제한이 없으니 타임아웃이 유일한 상한 — 120초는 실측(2분+)에 못 미쳤다
           reasoningMode: 'deep',
-          think: true, // 🧠 실제 모델의 네이티브 Chain-of-Thought Thinking 활성화!
-          format: null // 자유 서술형 텍스트로 심층 추론
+          // 🧠 네이티브 thinking, 토큰 제한 없음(callOllamaChat이 think:true면 num_predict -1). 상한은 타임아웃만.
+          //    🐛 예전엔 예산 1500(그 뒤 3072)이 걸려 있어 이 개방형 질문에 생각만 하다 잘려 본문 0자였고
+          //       (thinking 11,623자·70초), 잘린 사고의 꼬리가 2단계에 "기획안"으로 붙었다 (DECISIONS #96).
+          //    본문은 위 지시대로 700자 이내 기획 메모 — 생각은 자유, 메모는 짧게.
+          think: true,
+          format: null // 자유 서술형 기획 메모
         });
         deepPlanText = planText;
         window.__deepPlanText = planText;

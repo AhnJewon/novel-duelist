@@ -536,7 +536,9 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 103. **생각(think)과 JSON 출력을 한 호출에 같이 시키지 마세요.** Qwen3.5는 `think:true` +
     `format:json`이면 예산을 전부 생각에 쓰고 본문을 **빈 채** 끝냅니다 — 그게 "추론 모드
     JSON 파싱 실패"의 정체였습니다. JSON 호출은 항상 `think:false`, 심층 추론은 두 단계
-    (자유 서술 기획 → JSON 정형화)이며 `callOllamaChat`이 자동으로 나눕니다. 생각 지원
+    (think **무제한**(`num_predict -1`, 상한은 타임아웃) 기획 메모 → JSON 정형화)이며
+    `callOllamaChat`이 자동으로 나눕니다. 생각에 토큰 상한을 두지 마세요 — 1500·3072 모두
+    생각만 하다 잘려 본문이 비었고, 제한을 풀면 7천 토큰·2.5분에 끝납니다. 생각 지원
     모델에는 think를 **명시**하세요 — 기본값이 "생각함"입니다. → [DECISIONS #96](docs/DECISIONS.md)
 
 104. **새 카드군 창작은 `themeId`를 비워야 합니다.** 유저가 이름만 준 경우 `applyCustomOverrides`가

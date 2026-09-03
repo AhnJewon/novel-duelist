@@ -190,7 +190,7 @@ const MODEL_PROFILES = [
 ⚠️ **생각(think)과 JSON(`format`)을 한 호출에 함께 켜지 마세요.** Qwen 3.5는 `think:true` + `format:json`이면
 `num_predict` 예산을 전부 thinking에 쓰고 content가 빈 채 `done_reason: length`로 끝납니다 (실측: 예산 400·700 모두 0자).
 이 모델은 think 필드를 **생략해도** 생각하므로 JSON 호출엔 `think:false`를 명시합니다. 심층 추론이 필요하면
-`callOllamaChat`이 두 단계(자유 서술 기획 → JSON 정형화)로 나눕니다 → DECISIONS #96.
+`callOllamaChat`이 두 단계(think 무제한 · 기획 메모 → JSON 정형화)로 나눕니다. 생각 단계는 `num_predict: -1`, 상한은 타임아웃(300초)만. 1단계는 요청 머리 900자만 본다(규격 전문을 주면 5분 안에 못 끝낸다) — 실측 카드당 1.5~2.5분(3.8~5.6천 토큰) → DECISIONS #96.
 
 ---
 
