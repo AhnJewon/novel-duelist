@@ -22,3 +22,9 @@ export const THORNS_TURNS = 2;
 
 /** 🤖 봇이 액션 사이에 두는 간격(ms) — 사람이 로그를 따라 읽을 수 있게. 하네스는 0을 넘긴다. */
 export const BOT_PACE_MS = 400;
+
+/**
+ * 💀 처형 배수 — 상대 본체가 문턱 이하일 때 피해 배수. 카드 효과(skill-effects)와 보스 콤보 스텝(boss-ai)이
+ * 같은 값을 쓴다. 🐛 예전엔 카드 2배 / 스텝 2.2배 / 키워드 사전 "2.2배 이상"으로 셋이 달랐다 (DECISIONS #94).
+ */
+export const EXECUTE_MULT = 2;

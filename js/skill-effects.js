@@ -9,7 +9,7 @@ import { escapeHtml } from './dom-utils.js';
 import { resolveTargetKey, readHpTarget, readTargetSpec, readDamageTarget } from './effect-targets.js';
 import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
-import { SLOT_CAP, HAND_CAP } from './battle-rules.js';
+import { SLOT_CAP, HAND_CAP, EXECUTE_MULT } from './battle-rules.js';
 
 /**
  * 공격 대상 선택. 실드 관통이면 전열을 무시하고 본체(null)를 노린다.
@@ -53,7 +53,7 @@ export function damageEntity(entity, dmg, { pierce = false, defBonus = 0 } = {})
 
   // 2) 💥 취약 — 수비력을 뚫고 들어온 피해에 배율을 곱한다.
   //    🐛 수정: 취약/감전이 소환수 statuses에 등록만 되고 **읽는 쪽이 없었다.**
-  //       본체(applyDirectDamageToPlayer)에만 구현돼 있어 소환수에 걸면 무효과였다.
+  //       본체(dealFaceDamage(상대 진영))에만 구현돼 있어 소환수에 걸면 무효과였다.
   //    ⚠️ 순서는 본체와 같게 유지한다: 경감/수비 → 취약 → 감전.
   //       순서가 다르면 같은 상태이상이 대상에 따라 다른 피해가 나온다.
   const mult = getIncomingDamageMultiplier(entity.statuses);
@@ -184,7 +184,7 @@ export function resolveEffectTargets(game, skill, picked = null, { allowAoe = tr
 export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
   if (!skill) return;
   const { card, game, helpers } = ctx;
-  const { addBattleLog, dealDamageToBoss, drawCards, setPlayerBuff, setBossStatus } = helpers;
+  const { addBattleLog, dealDamageToFoe, drawCards, setSelfBuff, setFoeStatus } = helpers;
   const sourceLabel = opts.sourceLabel || '효과';
   const allowAoe = !!opts.allowAoe;
   const cardName = escapeHtml(card.name);
@@ -209,8 +209,8 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       const cur = helpers.foeHp();
       const max = helpers.foeMaxHp();
       if (max > 0 && cur <= max * skill.executeThreshold) {
-        dmg = Math.floor(dmg * 2);
-        addBattleLog(`<span class="text-red-400 font-black">💀 처형! 빈사 상태를 노려 피해가 2배가 됩니다. (${dmg})</span>`);
+        dmg = Math.floor(dmg * EXECUTE_MULT);
+        addBattleLog(`<span class="text-red-400 font-black">💀 처형! 빈사 상태를 노려 피해가 ${EXECUTE_MULT}배가 됩니다. (${dmg})</span>`);
       }
     }
 
@@ -254,7 +254,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
         const landed = T.minions.length + faceHits;
         if (landed < spec.count) faceHits += (spec.count - landed);
       }
-      for (let i = 0; i < faceHits; i++) dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+      for (let i = 0; i < faceHits; i++) dealDamageToFoe(dmg, `${card.name} ${sourceLabel}`);
       // ⚠️ selfFace(내 본체)에 피해를 넣는 경로는 일부러 없다. 자해 메커니즘이
       //    없으므로 sanitize가 해로운 효과의 대상을 foe로 교정한다 → DECISIONS #74
     } else if (allowAoe && skill.isAoeSpell) {
@@ -264,7 +264,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
         addBattleLog(`<span class="text-red-300">💥 [${cardName}] 광역 폭격: 부하 [${escapeHtml(bm.name)}] -${hit.dealt} 피해!${describeDamageExtras(hit)}</span>`);
       });
       game.bossMinions = removeDead(game.bossMinions);
-      dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+      dealDamageToFoe(dmg, `${card.name} ${sourceLabel}`);
     } else if (dt === 'field') {
       // 🐛 지정이 없을 때의 폴백이 **damageTarget을 무시하고 본체를 쳤다.**
       //    "전장의 기물만 때린다"고 적힌 카드가 보스 본체를 때렸다.
@@ -278,7 +278,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
         addBattleLog(`<span class="text-slate-400">전장에 때릴 기물이 없어 불발했습니다.</span>`);
       }
     } else {
-      dealDamageToBoss(dmg, `${card.name} ${sourceLabel}`);
+      dealDamageToFoe(dmg, `${card.name} ${sourceLabel}`);
     }
 
     // 🩸 흡혈 — 가한 피해의 일부를 본체 체력으로 되돌린다.
@@ -361,37 +361,37 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     drawCards(skill.drawCards);
   }
 
-  // 5b. 🃏 패 파기 — 상대 손패 무작위 1장. helpers.discardFromBoss = "내 상대의 손패" (반드시 battleRng).
+  // 5b. 🃏 패 파기 — 상대 손패 무작위 1장. helpers.discardFromFoe = "내 상대의 손패" (반드시 battleRng).
   //     🐛 보스 파워 카드(data.js '영혼 강탈 & 패 파괴')가 쓰던 효과인데 보스 전용 해석기에만 있었다 (DECISIONS #94)
-  if (skill.discardCard && typeof helpers.discardFromBoss === 'function') {
-    const gone = helpers.discardFromBoss();
+  if (skill.discardCard && typeof helpers.discardFromFoe === 'function') {
+    const gone = helpers.discardFromFoe();
     if (gone) addBattleLog(`<span class="text-purple-400 font-bold">🃏 [${cardName}] ${escapeHtml(helpers.foeLabel || '상대')}의 손패 [${escapeHtml(gone.name)}] 파기!</span>`);
     else addBattleLog(`<span class="text-slate-400">🃏 [${cardName}] 파기할 손패가 없습니다.</span>`);
   }
 
   // 6. 더블캐스트 예약
   if (skill.doubleCastNext) {
-    setPlayerBuff('doubleCast', true);
+    setSelfBuff('doubleCast', true);
     addBattleLog(`<span class="text-indigo-400 font-bold">✨ 다음 카드가 2연속 발동됩니다!</span>`);
   }
 
   // 7. 무적
   if (skill.invulnerableTurns > 0) {
-    setPlayerBuff('invulnerable', skill.invulnerableTurns);
+    setSelfBuff('invulnerable', skill.invulnerableTurns);
     addBattleLog(`<span class="text-amber-300 font-bold">🛡️ ${skill.invulnerableTurns}턴간 절대 무적 결계가 전개되었습니다!</span>`);
   }
 
   // 8. 실드 관통 예약
   if (skill.pierceShield) {
-    setPlayerBuff('pierceShield', true);
+    setSelfBuff('pierceShield', true);
     addBattleLog(`<span class="text-purple-300 font-bold">🎯 다음 타격이 보스의 방어막을 관통합니다!</span>`);
   }
 
   // 🛡️ 피해 경감 — 다음 N턴 동안 받는 피해를 %만큼 줄인다.
   //    LLM이 설명문에 자주 쓰던 "피해를 50% 줄이고"가 실제로 동작하게 된 것.
   if (skill.damageReduction > 0) {
-    setPlayerBuff('damageReduction', skill.damageReduction);
-    setPlayerBuff('damageReductionTurns', Math.max(1, skill.reductionTurns || 2));
+    setSelfBuff('damageReduction', skill.damageReduction);
+    setSelfBuff('damageReductionTurns', Math.max(1, skill.reductionTurns || 2));
     addBattleLog(`<span class="text-cyan-300 font-bold">🛡️ ${cardName}: 받는 피해가 ${skill.damageReduction}% 감소합니다!</span>`);
   }
 
@@ -523,7 +523,7 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       }
     } else {
       // 본체를 골랐거나 지정이 없으면 예전대로 상대 본체에 건다
-      setBossStatus(st.type, st.duration || 1, st.value || 0);
+      setFoeStatus(st.type, st.duration || 1, st.value || 0);
     }
   }
 }

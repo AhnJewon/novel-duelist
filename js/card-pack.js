@@ -477,7 +477,7 @@ ${archetypeRule}
   * "always"        — 카드를 낼 때마다 (무난하지만 개성 없음)
   * "archetypePair" — 같은 카드군이 필드에 2장 이상일 때만 (전개형 카드군)
   * "lowHp"         — 내 체력 절반 이하일 때만 (역전형 카드군)
-  * "bossShielded"  — 보스가 방어막을 두르고 있을 때만 (카운터형)
+  * "bossShielded"  — 상대가 방어막을 두르고 있을 때만 (카운터형; 키 이름은 유산)
   * "handRich"      — 손패 5장 이상일 때만 (자원형)
   * "lateGame"      — 5턴 이후 (장기전형)
   * "earlyGame"     — 3턴 이내 (속공형)

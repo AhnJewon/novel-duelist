@@ -130,16 +130,21 @@ await window.restoreCardsBackup();
 
 ---
 
-## 🎮 PvE / PvP 모드
+## 🎮 PvE / PvP — 차이는 컨트롤러만
+
+전투 규칙은 **한 벌**입니다. 보스는 "특별한 콤보를 가진 봇 플레이어"이고, PvP 상대는 같은 자리에
+앉은 원격 플레이어입니다 (DECISIONS #94). 양쪽 다 마나를 쓰고, 슬롯 4·손패 7·턴당 1드로우입니다.
 
 ```js
-const cs = await import('/js/combat-side.js');
-cs.setBattleMode('pvp');   // 상대도 마나를 쓰고, 스크립트 패턴 없음
-cs.setBattleMode('pve');   // 보스는 마나 없음(가상 99) + 콤보 패턴 사용
+initBattle({ seed, leader: 'player' });                                  // PvE — 상대는 보스 목록의 봇
+initBattle({ seed, leader: isHost ? 'player' : 'boss',
+             foe: { controller: 'remote', deck, profile, avatar } });    // PvP — 상대는 원격 듀얼리스트
 ```
 
-모드별 차이는 `BATTLE_MODES` **한 곳**에 있습니다. 새 차이점이 생기면 여기에 필드를
-추가하고 해당 지점에서 `modeConfig()`를 읽으세요. 조건문을 여기저기 흩뿌리지 마세요.
+상대 행동은 출처가 무엇이든 `applyFoeAction(action)` 하나로 들어옵니다 — 봇(`boss-ai.js`)은
+`playCard`/`comboStep`/`attack`/`endTurn`을 만들어 넣고, PvP는 상대 클라이언트가 보낸 같은 종류의
+액션을 재생합니다(`comboStep`은 봇만 허용). 새 차이점이 필요하면 **봇의 판단**에 넣고, 규칙 함수에
+`controller` 분기를 흩뿌리지 마세요.
 
 ---
 
@@ -152,19 +157,17 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   // ... 기존 8종
   myNewAction: {
     label: '내 연계',
-    player({ theme, card, game, helpers }) {
-      const { addBattleLog, audio, dealDamageToBoss, drawCards,
-              setBossStatus, setPlayerStatus, setPlayerBuff } = helpers;
+    // 한 벌이다 — 플레이어가 내든 상대가 내든 같은 run()이 돈다 (DECISIONS #94).
+    // game은 viewFor(side): 내 진영이면 state, 상대면 거울 (playerHand = "내" 손패, bossMinions = "상대" 전장).
+    // helpers는 helpersFor(side): 키가 진영 상대적이다.
+    run({ theme, card, game, helpers }) {
+      const { addBattleLog, audio, dealDamageToFoe, drawCards,
+              setFoeStatus, setSelfStatus, setSelfBuff } = helpers;
       // 발동 조건이 안 맞으면 null을 반환 (아무 일도 안 일어남)
       if (game.playerHand.length === 0) return null;
 
       // ... 효과 구현 ...
       return { name: `${theme.name} 내 연계`, triggered: true };
-    },
-    boss({ theme, card, game, helpers }) {
-      const { addBattleLog, audio, applyDirectDamageToPlayer } = helpers;
-      // ... 보스 버전 ...
-      return { name: `보스 ${theme.name} 내 연계`, triggered: true };
     }
   }
 };
@@ -285,7 +288,7 @@ export const COMBO_SCALINGS = {
 콤보 구현에서 수치를 쓸 때는 `scale()`을 통과시키세요:
 
 ```js
-player({ theme, helpers, allies, scale }) {
+run({ theme, helpers, allies, scale }) {
   const dmg = scale(6);   // ✅ 카드군 증가방식이 적용됨
   // const dmg = 6 + allies * 3;   ❌ 하드코딩하면 축이 무시된다
 }

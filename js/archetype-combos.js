@@ -123,9 +123,9 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   chainDamage: {
     label: '연쇄 폭격', tier: 1,
     run({ theme, helpers, allies, scale }) {
-      const { addBattleLog, audio, dealDamageToBoss } = helpers;
+      const { addBattleLog, audio, dealDamageToFoe } = helpers;
       const dmg = scale(6);
-      dealDamageToBoss(dmg, `${theme.name} 연계`);
+      dealDamageToFoe(dmg, `${theme.name} 연계`);
       audio.playSlash();
       addBattleLog(comboLog('red', `🔥 [${escapeHtml(who(theme, helpers))} 연쇄]`,
         `${foeLabel(helpers)}에게 ${dmg} 연계 피해. (같은 카드군 전개 ${allies + 1}장)`));
@@ -138,8 +138,8 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   freeze: {
     label: '결빙', tier: 3,
     run({ theme, helpers }) {
-      const { addBattleLog, audio, setBossStatus } = helpers;
-      const applied = setBossStatus('freeze', 1);
+      const { addBattleLog, audio, setFoeStatus } = helpers;
+      const applied = setFoeStatus('freeze', 1);
       if (!applied) return null;
       audio.playMagic();
       addBattleLog(comboLog('blue', `❄️ [${escapeHtml(who(theme, helpers))} 결빙]`,
@@ -152,8 +152,8 @@ export const ARCHETYPE_COMBO_ACTIONS = {
   doubleCast: {
     label: '과충전', tier: 4,
     run({ theme, helpers }) {
-      const { addBattleLog, audio, setPlayerBuff } = helpers;
-      setPlayerBuff('doubleCast', true);
+      const { addBattleLog, audio, setSelfBuff } = helpers;
+      setSelfBuff('doubleCast', true);
       audio.playCrit();
       addBattleLog(comboLog('yellow', `⚡ [${escapeHtml(who(theme, helpers))} 과충전]`,
         '다음 카드가 2연속 발동됩니다.'));
@@ -303,14 +303,14 @@ export const ARCHETYPE_COMBO_ACTIONS = {
 
   // 상대 손패를 파기 — 자원 압박 카드군
   // 🐛 예전 플레이어 구현은 헬퍼가 없으면 `bossHand.pop()`(결정적), 보스 구현은 무작위였다.
-  //    이제 한 구현이고, 무작위는 반드시 battleRng를 거치는 헬퍼(discardFromBoss)가 한다.
+  //    이제 한 구현이고, 무작위는 반드시 battleRng를 거치는 헬퍼(discardFromFoe)가 한다.
   handDisrupt: {
     label: '패 교란',
     tier: 3,
     run({ theme, game, helpers }) {
-      const { addBattleLog, audio, discardFromBoss } = helpers;
+      const { addBattleLog, audio, discardFromFoe } = helpers;
       if (!game.bossHand || game.bossHand.length === 0) return null;
-      const discarded = typeof discardFromBoss === 'function' ? discardFromBoss() : game.bossHand.pop();
+      const discarded = typeof discardFromFoe === 'function' ? discardFromFoe() : game.bossHand.pop();
       if (!discarded) return null;
       audio.playSlash();
       addBattleLog(comboLog('purple', `🃏 [${escapeHtml(who(theme, helpers))} 패 교란]`,
@@ -324,14 +324,14 @@ export const ARCHETYPE_COMBO_ACTIONS = {
     label: '제물 강타',
     tier: 4,
     run({ theme, card, game, helpers, scale }) {
-      const { addBattleLog, audio, dealDamageToBoss } = helpers;
+      const { addBattleLog, audio, dealDamageToFoe } = helpers;
       // 방금 낸 카드 자신은 제물이 될 수 없다. id가 없는 토큰·보스 소환수는 이름으로 가른다.
       const keyOf = (c) => c.instanceId || c.id || c.name;
       const fodder = (game.playerMinions || []).find(m => keyOf(m) !== keyOf(card) && belongsToTheme(m, theme));
       if (!fodder) return null;
       const dmg = scale(14) + (fodder.attack || 0);
       game.playerMinions = game.playerMinions.filter(m => m !== fodder);
-      dealDamageToBoss(dmg, `${theme.name} 제물 강타`);
+      dealDamageToFoe(dmg, `${theme.name} 제물 강타`);
       audio.playCrit();
       addBattleLog(comboLog('red', `🔥 [${escapeHtml(who(theme, helpers))} 제물 강타]`,
         `[${escapeHtml(fodder.name)}]을(를) 제물로 바쳐 ${dmg} 피해!`));

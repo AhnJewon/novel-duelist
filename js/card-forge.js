@@ -221,7 +221,7 @@ ${knownThemes}
   * "always"        — 카드를 낼 때마다 (무난하지만 개성 없음)
   * "archetypePair" — 같은 카드군이 필드에 2장 이상일 때만 (전개형 카드군)
   * "lowHp"         — 내 체력 절반 이하일 때만 (역전형 카드군)
-  * "bossShielded"  — 보스가 방어막을 두르고 있을 때만 (카운터형)
+  * "bossShielded"  — 상대가 방어막을 두르고 있을 때만 (카운터형; 키 이름은 유산)
   * "handRich"      — 손패 5장 이상일 때만 (자원형)
   * "lateGame"      — 5턴 이후 (장기전형)
   * "earlyGame"     — 3턴 이내 (속공형)
@@ -284,7 +284,7 @@ ${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '
 TCG Archetype Combo Design Philosophy:
 - Design skills that interact with the theme:
   * Deck Search: "소환 시: 내 덱에서 다른 [테마명] 카드 1장을 찾아 패로 서치"
-  * Chain Strike: "필드에 다른 [테마명]이 있을 때: 보스에게 8 연계 피해 및 화상 부여"
+  * Chain Strike: "필드에 다른 [테마명]이 있을 때: 상대에게 8 연계 피해 및 화상 부여"
   * Resonance / Charge: "발동 시: 마나 +1 충전 & 필드의 [테마명] 수만큼 방어막 전개"
   * Special Summon: "발동 시: 체력 12 회복 & [테마명] 정령을 전장에 무료 특수 소환"
 - DO NOT use simple generic stat addition (+2 attack autochess style). Design true TCG combo mechanics!
@@ -311,7 +311,7 @@ ${buildNamingRule(targetType)}
 
 💫 STATUS EFFECT 적용 범위 (중요):
 - **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
-  본체(플레이어/보스)에는 걸리지 않는다. 상대 전장이 비어 있으면 **불발**한다.
+  본체(나/상대 모두)에는 걸리지 않는다. 상대 전장이 비어 있으면 **불발**한다.
   * 이유: 본체는 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없다.
     이 계열은 **보드 컨트롤 수단**이다.
   * ✅ "적 소환수 1체를 2턴간 빙결시킨다"

@@ -97,9 +97,11 @@ renderGrimoire();             // 화면 갱신 — 자동으로 안 됨
 
 ### 전투 전용 상태는 모듈 지역 변수
 
-`battle-engine.js` 안의 `isPlayerTurn`, `bossPhase`, `bossStatus`, `playerStatus`,
-`playerBuffs`는 **모듈 지역 변수**이지 `state`에 없습니다. 의도적입니다 — 전투가 끝나면
-버려질 값이라 저장소에 새어 나가면 안 됩니다.
+`battle-engine.js` 안의 `sides`(두 진영의 Side — 마나·손패·덱·전장·상태이상·버프·함정을 한 곳에서
+읽는 창), `activeSideKey`/`leaderKey`, `bossStatus`, `playerStatus`, `playerBuffs`, `bossBuffs`,
+`trapZones`는 **모듈 지역 변수**이지 `state`에 없습니다. 의도적입니다 — 전투가 끝나면
+버려질 값이라 저장소에 새어 나가면 안 됩니다. (예외: 상대 마나 `state.bossMana/bossMaxMana` —
+플레이어 마나와 같은 집에 두기 위해서입니다. 격노 등 봇의 상태는 `boss-ai.js`의 컨트롤러가 갖습니다.)
 
 바깥에서 읽어야 하면 `getBattleStatusSnapshot()` 같은 접근자를 추가하세요.
 `state`에 옮기지 마세요.
@@ -188,27 +190,30 @@ initBattle();                      // 5. 전투 초기화
 
 ## 전투 턴 흐름
 
-```
-플레이어 턴
-  ├─ playCard()          카드 시전
-  │    ├─ triggerArchetypeCombo()   ← 카드군 연계 발동
-  │    └─ triggerSpellEffect() / triggerBattlecry()
-  ├─ attackWithMinion()  소환수 공격 (스탯 버프 없음)
-  └─ playerEndTurn()
-       └─ triggerStructureEndTurnPassives()
+전투는 **진영 대칭**입니다 (DECISIONS #94). 한 턴 = `startTurn(side)` → 행동들 → `endTurn(side)`.
+보스는 "특별한 콤보를 가진 봇 플레이어"이고, 상대 행동은 출처(봇/원격)와 무관하게 `applyFoeAction`
+하나로 들어옵니다. 본체에는 기절·빙결이 걸리지 않으므로 "턴 스킵"은 없습니다.
 
-보스 턴  executeBossTurn()
-  ├─ 1. 보스 지속 피해 적용 (화상/맹독)
-  ├─ 2. 행동 봉쇄 판정 (기절/빙결) → 걸리면 턴 스킵
-  ├─ 3. 보스 전술 카드 2~3장 시전  playBossCard()
-  ├─ 4. 콤보 패턴 스텝 실행       executeSingleBossStep()
-  ├─ 5. 보스 부하 공격
-  └─ 6. 보스 상태이상 1턴 감쇠
-
-플레이어 턴 시작  startPlayerTurn()
-  ├─ 무적 버프 차감
-  ├─ 플레이어 지속 피해 적용 + 상태이상 감쇠
-  ├─ 마나 최대치 = min(10, 턴 수)
-  ├─ 소환수 공격 가능 복구 / 빙결 해제
-  └─ 드로우 1장
 ```
+내 턴
+  ├─ startTurn(player)   리더면 turnCount++ → 마나 성장 → 버프 감소(무적·경감·가시) → 본체 지속 피해·감쇠
+  │                       → 소환수 상태이상 소모(tickMinionStatuses) → 공격 가능 복구 → 건축물 턴 시작 패시브 → 드로우 1
+  ├─ playCard(handIdx) → playCardFor(player, card, {slot, picked})
+  │                       canPlayCard 관문 → 마나 → 손패 제거 → 함정 세트 or 함정 발동 검사 →
+  │                       주문: 연계(runArchetypeCombo) + 효과(applyPlayerSkillEffects, viewFor/helpersFor)
+  │                       소환수·건축물: 전장 배치 → 연계 → 함성
+  ├─ attackWithMinion(slot) → resolveAttack(player, slot, targetKey)
+  │                       canAttackFace → 본체는 dealFaceDamage(target) / 소환수는 damageEntity(+오라)
+  └─ playerEndTurn() → endTurn(player)   건축물 턴 종료 패시브 →
+        핸드오프: PvE = 봇 턴 예약 / PvP = endTurn 전송 + 내 화면에서 startTurn(boss) 미러
+
+상대 턴 — 전부 applyFoeAction(action)을 지난다
+  봇 (boss-ai.js takeTurn): startTurn(boss) → {playCard}×n(램프·격노 한도, 대상은 정책)
+                              → {comboStep}×스텝(콤보 패턴, 마나 무시, ×BOSS_STEP_DAMAGE_MULT)
+                              → {attack}×준비된 소환수 → {endTurn}
+  원격 (PvP handleRemoteAction): 상대 클라이언트가 보낸 같은 종류의 액션을 재생 (comboStep은 거절)
+  → endTurn(boss) → startTurn(player)
+```
+
+같은 시드·같은 행동이면 양 클라이언트의 판이 같습니다(락스텝): 덱은 좌석 순(리더 먼저)으로 섞고
+`instanceId`는 `좌석:id#세대.위치`, 전투 난수는 전부 `battleRng()`입니다.

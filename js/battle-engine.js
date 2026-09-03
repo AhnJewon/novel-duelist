@@ -156,8 +156,8 @@ function viewFor(side) {
 /**
  * 효과·연계에 넘기는 헬퍼 묶음 — **진영 상대적**이다.
  *
- * 키 이름은 유산이다: `dealDamageToBoss` = "내 상대의 본체에", `setPlayerStatus` = "내 진영에",
- * `setBossStatus` = "상대 진영에". 플레이어 카드든 상대 카드든 **같은 구현이 같은 이름**으로 쓴다.
+ * 키 이름은 진영 상대적이다 (#94에서 dealDamageToBoss→dealDamageToFoe 등으로 개명): `dealDamageToFoe` = "내 상대의 본체에", `setSelfStatus` = "내 진영에",
+ * `setFoeStatus` = "상대 진영에". 플레이어 카드든 상대 카드든 **같은 구현이 같은 이름**으로 쓴다.
  *
  * 🐛 예전에는 세 벌이었다 — makeComboHelpers(플레이어), makeMirroredHelpers(PvP 거울),
  *    makeBossComboHelpers(보스 전용 구현). 키가 서로 달라 한쪽에만 있는 헬퍼를 부르면
@@ -173,18 +173,16 @@ function helpersFor(side) {
     addBattleLog,
     audio,
     // "적 본체에 피해" — 이 진영의 상대에게
-    dealDamageToBoss: mine
-      ? (dmg, src) => dealDamageToBoss(dmg, src)
-      : (dmg) => applyDirectDamageToPlayer(dmg, false),
+    dealDamageToFoe: (dmg, src) => dealFaceDamage(other, dmg, { source: src, attacker: side }),
     // 드로우는 **자기** 덱에서 자기 손패로, n장
     drawCards: (n = 1) => (mine ? drawCards(n) : drawTo(side, n, { onDraw: () => audio.playDraw() })),
     // 💫 소환수 전용 상태이상(기절·빙결·화상·맹독)은 본체에 걸리지 않는다.
     //    관문이 그 진영의 최전방 소환수로 돌린다.
-    setBossStatus: (type, turns, value, allowBody = false) =>
+    setFoeStatus: (type, turns, value, allowBody = false) =>
       applyStatusRespectingScope(other.statuses, other.minions, labelOf(other), type, turns, value, allowBody),
-    setPlayerStatus: (type, turns, value, allowBody = false) =>
+    setSelfStatus: (type, turns, value, allowBody = false) =>
       applyStatusRespectingScope(side.statuses, side.minions, labelOf(side), type, turns, value, allowBody),
-    setPlayerBuff: (type, val) => { side.buffs[type] = val; },
+    setSelfBuff: (type, val) => { side.buffs[type] = val; },
     // 로그는 늘 **내 화면** 기준이다 — 상대 카드가 "적"을 치면 그건 나다.
     //    selfLabel은 연계 배지에 "누구의 연계인가"를 붙인다 (내 것이면 비운다).
     foeLabel: mine ? other.name : '나',
@@ -193,7 +191,7 @@ function helpersFor(side) {
     foeHp: () => other.hp,
     foeMaxHp: () => other.maxHp,
     // 상대 손패 무작위 파기 — 반드시 battleRng를 거쳐야 PvP가 어긋나지 않는다
-    discardFromBoss: () => discardRandom(other, battleRng())
+    discardFromFoe: () => discardRandom(other, battleRng())
   };
 }
 
@@ -551,6 +549,9 @@ export function renderBattleUI() {
   }
   const bShield = document.getElementById('boss-shield-text');
   if (bShield) bShield.innerText = `${state.currentBoss.shield || 0}`;
+  // 💎 상대 마나 — 봇도 원격도 플레이어와 같은 규칙으로 쓴다. 공개 정보다 (숨은 정보는 손패 내용만, 규칙 13).
+  const bMana = document.getElementById('boss-mana-text');
+  if (bMana) bMana.innerText = `${state.bossMana ?? 1} / ${state.bossMaxMana ?? 1}`;
 
   // 보스 손패 & 덱 수치 갱신
   const bHandCount = document.getElementById('boss-hand-count');
@@ -1459,13 +1460,8 @@ function onFaceLowHp(target) {
 }
 
 /** 상대 본체에 피해 (플레이어가 때린다). dealFaceDamage(sides.boss, …)의 옛 이름 — 효과·연계·하네스가 부른다. */
-export function dealDamageToBoss(dmg, sourceName) {
+export function dealDamageToFoe(dmg, sourceName) {
   return dealFaceDamage(sides.boss, dmg, { source: sourceName, attacker: sides.player });
-}
-
-/** 플레이어 본체에 피해 (상대가 때린다). dealFaceDamage(sides.player, …)의 옛 이름. */
-function applyDirectDamageToPlayer(dmg, pierceShield = false) {
-  return dealFaceDamage(sides.player, dmg, { pierce: pierceShield, attacker: sides.boss });
 }
 
 export function playerEndTurn() {
@@ -1901,8 +1897,8 @@ export function updateBossIntent() {
   const intentEl = document.getElementById('boss-intent');
   if (!intentEl) return;
 
-  if (isPvpActive()) {
-    // PvP에는 스크립트 패턴이 없다. 표시할 것도 없다.
+  if (!sides || sides.boss.controller !== 'bot') {
+    // 원격 상대(PvP)에는 스크립트 패턴이 없다. 표시할 것도 없다. 판단 주체는 컨트롤러다 — 모드 플래그가 아니다.
     intentEl.innerHTML = '';
     return;
   }

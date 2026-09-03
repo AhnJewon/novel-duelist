@@ -540,23 +540,23 @@ export const ELEMENT_BOSS_MINIONS = {
   ],
   water: [
     { name: '서리 수정 골렘', icon: '⛄', attack: 8, defense: 16, maxHp: 34, currentHp: 34, desc: '서리 방벽 — 공격자를 1턴간 빙결' },
-    { name: '빙하의 서리 정령', icon: '❄️', attack: 14, defense: 4, maxHp: 22, currentHp: 22, desc: '한파: 매 턴 플레이어 실드 삭감' },
-    { name: '눈보라 사령관', icon: '🧙‍♀️', attack: 12, defense: 8, maxHp: 26, currentHp: 26, desc: '지원: 매 턴 보스에게 빙벽 +10 부여' }
+    { name: '빙하의 서리 정령', icon: '❄️', attack: 14, defense: 4, maxHp: 22, currentHp: 22, desc: '한파: 매 턴 상대 방어막 삭감' },
+    { name: '눈보라 사령관', icon: '🧙‍♀️', attack: 12, defense: 8, maxHp: 26, currentHp: 26, desc: '지원: 매 턴 주인에게 빙벽 +10 부여' }
   ],
   lightning: [
-    { name: '초전도 충전탑', icon: '⚡', attack: 0, defense: 12, maxHp: 28, currentHp: 28, desc: '매 턴 보스 공격력 +3 충전' },
+    { name: '초전도 충전탑', icon: '⚡', attack: 0, defense: 12, maxHp: 28, currentHp: 28, desc: '매 턴 주인의 공격력 +3 충전' },
     { name: '번개 스파크 정령', icon: '🌩️', attack: 15, defense: 0, maxHp: 18, currentHp: 18, desc: '속공: 2회 연속 속공 타격' },
-    { name: '뇌전의 집행자', icon: '⚔️', attack: 18, defense: 6, maxHp: 24, currentHp: 24, desc: '감전: 플레이어 본체 집중 저격' }
+    { name: '뇌전의 집행자', icon: '⚔️', attack: 18, defense: 6, maxHp: 24, currentHp: 24, desc: '감전: 상대 본체 집중 저격' }
   ],
   holy: [
-    { name: '성역의 수호 천사', icon: '👼', attack: 6, defense: 18, maxHp: 36, currentHp: 36, desc: '매 턴 보스 체력 +15 회복' },
-    { name: '빛의 심판 토템', icon: '✨', attack: 12, defense: 6, maxHp: 24, currentHp: 24, desc: '정화: 매 턴 플레이어 버프 해제' },
-    { name: '세라프 수호기사', icon: '🛡️', attack: 14, defense: 12, maxHp: 30, currentHp: 30, desc: '수호: 보스 받는 피해 30% 감소' }
+    { name: '성역의 수호 천사', icon: '👼', attack: 6, defense: 18, maxHp: 36, currentHp: 36, desc: '매 턴 주인의 체력 +15 회복' },
+    { name: '빛의 심판 토템', icon: '✨', attack: 12, defense: 6, maxHp: 24, currentHp: 24, desc: '정화: 매 턴 상대 버프 해제' },
+    { name: '세라프 수호기사', icon: '🛡️', attack: 14, defense: 12, maxHp: 30, currentHp: 30, desc: '수호: 주인이 받는 피해 30% 감소' }
   ],
   dark: [
     { name: '심연의 방패병', icon: '🛡️', attack: 8, defense: 14, maxHp: 30, currentHp: 30, desc: '단단한 벽 — 높은 수비력으로 버틴다' },
-    { name: '그림자 암살자', icon: '🗡️', attack: 18, defense: 0, maxHp: 18, currentHp: 18, desc: '치명: 플레이어 본체 관통 암살' },
-    { name: '암흑 사령술사', icon: '🔮', attack: 10, defense: 6, maxHp: 24, currentHp: 24, desc: '지원: 매 턴 아군에 저주 및 보스 흡혈' }
+    { name: '그림자 암살자', icon: '🗡️', attack: 18, defense: 0, maxHp: 18, currentHp: 18, desc: '치명: 상대 본체 관통 암살' },
+    { name: '암흑 사령술사', icon: '🔮', attack: 10, defense: 6, maxHp: 24, currentHp: 24, desc: '지원: 매 턴 아군에 저주 및 주인 흡혈' }
   ],
   nature: [
     { name: '고대 세계수 엔트', icon: '🌲', attack: 8, defense: 16, maxHp: 38, currentHp: 38, desc: '매 턴 체력 +8 자가 재생' },

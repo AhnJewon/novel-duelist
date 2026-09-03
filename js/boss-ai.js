@@ -26,7 +26,7 @@ import { damageEntity, strikeFrontLine, removeDead, describeDamageExtras } from 
 import { readTargetSpec, collectTargetKeys } from './effect-targets.js';
 import { canPlayCard, discardRandom } from './combat-side.js';
 import { readDirectAttack } from './card-keywords.js';
-import { SLOT_CAP, THORNS_TURNS, BOT_PACE_MS } from './battle-rules.js';
+import { SLOT_CAP, THORNS_TURNS, BOT_PACE_MS, EXECUTE_MULT } from './battle-rules.js';
 
 // ============================================================
 // 🐌 보스 공세 램프 — 초반 턴에는 보스도 천천히 전개한다 (봇의 **페이싱 정책**)
@@ -203,7 +203,7 @@ export function createBossController(ops) {
 
   /**
    * 콤보 스텝 하나를 실행한다. 스텝의 **수치는 보스 고유 콤보의 내부값**이라 손대지 않았다
-   * (BOSS_STEP_DAMAGE_MULT, 광역 본체 BOSS_STEP_AOE_FACE_MULT, 만석 +3, 처형 ×2.2) —
+   * (BOSS_STEP_DAMAGE_MULT, 광역 본체 BOSS_STEP_AOE_FACE_MULT, 만석 +3, 처형 EXECUTE_MULT) —
    * 유저 결정 "콤보만 남기고". 대신 **효과는 전부 공용 규칙 함수**를 지난다:
    * 본체는 dealFaceDamage, 소환수는 damageEntity/strikeFrontLine, 상태이상은 관문.
    */
@@ -293,8 +293,8 @@ export function createBossController(ops) {
       audio.playCrit();
       let baseDmg = val;
       if (step.executeThreshold && target.hp <= target.maxHp * step.executeThreshold) {
-        baseDmg = Math.floor(baseDmg * 2.2);
-        ops.addBattleLog(`<span class="text-red-600 font-black">💀 [처형 발동] 플레이어 체력 위기로 ${nameOf(side)}의 공격력이 2.2배 증폭됩니다!</span>`);
+        baseDmg = Math.floor(baseDmg * EXECUTE_MULT);
+        ops.addBattleLog(`<span class="text-red-600 font-black">💀 [처형 발동] 플레이어 체력 위기로 ${nameOf(side)}의 공격력이 ${EXECUTE_MULT}배 증폭됩니다!</span>`);
       }
       const hits = step.multiHit || 1;
       for (let h = 0; h < hits; h++) {

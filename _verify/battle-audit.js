@@ -30,6 +30,7 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          collectDamageOverTime, decayStatuses, consumeBlockingStatus,
          getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
+import { EXECUTE_MULT } from '/js/battle-rules.js';
 import { readTargetSpec, needsTargetPick, collectTargetKeys, resolveTargetKey,
          describeTarget, targetCostMultiplier, hasTargetableEffect } from '/js/effect-targets.js';
 import { TRAP_TRIGGERS, checkTraps, normalizeTrapTrigger } from '/js/trap-system.js';
@@ -705,7 +706,7 @@ function suiteEffects() {
 
   // bodyStatus 옵트인
   resetBoard({ bossMinions: [minion({ name: 'X' })] });
-  BE.__test.helpers().setBossStatus('burn', 3, 6, true);
+  BE.__test.helpers().setFoeStatus('burn', 3, 6, true);
   check(S, 'bodyStatus=true면 본체에 걸 수 있다',
     BE.getBattleStatusSnapshot().boss.some(s => s.type === 'burn'),
     JSON.stringify(BE.getBattleStatusSnapshot().boss));
@@ -796,13 +797,13 @@ function suiteStatus() {
 
   // 취약이 본체 피해를 증폭하는가
   resetBoard({ playerMinions: [] });
-  BE.__test.helpers().setPlayerStatus('vulnerable', 2, 0);
+  BE.__test.helpers().setSelfStatus('vulnerable', 2, 0);
   BE.foeMinionAttack(0, minion({ attack: 20 }), 'face');
   check(S, '본체 취약 → 20이 30으로', state.playerHp === 20, `${state.playerHp}`);
 
   // 감전이 본체 피해에 추가되는가
   resetBoard({ playerMinions: [] });
-  BE.__test.helpers().setPlayerStatus('shock', 2, 4);
+  BE.__test.helpers().setSelfStatus('shock', 2, 4);
   BE.foeMinionAttack(0, minion({ attack: 20 }), 'face');
   check(S, '본체 감전 → 20+4=24', state.playerHp === 26, `${state.playerHp}`);
 }
@@ -1456,8 +1457,8 @@ async function suiteSides() {
   // 헬퍼는 한 팩토리에서 나오고 진영 상대적이다: 상대 헬퍼의 "적 본체 피해"는 나에게 온다
   resetBoard({ playerHp: 50 });
   const hb = T.helpers('boss');
-  if (hb && typeof hb.dealDamageToBoss === 'function') hb.dealDamageToBoss(7, '검사');
-  check(S, "helpers('boss').dealDamageToBoss는 내 본체를 친다", state.playerHp === 43, `${state.playerHp}`);
+  if (hb && typeof hb.dealDamageToFoe === 'function') hb.dealDamageToFoe(7, '검사');
+  check(S, "helpers('boss').dealDamageToFoe는 내 본체를 친다", state.playerHp === 43, `${state.playerHp}`);
 }
 
 // ============================================================
@@ -1473,19 +1474,19 @@ function suiteFaceDamage() {
   // 상대 무적이 내 공격을 막는다
   resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
   B().boss.invulnerable = 1;
-  BE.dealDamageToBoss(20, '검사');
+  BE.dealDamageToFoe(20, '검사');
   check(S, '상대 무적이 내 본체 공격을 막는다 (예전: 무시)', state.currentBoss.currentHp === 300, `${state.currentBoss.currentHp}`);
 
   // 상대 경감 50%
   resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
   B().boss.damageReduction = 50; B().boss.damageReductionTurns = 1;
-  BE.dealDamageToBoss(20, '검사');
+  BE.dealDamageToFoe(20, '검사');
   check(S, '상대 경감 50%가 내 본체 공격을 반으로 (20→10)', state.currentBoss.currentHp === 290, `${state.currentBoss.currentHp}`);
 
   // 상대 건축물의 경감 오라가 상대 본체를 지킨다
   resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 },
     bossMinions: [minion({ name: '상대요새', cardType: 'structure', skills: [{ passiveEffect: { aura: { scope: 'all', damageReduction: 25 } } }] })] });
-  BE.dealDamageToBoss(20, '검사');
+  BE.dealDamageToFoe(20, '검사');
   check(S, '상대 건축물 경감 오라 25% (20→15) (예전: 플레이어 오라만)', state.currentBoss.currentHp === 285, `${state.currentBoss.currentHp}`);
 
   // 상대의 관통 버프가 내 방어막을 무시하고 소모된다
@@ -1509,14 +1510,14 @@ function suiteFaceDamage() {
   resetBoard({ playerHp: 50, boss: { maxHp: 300, currentHp: 300, shield: 0 } });
   B().player.thorns = 0.5; B().player.thornsTurns = 2;
   B().boss.thorns = 0.5; B().boss.thornsTurns = 2;
-  BE.dealDamageToBoss(20, '검사');
+  BE.dealDamageToFoe(20, '검사');
   check(S, '가시 반사는 되반사되지 않는다', state.currentBoss.currentHp === 280 && state.playerHp === 40,
     `bhp=${state.currentBoss.currentHp} php=${state.playerHp}`);
 
   // 보스가 세트한 selfLowHp 함정이 터진다
   resetBoard({ boss: { maxHp: 300, currentHp: 160, shield: 0 } });
   BE.__test.setTrap('boss', card({ name: '상대위기', cardType: 'trap', trapTrigger: 'selfLowHp', skills: [{ shield: 20 }] }));
-  BE.dealDamageToBoss(20, '검사');
+  BE.dealDamageToFoe(20, '검사');
   check(S, '상대 본체가 절반 아래로 떨어지면 상대 함정(selfLowHp) 발동 (예전: 내 본체만)',
     BE.getTrapZone('boss').length === 0 && state.currentBoss.shield === 20,
     `zone=${BE.getTrapZone('boss').length} sh=${state.currentBoss.shield}`);
@@ -1652,7 +1653,7 @@ async function suiteBotController() {
   // 격노(2페이즈)는 공격·마법에만 — 치유·방어막은 그대로 (🐛 예전엔 val>0이면 전부 ×1.4)
   //   격노는 **실제 피격**으로 켠다(40% 이하) — 수정 전 코드도 같은 길로 켜지므로 fail-first가 성립한다
   resetBoard({ boss: { maxHp: 300, currentHp: 200, shield: 0 } });
-  BE.dealDamageToBoss(90, '격노 유발');            // 200 → 110 (36%) → 2페이즈
+  BE.dealDamageToFoe(90, '격노 유발');            // 200 → 110 (36%) → 2페이즈
   await T.bossStep({ type: 'heal', name: '재생', value: 20 });
   await T.bossStep({ type: 'shield', name: '결계', value: 10 });
   check(S, '격노가 치유·방어막을 키우지 않는다 (20/10 그대로)',
@@ -1661,7 +1662,7 @@ async function suiteBotController() {
   {
     const 딜 = Math.floor(스텝딜(20) * 1.4);
     resetBoard({ playerMinions: [], playerHp: 50, boss: { maxHp: 300, currentHp: 100, shield: 0 } });
-    BE.dealDamageToBoss(1, '격노 유발');             // 100 → 99 (33%) → 2페이즈
+    BE.dealDamageToFoe(1, '격노 유발');             // 100 → 99 (33%) → 2페이즈
     await T.bossStep({ type: 'attack', name: '강타', value: 20 });
     check(S, `격노 공격 스텝은 ×1.4 (20 → ${딜})`, state.playerHp === 50 - 딜, `${state.playerHp}`);
   }
@@ -1969,7 +1970,7 @@ async function suiteBossTurn() {
     JSON.stringify(BE.__test.buffs().boss));
 
   // 가시 반사가 실제로 되돌아오는가
-  BE.dealDamageToBoss(100, '검증');
+  BE.dealDamageToFoe(100, '검증');
   check(S, '가시 반사: 받은 피해의 30%를 되돌린다',
     state.playerHp === 50 - Math.floor((100 - 25) * 0.3), `php=${state.playerHp}`);
 
@@ -1983,8 +1984,8 @@ async function suiteBossTurn() {
     const 딜 = 스텝딜(4);
     resetBoard({ playerMinions: [], playerHp: 10, playerMaxHp: 50 });
     await BE.__test.bossStep({ type: 'attack', name: '처형', value: 4, executeThreshold: 0.3 });
-    check(S, '스텝 attack: 처형 배율 2.2',
-      state.playerHp === 10 - Math.floor(딜 * 2.2), `${state.playerHp}`);
+    check(S, '스텝 attack: 처형 배율 EXECUTE_MULT (카드와 같은 값)',
+      state.playerHp === 10 - Math.floor(딜 * EXECUTE_MULT), `${state.playerHp}`);
   }
   {
     const 총딜 = 스텝딜(30), 회당 = Math.max(1, Math.floor(총딜 / 3));
@@ -2039,7 +2040,7 @@ async function suiteTurnCycle() {
 
   // 본체 지속 피해
   resetBoard({ turnCount: 3, playerHp: 50, playerDeck: [card()] });
-  BE.__test.helpers().setPlayerStatus('burn', 2, 6, true);   // bodyStatus 옵트인
+  BE.__test.helpers().setSelfStatus('burn', 2, 6, true);   // bodyStatus 옵트인
   BE.startPlayerTurn();
   check(S, '턴 시작: 본체 지속 피해 적용 + 1턴 감쇠',
     state.playerHp === 44 &&
@@ -2114,7 +2115,7 @@ async function suiteTurnCycle() {
 
   // 본체 봉쇄는 bodyStatus로도 걸리지 않는다 — 소환수가 없으면 불발
   resetBoard({ bossMinions: [] });
-  const gate = BE.__test.helpers('player').setBossStatus('stun', 1, 0, true);
+  const gate = BE.__test.helpers('player').setFoeStatus('stun', 1, 0, true);
   check(S, '본체 기절은 bodyStatus로도 걸리지 않는다 (예전: 보스 본체만 가능)',
     gate === null && !BE.getBattleStatusSnapshot().boss.some(s => s.type === 'stun'),
     JSON.stringify(BE.getBattleStatusSnapshot().boss));

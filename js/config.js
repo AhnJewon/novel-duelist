@@ -1612,7 +1612,7 @@ export function sanitizeAndClampCardData(cardData) {
   //
   //    그리고 이 엔진에는 **자기 피해(sacrifice) 메커니즘이 없다.**
   //    self는 고를 대상이 없어(collectTargetKeys에 self 분기 없음) 피해가 조용히
-  //    `dealDamageToBoss`로 흘러갔다 — 카드엔 "자신"이라 적히고 보스를 때렸다.
+  //    `dealDamageToBoss`(지금의 dealDamageToFoe)로 흘러갔다 — 카드엔 "자신"이라 적히고 보스를 때렸다.
   //
   //    ally도 같은 문제인데 **더 나쁘다.** collectTargetKeys가 아군을 대상으로
   //    내주므로, 플레이어에게 "내 소환수를 골라 때리라"고 요구한다.

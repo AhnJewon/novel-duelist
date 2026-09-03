@@ -76,9 +76,10 @@
 13. **상대 손패 내용이나 다음 수를 UI에 노출하지 마세요.** 숨은 정보입니다.
     장수만 공개합니다. → [DECISIONS #56](docs/DECISIONS.md)
 
-14. **PvP에서 `playBossCard()`를 쓰지 마세요.** PvE 전용이라 전투의 함성이 빠지고
-    주문 피해에 ×0.7이 붙어 양쪽 화면이 어긋납니다. `playFoeCardPvp()`를 쓰세요.
-    → [DECISIONS #55](docs/DECISIONS.md)
+14. **상대 행동은 `applyFoeAction()` 하나로 들어옵니다.** PvE 봇(`boss-ai.js`)도 PvP
+    원격도 같은 파이프를 지나 `playCardFor(side)`·`resolveAttack(side)`·`endTurn(side)`에
+    닿습니다. 상대 카드를 다른 함수로 내면 한쪽만 고쳐지는 일이 반복됩니다 — 예전
+    `playBossCard`/`playFoeCardPvp` 두 벌이 그랬습니다. → [DECISIONS #94](docs/DECISIONS.md)
 
 15. **차단한 판권 태그를 네거티브 프롬프트로 보내지 마세요.** 캐릭터만이 아니라
     그 **그림체 전체**를 밀어내서 결과가 나빠집니다. → [DECISIONS #45](docs/DECISIONS.md)
@@ -95,13 +96,15 @@
 | 건축물 패시브 · 오라 | `js/config.js`의 `buildStructurePassive` + `js/battle-engine.js`의 오라 계산 |
 | 카드군 초기화 · 병합 · 보수 | `js/archetype-service.js` (콘솔에서 `resetArchetypes()`) |
 | 전투 진영 공용 동작 (마나·드로우·슬롯) | `js/combat-side.js` |
+| 양 진영 공용 상수 (슬롯 4·손패 7·가시 턴·처형 배수) | `js/battle-rules.js` (import 0) |
+| 턴 경계 (마나 성장·드로우·감쇠·버프 감소) | `js/battle-engine.js`의 `startTurn(side)` / `endTurn(side)` |
 | 직접공격(directAttack) 판정 | `js/card-keywords.js` **한 곳** (엔진·렌더러·상세가 공유) |
 | 효과 대상 해석 (지정/전체/무작위) | `js/skill-effects.js`의 `resolveEffectTargets()` **한 곳** |
 | 설명문 거짓말 관문 | `js/config.js`의 `findDescriptionLies()` **한 곳** |
-| PvE / PvP 모드 차이 | `js/combat-side.js`의 `BATTLE_MODES` |
+| PvE / PvP 차이 (봇 vs 원격) | `initBattle({ foe })`의 `controller` — 규칙은 한 벌, 차이는 **컨트롤러**만 |
 | 등급·마나·효과 밸런스 | `js/config.js`의 `RARITY_POWER` + `EFFECT_COSTS` |
 | 덱 마나 커브 (코스트 분포) | `js/config.js`의 `COST_CURVE_WEIGHTS` |
-| 보스 초반 공세 세기 | `js/battle-engine.js`의 `BOSS_RAMP` |
+| 봇(보스) 판단 — 카드 선택·대상·콤보 스텝·격노·램프(`BOSS_RAMP`) | `js/boss-ai.js` **한 곳** |
 | 카드 타입별 예산 (소환수/건축물/마법/함정) | `js/config.js`의 `TYPE_POWER` **한 곳** |
 | 효과 **크기**의 값 (피해 28 vs 8) | `js/config.js`의 `EFFECT_MAGNITUDE` **한 곳** |
 | 전투 무작위 / 재현 | `js/rng.js` (`initBattle({seed})`) |
@@ -119,7 +122,7 @@
 | 태그 SLM · 작가/화풍 · 판권 정책 | `js/tag-slm.js` **한 곳** |
 | 카드 타입별 작명 규칙 | `js/card-naming.js` **한 곳** |
 | PvP 매칭 · 방 코드 UI | `js/pvp-ui.js` |
-| PvP 카드 해석 (거울) | `js/battle-engine.js`의 `playFoeCardPvp()` |
+| 상대 행동 재생 (봇·원격 공용) | `js/battle-engine.js`의 `applyFoeAction()` → `playCardFor(side)` |
 | 전장을 탭 사이로 옮기기 | `js/battle-arena.js` |
 | 플레이어 프로필 · 초상 | `js/player-profile.js` / `js/profile-ui.js` |
 
@@ -127,8 +130,8 @@
 
 - 전역 상태는 `storage.js`의 `state` **하나**. 리액티브가 없으므로 변경 후
   렌더 함수를 **직접 호출**해야 합니다.
-- 전투 임시 상태(`bossStatus`, `playerBuffs` 등)는 `battle-engine.js` 모듈 지역 변수.
-  `state`에 넣으면 저장소로 새어 나갑니다.
+- 전투 임시 상태(`sides`, `bossStatus`, `playerBuffs`, 함정 존 등)는 `battle-engine.js` 모듈
+  지역 변수. `state`에 넣으면 저장소로 새어 나갑니다 (예외: 상대 마나 `state.bossMana`).
 - `main.js`의 부팅 순서에는 의존성이 있습니다. `mergeDuplicateArchetypes()`는
   반드시 `loadInitialData()` **뒤에** 와야 합니다.
 - 저장은 IndexedDB 우선 + localStorage 백업. 이미지가 base64라 5MB를 쉽게 넘깁니다.
@@ -137,7 +140,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (359항목):
+전투 로직은 **하네스가 있습니다** (412항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -188,7 +191,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     → [DECISIONS #70](docs/DECISIONS.md)
 
 25. **소환수 상태이상을 두 곳에서 소모하지 마세요.** `tickMinionStatuses()`가
-    유일한 소모 지점입니다. `refreshMinions`와 `foeMinionAttack`은 `blockedBy`
+    유일한 소모 지점입니다. `refreshMinions`와 `resolveAttack`은 `blockedBy`
     플래그만 읽습니다. 두 번 소모하면 기절이 절반 턴만 갑니다.
     → [DECISIONS #72](docs/DECISIONS.md)
 
@@ -319,7 +322,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (359항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (412항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -336,9 +339,10 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     약화"가 첫 한 기만 약화시켰고, `'random'`은 아예 없었습니다.
     → [DECISIONS #85](docs/DECISIONS.md)
 
-59. **보스 경로에도 같은 효과를 구현하세요.** `resolveBossSpell`이 연타·치명타·
-    처형·흡혈·드로우를 무시해서, 같은 카드가 보스 손에서는 3배 약했습니다.
-    → [DECISIONS #85](docs/DECISIONS.md)
+59. **상대 전용 효과 구현을 만들지 마세요.** 카드는 누가 내든 `playCardFor(side)` →
+    `applyPlayerSkillEffects(skill, { game: viewFor(side), helpers: helpersFor(side) })`
+    한 벌입니다. 예전 `resolveBossSpell`은 연타·치명타·처형·흡혈·드로우를 무시해서
+    같은 카드가 보스 손에서는 3배 약했습니다. → [DECISIONS #85](docs/DECISIONS.md), [#94](docs/DECISIONS.md)
 
 60. **카드팩 프롬프트에 효과 스키마를 빼먹지 마세요.** 설명문만 요구하면
     LLM은 화려한 문장을 쓰는데 엔진에는 굴린 `damage`만 들어가, **설명문이
@@ -359,12 +363,13 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     기능이 고장난 것처럼 보입니다. `__test.reset()`이 꺼줍니다.
     → [DECISIONS #85](docs/DECISIONS.md)
 
-64. **보스도 마나를 씁니다** (`foeUsesMana: true`). 카드 선택은 반드시
-    `canPlayCard`를 통과한 후보 안에서만 하세요. → [DECISIONS #86](docs/DECISIONS.md)
+64. **양 진영 모두 마나를 씁니다.** 카드 선택은 반드시 `canPlayCard`를 통과한 후보
+    안에서만 하세요 — 봇은 엄격하게 거절하고, 원격 상대는 미러 오차로 판이 어긋나지
+    않게 경고 후 적용합니다(`trusted`). → [DECISIONS #86](docs/DECISIONS.md), [#94](docs/DECISIONS.md)
 
-65. **보스 콤보의 `attack`/`magic` 스텝은 마나 제한을 받지 않습니다.** 보스 공세를
-    조정할 때 카드 수만 만지면 효과가 없습니다 — 지배적인 변수는 이 스텝입니다.
-    → [DECISIONS #86](docs/DECISIONS.md)
+65. **보스 콤보의 `attack`/`magic` 스텝은 마나 제한을 받지 않습니다** (`boss-ai.js`의
+    `executeStep`). 보스 공세를 조정할 때 카드 수만 만지면 효과가 없습니다 — 지배적인
+    변수는 `BOSS_STEP_DAMAGE_MULT`입니다. → [DECISIONS #86](docs/DECISIONS.md)
 
 66. **보스 생성기를 추가하면 `saveAndFightBoss`가 유일한 관문입니다.** 카드군
     선택(`readBossTheme`)을 생성기마다 붙이지 마세요 — 실제로 두 경로가
@@ -488,3 +493,28 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     주면 4B 모델은 늘 재사용을 고릅니다 — 실제로 새 카드군이 한 번도 안 나왔습니다.
     `PACK_NEW_ARCHETYPE_CHANCE`로 팩당 **한 슬롯만** 창작 규칙으로 바꿉니다.
     범용 팩·카드군 집중 팩은 제외입니다. → [DECISIONS #93](docs/DECISIONS.md)
+
+94. **턴 경계는 `startTurn(side)`/`endTurn(side)` 둘뿐입니다.** 마나 성장·드로우·버프
+    감소·상태이상 감쇠를 다른 곳에 두면 한 진영만 돌아갑니다. `turnCount`는 **리더**의
+    턴 시작에만 오릅니다 — PvP 양 클라이언트가 같은 턴 번호를 갖는 조건입니다.
+    → [DECISIONS #94](docs/DECISIONS.md)
+
+95. **효과·연계에는 `viewFor(side)`/`helpersFor(side)`를 넘기세요.** `state`를 직접
+    넘기면 상대 카드가 내 진영을 봅니다. 헬퍼 키는 **진영 상대적**입니다 —
+    `dealDamageToFoe`·`setSelfStatus`·`setFoeStatus`·`setSelfBuff`·`discardFromFoe`.
+    → [DECISIONS #94](docs/DECISIONS.md)
+
+96. **PvP 덱은 좌석 순(리더 먼저)으로 섞습니다.** `instanceId`는 `좌석:id#세대.위치`로
+    양 클라이언트가 같은 카드를 같은 이름으로 부릅니다. `initBattle`에서 RNG를 쓰는
+    순서를 바꾸면 락스텝이 깨집니다. → [DECISIONS #94](docs/DECISIONS.md)
+
+97. **본체에는 기절·빙결이 걸리지 않습니다 (양쪽 다).** `applyStatusRespectingScope`가
+    최전방 소환수로 돌리고, sanitize는 봉쇄 상태이상의 `bodyStatus`를 지웁니다.
+    `bodyStatus`는 화상·맹독에만 둡니다. → [DECISIONS #94](docs/DECISIONS.md)
+
+98. **가시는 턴제 버프입니다** (`buffs.thorns`/`thornsTurns`, 기본 `THORNS_TURNS`).
+    영구 반사·보스 전용으로 되돌리지 마세요. → [DECISIONS #94](docs/DECISIONS.md)
+
+99. **보스 고유는 콤보·체력·대사·의도 UI뿐입니다.** 새 보스 전용 규칙을 엔진에 넣지
+    마세요 — 봇의 **판단**은 `boss-ai.js`에, 규칙은 진영 매개 함수 한 벌에 둡니다.
+    PvE는 "로컬 봇과의 PvP"입니다. → [DECISIONS #94](docs/DECISIONS.md)

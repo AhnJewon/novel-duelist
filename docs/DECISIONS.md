@@ -3776,3 +3776,100 @@ LLM 산문을 규칙 텍스트로 쓰면 데이터와 어긋날 수 있고, 그�
 빈 칸을 다시 전부 누르게 하려면 배열 모델을 sparse로 바꾸는 것부터 해야 한다 — 클램프만 빼면
 예전 거짓말로 돌아간다. 무장을 주문·반려에서 풀고 싶으면 "무장은 다음 카드 한 장" 규칙으로
 정하고 UI 문구·하네스 ⑧을 함께 바꾸세요. `PACK_NEW_ARCHETYPE_CHANCE = 0`이면 팩은 예전 동작이다.
+
+---
+
+<a id="94"></a>
+## #94 — 보스는 "특별한 콤보를 가진 봇 플레이어" · 전투 엔진 진영 대칭화
+
+유저 요청: *"보스는 콤보만 남기고 다른 모든 건 일반 플레이어와 같게 하자. 보스만 갖는 효과·보스만 받는 효과·
+보스만 대상으로 하는 키워드 효과 등을 일반적인 플레이어에게 향하게. 보스는 특별한 콤보를 가진 봇 플레이어,
+체력은 더 높고."*
+
+### 왜 — 비대칭은 "몇 군데"가 아니라 구조였다
+
+| 발견 | 실측 |
+|---|---|
+| 상대 카드 경로가 **둘** | PvE `playBossCard`(효과 13종만 흉내, 소환수 스탯 하한 8/4/16, 함성 없음, 함정 즉발, 광역 본체 ×0.7, 만석 +2 영구) vs PvP `playFoeCardPvp`(관문·마나 차감 없음, 슬롯 3 하드코딩) |
+| 상대 턴 엔진이 `executeBossTurn` 안에만 | 마나 성장·드로우·감쇠·버프 감소가 PvE 함수에 갇혀 PvP 상대는 아무것도 안 돌고, 보스 버프는 영구, 보스 건축물은 패시브·오라 없음 |
+| 카드군 연계 14종이 `player`/`boss` 두 벌 | `manaCharge.boss`는 마나 대신 방어막, 손패 상한 5 vs 7, 슬롯 3 vs 4 |
+| `Side`는 베니어 | `sides.*` 16곳 vs 직접 접근 ~217곳; 상대 마나가 클로저와 죽은 `state.bossMana` 두 집 |
+| PvP도 새고 있었다 | 공격 재생이 `targetKey`를 버림, `initBattle`이 양쪽에서 전술 덱을 만들어 RNG가 시작부터 갈라짐, 전송 카드에 `instanceId` 없음, 게스트가 호스트 첫 턴에 행동 가능, 원격 체력 50(기준 100) |
+
+### 유저 결정
+- 본체 기절·빙결: **양쪽 다 불가**. `bodyStatus`는 화상·맹독(지속 피해)에만 남는다. 관문(`applyStatusRespectingScope`)이 봉쇄 상태이상을 최전방 소환수로 돌리고, sanitize가 봉쇄 상태이상의 `bodyStatus`를 멱등하게 지운다.
+- 슬롯·손패·드로우: **전부 같게** — 슬롯 4, 손패 7, 턴당 1드로우, 덱이 비면 **고정 덱**(플레이어: 출전 덱 / 상대: `bossDeckSource`) 리셔플.
+- 가시: **N턴 후 소멸** (`THORNS_TURNS = 2`, 그 진영 턴 시작마다 1 감소).
+
+### 구조 (커밋 9개, `[대칭 n/9]`)
+
+```
+액션 발생원   사람(UI) · 원격(PvP handleRemoteAction) · 봇(boss-ai takeTurn)  →  applyFoeAction(action)  ← 단일 관문
+규칙(진영 매개) startTurn/endTurn(side) · playCardFor(side) · resolveAttack(side) · dealFaceDamage(target)
+효과 해석      applyPlayerSkillEffects(skill, { game: viewFor(side), helpers: helpersFor(side) }) · runArchetypeCombo 한 벌
+```
+
+1. Side가 상대 상태의 단일 소스 · `viewFor`/`helpersFor` 한 벌 · `battle-rules.js`(SLOT_CAP 4, HAND_CAP 7, import 0) — a72cc61
+2. 카드군 연계 `run(ctx)` 한 벌 — `boss` 구현 14개 삭제 — 9dc43d6
+3. `startTurn/endTurn(side)` · 라운드 리더(`leaderKey`)의 턴 시작에만 `turnCount++` · 본체 봉쇄 불가 — efde81c
+4. `dealFaceDamage(target, dmg, {pierce, attacker, reflected})` 한 곳 · 가시 = 턴제 버프 · 오라 진영 매개 — 5fb566b
+5. `resolveAttack(side, slot, targetKey)` 한 곳 · PvP 재생이 대상을 존중 · 상대 소환수도 턴당 1회 — 8aed140
+6. `playCardFor(side, card, {slot, picked, trusted})` 한 곳 · 보스 함정이 파이프라인을 탐 · `discardCard` 승격(cost 2·rare) — 6477a45
+7. `applyFoeAction` 단일 관문 · `boss-ai.js`(판단만: 카드 선택·대상 정책·램프·콤보 스텝·격노) — 6ccb9c4
+8. PvP 초기화 결정론 — 좌석 덱(리더 먼저 셔플), `instanceId = 좌석:id#세대.위치`, 원격 체력 = `PLAYER_BASE_HP`, 원격도 드로우, 프로토콜 v2 — 3b46c78
+9. 이름·문구·표시·문서 — 이 커밋
+
+`viewFor(player) === state`, `viewFor(boss)`는 거울. 필드 이름(`playerHp`=자기, `bossMinions`=상대)은 유산이고 뜻은 self/foe다.
+`helpersFor(side)`의 키는 **진영 상대적**이다: `dealDamageToFoe`·`setSelfStatus`·`setFoeStatus`·`setSelfBuff`·`discardFromFoe`
+(옛 이름 `dealDamageToBoss`·`setPlayerStatus`·`setBossStatus`·`setPlayerBuff`·`discardFromBoss`는 9단계에서 개명).
+
+### 보스에 남은 것 / 사라진 것
+- **남음**: `comboPatterns`·`actionIdx`(콤보), 더 높은 `maxHp`, `BOSS_STEP_DAMAGE_MULT`·`BOSS_STEP_AOE_FACE_MULT`·`BOSS_RAMP`(스텝·램프는 콤보의 내부값 — "콤보만 남기고"의 대상), 격노(40%: 카드 한도 3, 공격·마법 스텝 ×1.4), 대사, 의도 UI(봇일 때만).
+- **사라짐**: `playBossCard`/`resolveBossSpell`/`playFoeCardPvp` 본체(하네스용 한 줄 별칭만 남음), `executeSingleBossStep`, `ARCHETYPE_COMBO_ACTIONS[*].boss`, `makeBossComboHelpers`/`makeMirroredHelpers`/`makeComboHelpers`, `triggerBossArchetypeCombo`, `BOSS_SLOTS`, `HAND_CAP.boss=5`, `pvpMana`, `BATTLE_MODES.foe*` 플래그, `isPlayerTurn`(→`activeSideKey`), `bossPhase`(→봇 컨트롤러), `state.currentBoss.thorns`, 카드 경로의 광역 ×0.7·만석 +2·스탯 하한·함성 누락·함정 즉발.
+
+### 콤보 스텝에서 고친 것 (수치는 그대로)
+- 격노 ×1.4가 **치유·방어막**까지 키웠다 → 공격·마법만.
+- `minion_buff` 스텝에 처리기가 없어 죽어 있었다 → `+buffAtk`(형제 `summon_or_buff`와 같은 값).
+- 처형 배수가 카드 2배 / 스텝 2.2배 / 키워드 사전 "2.2배 이상" 셋이었다 → `EXECUTE_MULT = 2` 하나(`battle-rules.js`).
+- 콤보 소환 토큰에 `instanceId`·`skills`·`statuses`를 채운다 — 공용 공격·오라 코드가 읽는다.
+
+### 재기준선 (사유)
+| 검사 | 예전 | 지금 | 왜 |
+|---|---|---|---|
+| 상대 손패 상한 | 5 | 7 | 유저 결정(전부 같게) |
+| 상대 슬롯 | 3 | 4 | 같음 — `summon_or_buff` 만석 픽스처도 4기 |
+| 카드 광역의 본체 피해 | ×0.7 | 100% | 카드 경로의 보스 왜곡 삭제 (스텝의 0.7은 `BOSS_STEP_AOE_FACE_MULT`로 남음) |
+| 관통 주문 | 최전방 건너뜀 | 지정 소환수 수비 무시 + 관통 버프 무장 | 플레이어 경로와 통일 |
+| 가시 | 보스 전용·영구 | 양쪽 버프·2턴 | 유저 결정 |
+| 의도 표시 "격노" | 50% | 40% | 실제 격노 문턱을 따름 |
+| 상대 함정 `freeze` | 본체에 raw | 내 최전방 소환수에 | 함정도 파이프라인을 탐 (본체 봉쇄 불가) |
+
+### 측정 (유저 덱 13장 · 시드 1~5 · 바알 130HP · 자동 플레이어: 최고 코스트 우선, 대상은 최전방→본체, 준비된 소환수 전부 공격)
+
+| | 생존 턴 | 평균 | 보스 잔여 HP | 승 |
+|---|---|---|---|---|
+| [#87](#87) 기준 (통합 전) | 4·8·7·11·8 | 7.6 | 56~119 | 0 |
+| **통합 후** | 11·6·10·3·9 | **7.8** | **108~130** | 0 |
+
+생존은 같다. 달라진 것은 **플레이어가 보스 본체에 넣는 피해**다 — 5판 중 3판이 보스 전장 4기 만석으로 끝났다.
+원인은 유저 결정 그대로다: 상대 슬롯이 3→4가 되어 벽이 두꺼워졌고(전장에 소환수가 있으면 본체를 못 친다, [#81](#81)),
+상대 카드가 함성·효과 18종을 온전히 낸다. "승률 0"은 #87 때도 같았다(덱 파워 문제).
+**이 시리즈에서는 밸런스 상수를 건드리지 않았다** (규칙 67/69). 조정하려면 후보는 둘 — `BOSS_RAMP`(턴당 카드 한도:
+벽이 차는 속도)와 `BOSS_STEP_DAMAGE_MULT`. 별도 커밋으로, 실측과 함께.
+
+### 검증
+- 하네스 359 → **412**항목(+53). 단계마다 **fail-first**: 검사를 먼저 쓰고 `git stash push -- js/`로 옛 코드에서
+  새 검사가 **예측한 이유로** 빨간 것을 확인한 뒤(예: 7단계 402/407 — 격노가 치유를 키움 138/14, minion_buff 무동작 5,5,
+  45% 격노 표시, applyFoeAction 없음), `pop` 후 2회 초록.
+- 브라우저 실전: 봇 턴이 `applyFoeAction`만 지나며 콤보 소환·공격·핸드오프가 돌고, 조작 잠김 없음(`isAnimating` 복원).
+- PvP 한계: 실기 두 탭은 시그널링이 필요해 **더미 세션 검사**(applyFoeAction 재생·게스트 첫 턴·좌석 덱 결정론·원격 드로우)로
+  대신했다. 실기 대전 확인은 남은 일이다. `describeBattleSides()`가 seed·turn·active·leader를 함께 찍으므로 두 클라이언트에서
+  같은 시점에 비교하면 어긋난 곳을 찾을 수 있다.
+
+### 규칙
+- 상대 행동은 **`applyFoeAction` 하나**로 들어온다. 봇도 원격도. 다른 문으로 카드를 내면 한쪽만 고쳐지는 일이 반복된다.
+- 턴 경계는 `startTurn(side)`/`endTurn(side)` **둘뿐**. `turnCount`는 **리더**의 턴 시작에만 오른다(PvP 양 클라이언트가 같은 턴 번호를 갖는 조건).
+- 효과·연계에는 `viewFor(side)`/`helpersFor(side)`를 넘긴다. `state`를 직접 넘기면 상대 카드가 내 진영을 본다.
+- PvP 덱은 **좌석 순**(리더 먼저)으로 섞는다. `initBattle`의 RNG 사용 순서를 바꾸면 락스텝이 깨진다.
+- 본체에는 기절·빙결이 걸리지 않는다(양쪽). 가시는 턴제 버프다.
+- 보스 고유는 콤보·체력·대사·의도 UI뿐. 새 보스 전용 규칙을 엔진에 넣지 말고 봇의 **판단**(`boss-ai.js`)으로 넣는다.
