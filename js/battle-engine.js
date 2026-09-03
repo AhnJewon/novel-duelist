@@ -906,29 +906,26 @@ function triggerTraps(actorKey, event, card = null) {
     const skill = (trap.skills && trap.skills[0]) || trap.skill;
     if (!skill) return;
 
-    if (defenderKey === 'player') {
-      applyPlayerSkillEffects(skill, { card: trap, game: viewFor(sides.player), helpers: helpersFor(sides.player) },
-        { sourceLabel: '함정', allowAoe: true });
-    } else {
-      // 보스 함정 — 플레이어에게 역으로 적용
-      if (skill.damage > 0) applyDirectDamageToPlayer(skill.damage, skill.pierceShield);
-      if (skill.shield > 0) sides.boss.shield += skill.shield;
-      if (skill.heal > 0) sides.boss.hp = Math.min(sides.boss.maxHp, sides.boss.hp + skill.heal);
-      if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
-        applyStatus(playerStatus, skill.statusEffect.type, skill.statusEffect.duration || 2, skill.statusEffect.value || 0);
-      }
-    }
+    // 함정 주인의 진영 기준으로 **플레이어와 같은 파이프라인**을 탄다.
+    // 🐛 예전엔 보스 함정만 피해·방어막·치유·상태이상 4종을 인라인으로 흉내 냈고, 상태이상은
+    //    관문을 건너 플레이어 **본체**에 raw로 걸렸다 (기절이 본체에). 드로우 등 나머지는 死효과였다.
+    const ownerSide = sides[defenderKey];
+    applyPlayerSkillEffects(skill, { card: trap, game: viewFor(ownerSide), helpers: helpersFor(ownerSide) },
+      { sourceLabel: '함정', allowAoe: true });
   });
 }
 
+/**
+ * 플레이어가 손패의 카드를 낸다 — **사람 전용 껍데기**(대상 선택 UI·PvP 전송).
+ * 실제 시전 규칙은 playCardFor(side, …)가 양 진영 공용으로 갖는다.
+ */
 export function playCard(handIdx) {
   if (activeSideKey !== SIDE_PLAYER || state.isAnimating) return;
   const me = sides.player;
   const card = me.hand[handIdx];
   if (!card) return;
 
-  // 시전 조건 검사는 진영 공용 (마나·전장 슬롯·손패).
-  // 나중에 PvP를 붙이면 상대 진영에도 같은 함수를 쓴다.
+  // 시전 조건 검사는 진영 공용 (마나·전장 슬롯). 여기서 먼저 걸러야 대상 선택을 시작하지 않는다.
   const check = canPlayCard(me, card);
   if (!check.ok) {
     addBattleLog(`<span class="text-red-400">${escapeHtml(check.reason)}</span>`);
@@ -963,119 +960,193 @@ export function playCard(handIdx) {
     }
   }
   const picked = _pendingPicked;
+  const slot = Number.isInteger(_pendingSummonSlot) ? _pendingSummonSlot : null;
 
-  // 🌐 PvP: 내가 낸 카드를 상대에게 알린다.
-  //    락스텝이므로 "결과"가 아니라 "무슨 카드를 냈는지"를 보낸다.
-  //    이미지가 붙은 채로 보내면 데이터 채널이 막히므로 반드시 슬림화한다.
+  const played = playCardFor(me, card, { slot, picked });
+  if (!played) return;
+
+  // 🎯 소환 위치 무장은 **소환에만** 소모된다 (주문·함정·반려로는 풀리지 않는다 — DECISIONS #93)
+  if (cardType === 'unit' || cardType === 'structure') _pendingSummonSlot = null;
+
+  // 🌐 PvP: 내가 낸 카드를 상대에게 알린다. 락스텝이므로 "결과"가 아니라 "무슨 카드를 냈는지"를
+  //    보낸다. 이미지가 붙은 채로 보내면 데이터 채널이 막히므로 반드시 슬림화한다.
+  //    🐛 예전엔 시전 **전에** 보내서, 함정 구역이 꽉 차 세트가 거절돼도 상대에겐 낸 것으로 갔다.
   if (isPvpActive()) {
     sendPvpAction({
       kind: 'playCard',
       instanceId: card.instanceId || card.id,
       card: slimCardForWire(card),
-      // 배치 위치도 보내야 상대 화면의 전열이 내 화면과 같아진다
-      slot: Number.isInteger(_pendingSummonSlot) ? _pendingSummonSlot : null,
-      // 고른 효과 대상까지 보내야 상대 화면에서 같은 대상이 맞는다
-      picked: picked || null
+      slot,                      // 배치 위치도 보내야 상대 화면의 전열이 내 화면과 같아진다
+      picked: picked || null     // 고른 효과 대상까지 보내야 상대 화면에서 같은 대상이 맞는다
     });
   }
+}
 
-  // 🪤 함정: 뒷면으로 세트만 한다. 효과는 조건이 맞을 때 자동 발동한다.
-  if (cardType === 'trap') {
-    if (!setTrap('player', card)) return;
-    me.mana -= card.cost;
-    me.hand.splice(handIdx, 1);
-    renderBattleUI();
-    return;
+/**
+ * 카드 시전 — **양 진영 공용.** 사람·PvE 봇·PvP 재생이 전부 여기를 지난다.
+ *
+ * 순서: 관문(마나·전장) → 함정이면 세트만 → 지불(마나·손패·마지막 시전) → 상대 함정 반응
+ *       → 주문: 연계 → 효과(+더블캐스트)  /  소환·건축물: **카드 그대로** 전장에 → 연계 → 함성(+더블캐스트)
+ *
+ * 🐛 예전엔 세 벌이었다 — playCard(플레이어), playBossCard(PvE: 효과 13종만 흉내, 소환수 스탯을
+ *    공8·방4·체16 하한으로 재작성, 함성 없음, **함정을 즉발 주문으로**, 광역 본체 ×0.7, 만석이면
+ *    전 소환수 공격 +2 영구), playFoeCardPvp(PvP: 관문·마나 차감 없음). 같은 카드가 누가 내느냐에 따라
+ *    다른 카드였다 (DECISIONS #94).
+ *
+ * @param side         시전 진영
+ * @param card         카드 객체 (손패에 있으면 제거한다 — 없어도 된다: 원격 스냅샷)
+ * @param opts.slot    소환 위치 (null = 맨 뒤). 빈칸 없는 배열이라 length로 눌린다 (DECISIONS #93)
+ * @param opts.picked  고른 대상 키 배열 (없으면 효과별 기본값)
+ * @param opts.trusted 관문 불일치를 경고만 하고 진행 — 원격 상대용. 그쪽 클라이언트가 이미 검증했고,
+ *                     내 미러 마나로 거절하면 판이 어긋난다. 단 전장 만석은 어느 쪽이든 놓지 않는다.
+ * @returns {boolean} 시전됐는가
+ */
+export function playCardFor(side, card, { slot = null, picked = null, trusted = false } = {}) {
+  if (!card) return false;
+  const foe = sides[opponentOf(side.key)];
+  if (side.hp <= 0 || foe.hp <= 0) return false;
+  const mine = side.key === SIDE_PLAYER;
+  const cardType = card.cardType || 'unit';
+  const occupies = cardType === 'unit' || cardType === 'structure';
+
+  const check = canPlayCard(side, card);
+  if (!check.ok) {
+    if (!trusted || (occupies && side.minions.length >= side.maxMinions)) {
+      addBattleLog(`<span class="text-red-400">${mine ? '' : `${escapeHtml(side.name)}: `}${escapeHtml(check.reason)}</span>`);
+      return false;
+    }
+    console.warn(`[PvP] 상대 카드 관문 불일치 — 미러 상태가 어긋났을 수 있다: ${check.reason}`);
   }
 
-  // 🪤 내가 소환수/주문을 내면 보스가 세트한 함정이 반응한다
-  // (함정 세트 자체는 반응 대상이 아니다 — 위에서 이미 return)
-  triggerTraps('player', 'playCard', card);
+  // 🪤 함정: 뒷면으로 세트만 한다. 구역이 꽉 차면 아무것도 소모하지 않는다.
+  if (cardType === 'trap') {
+    if (!setTrap(side.key, card)) return false;
+    spendCard(side, card);
+    renderBattleUI();
+    return true;
+  }
 
-  // 1. 주문/마법 카드 (Spell): 필드를 차지하지 않고 즉발 발동 후 묘지로 소모
+  spendCard(side, card);
+  if (!mine) logFoeCast(side, card);
+
+  // 🪤 상대가 세트한 함정이 내 행동에 반응한다 (세트 자체는 반응 대상이 아니다 — 위에서 이미 return)
+  triggerTraps(side.key, 'playCard', card);
+  if (side.hp <= 0 || foe.hp <= 0) { renderBattleUI(); checkBattleStatus(); return true; }
+
+  // 1. 주문 — 전장을 차지하지 않고 즉발
   if (cardType === 'spell') {
-    me.mana -= card.cost;
-    me.hand.splice(handIdx, 1);
     audio.playMagic();
-
-    addBattleLog(`<span class="text-purple-400 font-bold">🔮 [주문 발동] ${card.name}!</span>`);
-    
-    // 🎴 정통 TCG식 테마 덱 상호 연계(Combo & Search) 발동
-    triggerArchetypeCombo(card, viewFor(sides.player), helpersFor(sides.player));
-
-    triggerSpellEffect(card, picked);
-
-    if (playerBuffs.doubleCast) {
-      playerBuffs.doubleCast = false;
-      addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] 주문이 2연속 발동합니다!</span>`);
-      triggerSpellEffect(card, picked);
-    }
-
+    if (mine) addBattleLog(`<span class="text-purple-400 font-bold">🔮 [주문 발동] ${escapeHtml(card.name)}!</span>`);
+    triggerArchetypeCombo(card, viewFor(side), helpersFor(side));
+    castSkill(side, card, picked, { sourceLabel: '주문', allowAoe: true });
     renderBattleUI();
     checkBattleStatus();
-    return;
+    return true;
   }
 
-  // 2. 소환수(Unit) or 건축물(Structure): 전장 슬롯 점유
-
-  me.mana -= card.cost;
-  me.hand.splice(handIdx, 1);
+  // 2. 소환수 / 건축물 — 전장 점유. **카드를 그대로** 엔티티로 만든다 (스탯 하한·재작성 없음).
   audio.playSummon();
-
   const entity = {
     ...card,
-    instanceId: card.instanceId || `${card.id}#field${state.playerMinions.length}`,
+    instanceId: card.instanceId || `${card.id}#${side.key}${side.minions.length}`,
     maxHp: card.hp || 30,
     currentHp: card.hp || 30,
     defense: card.defense || 0,
     // 🗑️ 도발은 제거됐다 — 전장에 있는 것만으로 이미 벽이다 (DECISIONS #84)
     taunt: false,
-    canAttack: false, // 소환 후유증
+    canAttack: false,                 // 소환 후유증
     // ⚠️ 이게 없으면 refreshMinions가 다음 턴에도 풀어주지 않는다 (영구 마비)
     summonedTurn: state.turnCount,
     frozen: false
   };
+  // 🎯 배치 위치. 맨 앞(0번)이 적의 공격을 먼저 받는다 — 위치가 곧 전술이다.
+  //    length로 누르는 것은 방어선이 아니라 **모델**이다: 빈칸 없는 배열에 length 너머는 없다 (DECISIONS #93)
+  const at = Number.isInteger(slot) ? Math.max(0, Math.min(side.minions.length, slot)) : side.minions.length;
+  side.minions.splice(at, 0, entity);
 
-  // 🎯 배치 위치. **맨 앞(0번)이 적의 공격을 먼저 받는다** — 위치가 곧 전술이다.
-  //    `_pendingSummonSlot`은 그립/다음 자리를 눌러 둔 경우에만 채워지고, **소환에만 소모된다.**
-  //    (주문·함정·시전 반려로는 풀리지 않는다 — 무장은 화면에 늘 보이므로 숨은 상태가
-  //     아니고, 반려됐다고 풀어 버리면 "지정했는데 뒤로 갔다"는 바로 그 놀람을 만든다.
-  //     그냥 카드를 클릭하면 예전처럼 맨 뒤에 붙는다 — 매번 묻지 않는다)
-  //    ⚠️ length로 누르는 것은 방어선이 아니라 **모델**이다: 전장은 빈칸 없는 배열이라
-  //       length 너머의 자리는 존재하지 않는다. 화면도 같은 값을 쓴다(renderBattleUI의
-  //       armedAt) → 배지가 뜬 자리 = 실제로 들어가는 자리. DECISIONS #93
-  const at = Number.isInteger(_pendingSummonSlot)
-    ? Math.max(0, Math.min(state.playerMinions.length, _pendingSummonSlot))
-    : state.playerMinions.length;
-  _pendingSummonSlot = null;
-  me.minions.splice(at, 0, entity);
-
-  if (cardType === 'structure') {
-    addBattleLog(`<span class="text-amber-400 font-bold">🏛️ [건축물 건립] [${card.name}] 을(를) 전장에 구축했습니다! (내구도: ${entity.maxHp})</span>`);
+  if (mine) {
+    addBattleLog(cardType === 'structure'
+      ? `<span class="text-amber-400 font-bold">🏛️ [건축물 건립] [${escapeHtml(card.name)}] 을(를) 전장에 구축했습니다! (내구도: ${entity.maxHp})</span>`
+      : `<span class="text-cyan-400 font-bold">✨ [소환수 출진] [${escapeHtml(card.name)}] 을(를) 전장에 소환했습니다!</span>`);
   } else {
-    addBattleLog(`<span class="text-cyan-400 font-bold">✨ [소환수 출진] [${card.name}] 을(를) 전장에 소환했습니다!</span>`);
+    addBattleLog(`<span class="text-cyan-300 font-bold">${cardType === 'structure' ? '🏛️' : '👾'} ${escapeHtml(side.name)}이(가) [${escapeHtml(card.name)}]을(를) 전장에 ${cardType === 'structure' ? '구축' : '배치'}했습니다. (공 ${entity.attack || 0} / 방 ${entity.defense} / 체 ${entity.maxHp})</span>`);
   }
 
-  // 🎴 정통 TCG식 테마 덱 상호 연계(Combo & Search) 발동
-  triggerArchetypeCombo(card, viewFor(sides.player), helpersFor(sides.player));
-
-  // 전투의 함성 (Battlecry) 발동
-  triggerBattlecry(card, picked);
-  
-  if (playerBuffs.doubleCast) {
-    playerBuffs.doubleCast = false;
-    addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] 전장의 함성이 2배로 발동합니다!</span>`);
-    triggerBattlecry(card, picked);
-  }
+  triggerArchetypeCombo(card, viewFor(side), helpersFor(side));
+  castSkill(side, card, picked, { sourceLabel: '전투의 함성', allowAoe: false });
 
   renderBattleUI();
   checkBattleStatus();
+  return true;
 }
 
-// 카드 스킬 효과 적용.
-// 이전에는 triggerSpellEffect / triggerBattlecry 두 함수가 약 95% 동일한 내용을
-// 각각 50줄씩 들고 있었다(차이는 광역 처리 여부와 로그 문구뿐).
-// 실제 구현은 skill-effects.js가 갖고, 여기서는 진입점만 유지한다.
+/** 시전 대가 — 마나 차감, 손패에서 제거(같은 객체 또는 같은 instanceId), 마지막 시전 기록 */
+function spendCard(side, card) {
+  side.mana = Math.max(0, side.mana - (card.cost || 0));
+  const i = side.hand.findIndex(c => c === card || (card.instanceId && c.instanceId === card.instanceId));
+  if (i >= 0) side.hand.splice(i, 1);
+  side.lastCastCard = card;
+}
+
+/** 상대가 카드를 냈다는 배너 (내 카드는 화면이 보여주므로 배너가 없다) */
+function logFoeCast(side, card) {
+  const elCfg = ELEMENT_CONFIG[card.element] || ELEMENT_CONFIG.dark;
+  const cardType = card.cardType || 'unit';
+  const who = isPvpActive()
+    ? `🌐 ${escapeHtml(getFoeName())}`
+    : (card.isUserCard ? '👤 플레이어 제작 카드 기용' : `👹 ${escapeHtml(side.name)}`);
+  const typeLabel = cardType === 'unit' ? '⚔️ 소환수' : cardType === 'structure' ? '🏛️ 건축물' : cardType === 'trap' ? '🪤 함정' : '🔮 주문';
+  addBattleLog(`
+    <div class="p-2 rounded-xl bg-gradient-to-r from-indigo-950/90 to-slate-900/90 border border-cyan-500/60 shadow-lg my-1.5 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-base">${elCfg.icon}</span>
+        <div>
+          <div class="text-[10px] text-cyan-300 font-bold">${who}</div>
+          <div class="text-xs font-black text-white">${escapeHtml(card.name)}</div>
+        </div>
+      </div>
+      <span class="text-[10px] px-2 py-0.5 rounded bg-black/60 text-slate-300 font-bold border border-slate-700">${typeLabel}</span>
+    </div>
+  `);
+}
+
+/**
+ * 카드의 스킬을 그 진영 기준으로 적용한다. 더블캐스트 예약이 있으면 두 번.
+ * 주문(allowAoe)과 전투의 함성(광역 금지)이 이 하나를 공유한다.
+ */
+function castSkill(side, card, picked, { sourceLabel, allowAoe }) {
+  const skill = (card.skills && card.skills[0]) || card.skill || null;
+  if (!skill) return;
+  const apply = () => applyPlayerSkillEffects(skill,
+    { card, game: viewFor(side), helpers: helpersFor(side) }, { sourceLabel, allowAoe, picked });
+  apply();
+  if (side.buffs.doubleCast) {
+    side.buffs.doubleCast = false;
+    addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] ${escapeHtml(sideLabel(side))}의 ${sourceLabel}이(가) 2연속 발동합니다!</span>`);
+    apply();
+  }
+}
+
+/**
+ * 🤖 봇의 대상 선택 정책 — 사람이 대상을 고르는 자리에서 봇은 이렇게 고른다.
+ *   상대(=플레이어) 전장이 있으면 **최전방부터**, 없으면 본체. 아군 효과는 첫 후보.
+ *   "보스 주문은 최전방을 친다"는 엔진 규칙이 아니라 이 정책이다 — 규칙은 플레이어와 같다.
+ *   (7단계에서 boss-ai.js로 옮긴다)
+ */
+function botPickTargets(card) {
+  const skill = (card.skills && card.skills[0]) || card.skill || null;
+  if (!skill) return null;
+  const spec = readTargetSpec(skill);
+  if (spec.scope === 'all' || spec.scope === 'random') return null;   // 효과가 스스로 정한다
+  const keys = collectTargetKeys(viewFor(sides.boss), spec);          // 거울 기준: foe:N = 내 소환수, face = 내 본체
+  if (keys.length === 0) return null;
+  const need = spec.scope === 'multi' ? Math.max(1, spec.count || 1) : 1;
+  const foes = keys.filter(k => k.startsWith('foe:'));
+  const ordered = spec.side === 'foe' ? [...foes, ...keys.filter(k => k === 'face')] : keys;
+  return ordered.slice(0, need);
+}
+
+/** (호환) 플레이어 주문 효과 1회 적용 — castSkill이 더블캐스트까지 처리하므로 새 코드는 그쪽을 쓴다 */
 export function triggerSpellEffect(card, picked = null) {
   const skill = card.skills && card.skills[0];
   if (!skill) return;
@@ -1083,6 +1154,7 @@ export function triggerSpellEffect(card, picked = null) {
     { sourceLabel: '주문', allowAoe: true, picked });
 }
 
+/** (호환) 플레이어 전투의 함성 1회 적용 */
 export function triggerBattlecry(card, picked = null) {
   const skill = card.skills && card.skills[0];
   if (!skill) return;
@@ -1613,10 +1685,12 @@ export async function executeBossTurn({ handOff = true } = {}) {
   for (let playCount = 0; playCount < cardsToPlayLimit; playCount++) {
     if (!state.bossHand || state.bossHand.length === 0 || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) break;
 
-    // 💎 낼 수 있는 카드만 후보가 된다 (마나 + 전장 슬롯 — 플레이어와 같은 검사)
+    // 💎 낼 수 있는 카드만 후보가 된다 (마나 + 전장 슬롯 — 플레이어와 같은 검사).
+    //    🐌 초반 램프(BOSS_RAMP)는 봇의 **페이싱 정책**이다 — 소환수는 이번 턴 상한 아래일 때만 후보.
     const affordable = state.bossHand
       .map((c, i) => ({ c, i }))
-      .filter(x => canPlayCard(bossSide, x.c).ok);
+      .filter(x => canPlayCard(bossSide, x.c).ok
+        && !((x.c.cardType === 'unit' || x.c.cardType === 'structure') && state.bossMinions.length >= bossMinionCapThisTurn()));
     if (affordable.length === 0) {
       addBattleLog(`<span class="text-slate-500">💤 보스가 낼 수 있는 카드가 없습니다. (마나 ${bossSide.mana})</span>`);
       break;
@@ -1637,10 +1711,12 @@ export async function executeBossTurn({ handOff = true } = {}) {
     // 우선순위에 맞는 게 없으면 **가장 비싼 것**부터 (마나를 놀리지 않는다)
     if (!chosen) chosen = affordable.slice().sort((a, b) => (b.c.cost || 0) - (a.c.cost || 0))[0];
 
-    const cardToPlay = state.bossHand.splice(chosen.i, 1)[0];
+    const cardToPlay = chosen.c;
     if (cardToPlay) {
-      bossSide.mana -= (cardToPlay.cost || 0);
-      await playBossCard(cardToPlay);
+      // 🎴 시전은 플레이어와 **같은 함수** — 관문·지불·연계·함성·함정 반응이 전부 같다.
+      //    대상만 봇 정책(최전방 우선)으로 고른다. 🐛 예전엔 여기서 손패를 미리 빼고 마나를 깎은 뒤
+      //    보스 전용 해석기를 태웠다.
+      if (!playCardFor(bossSide, cardToPlay, { picked: botPickTargets(cardToPlay) })) break;
       renderBattleUI();
       await new Promise(r => setTimeout(r, 400));
       // (드로우는 턴 시작에 1장 — 플레이어와 같다. 🐛 예전엔 낸 카드마다 1장씩 보충해 손패가 마르지 않았다)
@@ -1702,189 +1778,15 @@ export async function executeBossTurn({ handOff = true } = {}) {
   }
 }
 
-// 🎴 보스 전술 카드 시전 처리기 (소환수 소환 및 주문 발동)
-export async function playBossCard(card) {
-  if (!card || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) return;
-  state.bossLastCastCard = card;
-  const isUser = card.isUserCard;
-  const elCfg = ELEMENT_CONFIG[card.element] || ELEMENT_CONFIG.dark;
-
-  addBattleLog(`
-    <div class="p-2 rounded-xl bg-gradient-to-r from-red-950/90 to-purple-950/90 border border-red-500/70 shadow-lg my-1.5 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-base">${elCfg.icon}</span>
-        <div>
-          <div class="text-[10px] text-amber-300 font-bold">${isUser ? '👤 플레이어 제작 카드 기용' : '👹 보스 고유 전술 카드'}</div>
-          <div class="text-xs font-black text-white">${card.name}</div>
-        </div>
-      </div>
-      <span class="text-[10px] px-2 py-0.5 rounded bg-black/60 text-slate-300 font-bold border border-slate-700">${card.cardType === 'unit' ? '⚔️ 소환수' : (card.cardType === 'structure' ? '🏛️ 성물' : '🔮 마법')}</span>
-    </div>
-  `);
-
-  // 🎴 보스 카드군(Archetype) TCG 콤보 발동
-  // 🪤 보스가 카드를 내면 플레이어가 세트한 함정이 반응한다
-  triggerTraps('boss', 'playCard', card);
-
-  // 🎴 카드군 연계 — 플레이어와 **같은 구현**을 거울 뷰·상대 헬퍼로 돌린다 (DECISIONS #94)
-  triggerArchetypeCombo(card, viewFor(sides.boss), helpersFor(sides.boss));
-
-  if (card.cardType === 'unit' || card.cardType === 'structure') {
-    audio.playSummon();
-    if (state.bossMinions.length < bossMinionCapThisTurn()) {
-      // 🐛 `attack: Math.max(8, card.attack || 12)`이었다. 건축물은 공격력이 0인데
-      //    바닥값 8이 그걸 덮어써서, 플레이어가 만든 **0공격 요새가 보스 손에서는
-      //    12공격 소환수**가 됐다 (실전에서 아이기스 철옹성이 15공으로 때렸다).
-      //    건축물은 공격하지 않는다 — 진영이 바뀌어도 마찬가지다.
-      const isStructure = card.cardType === 'structure';
-      const minion = {
-        name: card.name,
-        icon: isStructure ? '🏛️' : (elCfg.icon || '⚔️'),
-        cardType: card.cardType || 'unit',
-        attack: isStructure ? 0 : Math.max(8, card.attack || 12),
-        defense: card.defense || 4,
-        maxHp: Math.max(16, card.hp || 20),
-        currentHp: Math.max(16, card.hp || 20),
-
-        desc: card.skills && card.skills[0] ? card.skills[0].name : '소환수'
-      };
-      minion.canAttack = false;                  // 소환 후유증 — 플레이어 소환수와 같은 규칙
-      minion.summonedTurn = state.turnCount;
-      state.bossMinions.push(minion);
-      addBattleLog(`<span class="text-purple-300 font-bold">👾 [보스 전장 소환] [${minion.name}] (공격력 ${minion.attack} / 체력 ${minion.maxHp}) 이(가) 전장에 배치되었습니다!</span>`);
-    } else {
-      state.bossMinions.forEach(bm => bm.attack += 2);
-      addBattleLog(`<span class="text-red-400 font-bold">🔥 보스 부하들이 [${card.name}]의 기운으로 공격력 +2 강화되었습니다!</span>`);
-    }
-  } else {
-    // 주문 발동
-    audio.playMagic();
-    const skill = card.skills && card.skills[0] ? card.skills[0] : { damage: 16, description: '16 마법 피해' };
-
-    resolveBossSpell(card, skill);
-
-    // ⚡ 과충전 — 보스도 플레이어와 같은 예약 버프를 쓴다.
-    //    🐛 예전에는 보스의 doubleCast 연계가 "8 피해"라는 다른 효과였고
-    //       bossBuffs.doubleCast는 PvP 경로에서만 읽혀 PvE에서는 죽은 값이었다.
-    if (bossBuffs.doubleCast) {
-      bossBuffs.doubleCast = false;
-      addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] 보스의 주문이 2연속 발동합니다!</span>`);
-      resolveBossSpell(card, skill);
-    }
-  }
-}
-
 /**
- * 보스 주문 한 번의 해결. 과충전이면 두 번 불린다.
- * (전에는 playBossCard 안에 인라인이라 두 번 발동시킬 방법이 없었다)
+ * 상대 카드를 **관문 없이** 시전한다 — playCardFor(sides.boss, …, {trusted:true})의 옛 이름.
+ * 대상은 봇 정책(최전방 우선)으로 고른다.
+ * ⚠️ 봇의 실제 경로는 executeBossTurn이 playCardFor를 관문 **있이** 부른다.
+ *    이 이름은 하네스·디버그용으로만 남는다. 🐛 예전엔 여기에 보스 전용 시전기(스탯 재작성·
+ *    효과 13종 흉내·함정 즉발·광역 ×0.7·만석 +2)가 통째로 있었다 (DECISIONS #94).
  */
-function resolveBossSpell(card, skill) {
-  if (skill.damage && skill.damage > 0) {
-    // 🐛 여기는 `skill.damage`만 읽고 **연타·치명타·처형·흡혈을 전부 무시**했다.
-    //    보스 덱에는 플레이어가 만든 카드가 섞이는데(buildBossTacticalDeck),
-    //    "3연타 총 54 피해"라고 적힌 카드가 보스 손에서는 18만 냈다.
-    //    같은 카드가 진영에 따라 3배 약해지면 카드 텍스트가 거짓이 된다.
-    //    순서는 applyPlayerSkillEffects와 같게 유지한다 — 안 그러면 또 갈라진다.
-    let dmg = skill.damage;
-    if (skill.multiHit > 1) dmg *= skill.multiHit;
-
-    if (skill.critChance > 0 && battleRng().chance(skill.critChance)) {
-      const mult = skill.critMultiplier || 1.8;
-      dmg = Math.floor(dmg * mult);
-      addBattleLog(`<span class="text-amber-300 font-bold">⚡ 보스의 치명타! 피해가 ${mult}배로 증폭됩니다. (${dmg})</span>`);
-    }
-    if (skill.executeThreshold > 0 && state.playerMaxHp > 0 &&
-        state.playerHp <= state.playerMaxHp * skill.executeThreshold) {
-      dmg = Math.floor(dmg * 2);
-      addBattleLog(`<span class="text-red-400 font-black">💀 처형! 빈사 상태를 노려 피해가 2배가 됩니다. (${dmg})</span>`);
-    }
-
-    if (skill.isAoeSpell) {
-      // 🐛 예전에는 `m.currentHp -= dmg`로 직접 깎아 **수비력·취약·감전을 전부
-      //    무시**했다. 같은 주문이라도 단일 타격(strikeFrontLine → damageEntity)은
-      //    수비력을 적용하는데 광역만 안 했다 — 같은 카드 안에서 규칙이 둘이었다.
-      //    실전에서 22체력/8수비 건축물이 20 광역 한 방에 죽었고(정상이면 12),
-      //    그래서 전장이 비어 보스 소환수가 본체를 직격했다. 벽이 버그로 무너졌다.
-      //    플레이어의 광역은 이미 damageEntity를 지난다 — 비대칭이기도 했다.
-      //    → CLAUDE.md 금지사항 29
-      state.playerMinions.forEach(m => {
-        const hit = damageEntity(m, dmg, { pierce: !!skill.pierceShield });
-        addBattleLog(`<span class="text-yellow-400">💥 보스 광역 주문: [${escapeHtml(m.name)}] -${hit.dealt} HP${describeDamageExtras(hit)}</span>`);
-      });
-      state.playerMinions = removeDead(state.playerMinions);
-      applyDirectDamageToPlayer(Math.floor(dmg * 0.7), skill.pierceShield);
-    } else {
-      const res = strikeFrontLine(state.playerMinions, dmg, {
-        addBattleLog,
-        pierceShield: skill.pierceShield,
-        absorbLabel: '이(가) 보스 주문을 대신 피격!',
-        onDirectHit: (d, pierce) => applyDirectDamageToPlayer(d, pierce)
-      });
-      state.playerMinions = res.minions;
-    }
-
-    // 🩸 흡혈 — 플레이어 경로에는 있는데 보스 경로에만 없었다
-    if (skill.lifestealPercent > 0) {
-      const healed = Math.floor(dmg * skill.lifestealPercent);
-      if (healed > 0) {
-        state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + healed);
-        addBattleLog(`<span class="text-rose-300 font-bold">🩸 보스가 흡혈로 체력 +${healed} 회복!</span>`);
-      }
-    }
-  }
-
-  if (skill.shield && skill.shield > 0) {
-    state.currentBoss.shield = (state.currentBoss.shield || 0) + skill.shield;
-    addBattleLog(`<span class="text-blue-400">🛡️ 보스가 [${card.name}] 으로 방어막 +${skill.shield} 전개!</span>`);
-  }
-  if (skill.heal && skill.heal > 0) {
-    state.currentBoss.currentHp = Math.min(state.currentBoss.maxHp, state.currentBoss.currentHp + skill.heal);
-    addBattleLog(`<span class="text-emerald-400">💖 보스가 [${card.name}] 으로 체력 +${skill.heal} 회복!</span>`);
-  }
-  if (skill.discardCard && state.playerHand.length > 0) {
-    const discarded = discardRandom(sides.player, battleRng());
-    addBattleLog(`<span class="text-purple-400 font-bold">🃏 [패 파괴] 보스의 [${card.name}] 으로 플레이어 손패 [${discarded.name}] 이(가) 파기되었습니다!</span>`);
-  }
-
-  // 🃏 드로우 — 없어서 **보스가 드로우 카드를 내면 아무 일도 일어나지 않았다.**
-  //    실전에서 보스가 [욕망의 비전 연성](드로우2 + 마나1)을 냈는데 로그가 비었다.
-  //    死카드는 함정에서 한 번 겪은 문제다 → DECISIONS #77
-  if (skill.drawCards > 0 && Array.isArray(state.bossDeck) && Array.isArray(state.bossHand)) {
-    let drawn = 0;
-    for (let i = 0; i < skill.drawCards && state.bossHand.length < 5 && state.bossDeck.length > 0; i++) {
-      state.bossHand.push(state.bossDeck.shift());
-      drawn++;
-    }
-    if (drawn > 0) addBattleLog(`<span class="text-purple-300">🃏 보스가 [${escapeHtml(card.name)}]으로 카드 ${drawn}장을 뽑았습니다.</span>`);
-  }
-  // ⚠️ manaGain은 의도적으로 무시한다 — 보스는 마나를 쓰지 않는다(foeVirtualMana 99).
-
-  // ⚔️ 약화 · 🚫 무효화 — 플레이어 소환수를 대상으로 한다.
-  //    (플레이어 경로는 지정이 없으면 상대 전장 첫 대상을 쓴다. 거울로 맞춘다)
-  const front = (state.playerMinions || []).find(m => m && m.currentHp > 0);
-  if (skill.attackDown > 0 && front) {
-    const before = front.attack || 0;
-    front.attack = Math.max(0, before - skill.attackDown);
-    addBattleLog(`<span class="text-orange-300">⚔️ [${escapeHtml(front.name)}] 공격력 ${before} → ${front.attack}</span>`);
-  }
-  if (skill.silence && front) {
-    front.skills = [];
-    front.silenced = true;
-    front.taunt = false;
-    addBattleLog(`<span class="text-purple-300 font-bold">🚫 [${escapeHtml(front.name)}]의 효과가 무효화되었습니다!</span>`);
-  }
-  if (skill.statusEffect && skill.statusEffect.type && skill.statusEffect.type !== 'none') {
-    const st = skill.statusEffect;
-    // 💫 기절·빙결·화상·맹독은 **소환수 전용**이다. 관문이 최전방 소환수로
-    //    돌리거나, 전장이 비었으면 불발시킨다.
-    //    (예전에는 빙결만 소환수로 가고 나머지는 전부 플레이어 본체에 꽂혔다)
-    const applied = applyStatusRespectingScope(
-      playerStatus, state.playerMinions, '내', st.type, st.duration || 2, st.value || 0, !!skill.bodyStatus);
-    if (applied && !isEntityOnly(st.type)) {
-      const spec = STATUS_EFFECTS[st.type];
-      addBattleLog(`<span class="${spec.color}">${spec.icon} [${escapeHtml(card.name)}] 효과로 플레이어에게 ${spec.name} 부여! (${applied.turns}턴 / 턴당 ${applied.value})</span>`);
-    }
-  }
+export async function playBossCard(card) {
+  return playCardFor(sides.boss, card, { picked: botPickTargets(card), trusted: true });
 }
 
 async function executeSingleBossStep(step) {
@@ -2305,106 +2207,10 @@ function makeMirroredGame() {
 }
 
 /**
- * 상대(원격 플레이어)가 낸 카드를 내 화면에서 해석한다.
- * playCard()와 **같은 규칙**을 쓰되 진영만 뒤집는다.
+ * 상대(원격 플레이어)가 낸 카드를 내 화면에서 해석한다 — playCardFor(sides.boss, …, {trusted:true})의 옛 이름.
+ * 원격은 그쪽 클라이언트가 관문을 통과시킨 카드이므로 여기서는 경고만 하고 그대로 재생한다.
+ * 🐛 예전엔 여기 별도 시전기가 있었다 — 관문·마나 차감이 없고 슬롯 상한도 따로 하드코딩됐다 (DECISIONS #94).
  */
 export async function playFoeCardPvp(card, slot = null, picked = null) {
-  // 🐛 `picked`가 **매개변수에 없었다.** 아래 네 곳이 선언되지 않은 이름을
-  //    참조해 ReferenceError를 냈고, 그래서 PvP에서 상대의 주문과
-  //    전투의 함성이 하나도 해결되지 않았다 (전장 배치만 됐다).
-  if (!card || state.playerHp <= 0 || state.currentBoss.currentHp <= 0) return;
-
-  const cardType = card.cardType || 'unit';
-  const elCfg = ELEMENT_CONFIG[card.element] || ELEMENT_CONFIG.dark;
-  state.bossLastCastCard = card;
-
-  addBattleLog(`
-    <div class="p-2 rounded-xl bg-gradient-to-r from-indigo-950/90 to-slate-900/90 border border-cyan-500/60 shadow-lg my-1.5 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-base">${elCfg.icon}</span>
-        <div>
-          <div class="text-[10px] text-cyan-300 font-bold">🌐 ${escapeHtml(getFoeName())}</div>
-          <div class="text-xs font-black text-white">${escapeHtml(card.name)}</div>
-        </div>
-      </div>
-      <span class="text-[10px] px-2 py-0.5 rounded bg-black/60 text-slate-300 font-bold border border-slate-700">${
-        cardType === 'unit' ? '⚔️ 소환수' : cardType === 'structure' ? '🏛️ 건축물' : cardType === 'trap' ? '🪤 함정' : '🔮 주문'}</span>
-    </div>
-  `);
-
-  // 거울 뷰·헬퍼는 플레이어와 **같은 팩토리**에서 나온다 — 진영만 다르다
-  const mirroredGame = viewFor(sides.boss);
-  const mirroredHelpers = helpersFor(sides.boss);
-
-  // 🪤 함정: 뒷면으로 세트만 한다
-  if (cardType === 'trap') {
-    setTrap('boss', card);
-    renderBattleUI();
-    return;
-  }
-
-  // 내가 세트한 함정이 상대 행동에 반응한다
-  triggerTraps('boss', 'playCard', card);
-
-  // 주문 — 필드를 차지하지 않고 즉발
-  if (cardType === 'spell') {
-    audio.playMagic();
-    triggerArchetypeCombo(card, mirroredGame, mirroredHelpers);
-    const skill = card.skills && card.skills[0];
-    if (skill) {
-      applyPlayerSkillEffects(skill, { card, game: mirroredGame, helpers: mirroredHelpers },
-        { sourceLabel: '주문', allowAoe: true, picked });
-      if (bossBuffs.doubleCast) {
-        bossBuffs.doubleCast = false;
-        addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] 상대의 주문이 2연속 발동합니다!</span>`);
-        applyPlayerSkillEffects(skill, { card, game: mirroredGame, helpers: mirroredHelpers },
-          { sourceLabel: '주문', allowAoe: true, picked });
-      }
-    }
-    renderBattleUI();
-    checkBattleStatus();
-    return;
-  }
-
-  // 소환수 / 건축물 — 전장 점유
-  audio.playSummon();
-  if (state.bossMinions.length < sides.boss.maxMinions) {
-    // 상대가 고른 배치 위치를 그대로 재현한다 (안 그러면 전열이 어긋난다)
-    // length로 누르는 이유는 playCard와 같다 — 빈칸 없는 배열에 length 너머는 없다 (DECISIONS #93)
-    const at = Number.isInteger(slot)
-      ? Math.max(0, Math.min(state.bossMinions.length, slot))
-      : state.bossMinions.length;
-    state.bossMinions.splice(at, 0, {
-      ...card,
-      instanceId: card.instanceId || `${card.id}#foe${state.bossMinions.length}`,
-      maxHp: card.hp || 30,
-      currentHp: card.hp || 30,
-      defense: card.defense || 0,
-
-      canAttack: false,
-      summonedTurn: state.turnCount,
-      frozen: false
-    });
-    addBattleLog(`<span class="text-cyan-300 font-bold">${cardType === 'structure' ? '🏛️ 상대가 건축물을 구축' : '✨ 상대가 소환수를 출진'}했습니다: [${escapeHtml(card.name)}]</span>`);
-  } else {
-    addBattleLog(`<span class="text-slate-400">상대 전장이 가득 차 [${escapeHtml(card.name)}]을(를) 배치하지 못했습니다.</span>`);
-  }
-
-  triggerArchetypeCombo(card, mirroredGame, mirroredHelpers);
-
-  // 전투의 함성 — PvE 보스 경로에는 없지만 PvP에서는 반드시 발동해야 대칭이다
-  const skill = card.skills && card.skills[0];
-  if (skill) {
-    applyPlayerSkillEffects(skill, { card, game: mirroredGame, helpers: mirroredHelpers },
-      { sourceLabel: '전투의 함성', allowAoe: false, picked });
-    if (bossBuffs.doubleCast) {
-      bossBuffs.doubleCast = false;
-      addBattleLog(`<span class="text-indigo-300 font-bold">✨ [더블캐스트] 상대의 전투의 함성이 2배로 발동합니다!</span>`);
-      applyPlayerSkillEffects(skill, { card, game: mirroredGame, helpers: mirroredHelpers },
-        { sourceLabel: '전투의 함성', allowAoe: false, picked });
-    }
-  }
-
-  renderBattleUI();
-  checkBattleStatus();
+  return playCardFor(sides.boss, card, { slot, picked, trusted: true });
 }

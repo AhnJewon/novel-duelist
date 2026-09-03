@@ -361,6 +361,14 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     drawCards(skill.drawCards);
   }
 
+  // 5b. 🃏 패 파기 — 상대 손패 무작위 1장. helpers.discardFromBoss = "내 상대의 손패" (반드시 battleRng).
+  //     🐛 보스 파워 카드(data.js '영혼 강탈 & 패 파괴')가 쓰던 효과인데 보스 전용 해석기에만 있었다 (DECISIONS #94)
+  if (skill.discardCard && typeof helpers.discardFromBoss === 'function') {
+    const gone = helpers.discardFromBoss();
+    if (gone) addBattleLog(`<span class="text-purple-400 font-bold">🃏 [${cardName}] ${escapeHtml(helpers.foeLabel || '상대')}의 손패 [${escapeHtml(gone.name)}] 파기!</span>`);
+    else addBattleLog(`<span class="text-slate-400">🃏 [${cardName}] 파기할 손패가 없습니다.</span>`);
+  }
+
   // 6. 더블캐스트 예약
   if (skill.doubleCastNext) {
     setPlayerBuff('doubleCast', true);

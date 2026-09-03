@@ -167,6 +167,10 @@ export const EFFECT_COSTS = {
   destroy:           { cost: 5, minRarity: 'epic',      label: '파괴' },
   // 🔍 덱 서치 — 드로우보다 강하다(무엇이 올지 고를 수 있다)
   searchDeck:        { cost: 3, minRarity: 'rare',      label: '덱 서치' },
+  // 🃏 패 파기 — 상대 손패 무작위 1장. 보스 파워 카드가 쓰던 효과인데 보스 전용 해석기에만
+  //    있었다. 카드 시전이 양 진영 한 경로가 되면서(DECISIONS #94) 정식 효과로 승격 —
+  //    프롬프트 스키마에는 넣지 않는다 (LLM이 만들지 않고, 기존 데이터만 살린다).
+  discardCard:       { cost: 2, minRarity: 'rare',      label: '패 파기' },
   // 👾 토큰 소환 — 전장을 채우고, 지금은 전장 자체가 벽이라 값이 크다
   summonToken:       { cost: 3, minRarity: 'rare',      label: '토큰 소환' },
 
@@ -1082,6 +1086,7 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   if (skill.maxHpGain > 0) parts.push(`본체 최대 체력 +${skill.maxHpGain}`);
   if (skill.manaGain > 0) parts.push(`마나 +${skill.manaGain}`);
   if (skill.drawCards > 0) parts.push(`카드 ${skill.drawCards}장 드로우`);
+  if (skill.discardCard) parts.push('상대 손패 1장 파기');
   // 🆕 파괴·서치·토큰 소환 (DECISIONS #85)
   if (skill.destroy > 0) parts.push(`${tgt} 파괴`);
   if (skill.searchDeck > 0) parts.push(`덱에서 카드 ${skill.searchDeck}장 서치`);
@@ -1341,7 +1346,9 @@ const EFFECT_DESC_PATTERNS = {
   //    오면 제외한다. (실측: "적 실드를 제거한다"가 destroy로 오탐났다)
   destroy:           /(?:(?!방어막|실드)[^.·]){0,10}(파괴한다|파괴하고|파괴하며|파괴합니다|제거한다|제거하고|제거하며|제거합니다)/,
   searchDeck:        /서치|덱에서.{0,12}(찾|가져)/,
-  summonToken:       /소환한다|소환하고|소환하며|소환합니다|토큰/
+  summonToken:       /소환한다|소환하고|소환하며|소환합니다|토큰/,
+  // 🃏 "파괴"는 destroy(소환수)와 겹친다 — 손패/패 낱말이 앞에 올 때만 패 파기다
+  discardCard:       /(손패|패)[^.·]{0,6}(파기|파괴|버리)/
 };
 
 function descMentionsEffect(desc = '', key) {

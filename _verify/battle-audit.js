@@ -1581,6 +1581,68 @@ async function suiteAttackSymmetry() {
 }
 
 // ============================================================
+// 9e. 시전 대칭 — 카드 시전이 양 진영 한 함수 (DECISIONS #94)
+// ------------------------------------------------------------
+// 🐛 보스 전용 시전기는 소환수 스탯을 공8·방4·체16 하한으로 재작성했고(themeId·skills도 버림),
+//    함성이 없었고, 함정을 즉발 주문으로 처리했고, 만석이면 전 소환수 공격 +2 영구 버프를 줬다.
+//    PvP 경로는 관문이 없었다. 보스 함정은 4종 효과만 흉내 내고 상태이상을 본체에 raw로 걸었다.
+// ============================================================
+async function suiteCastSymmetry() {
+  const S = '시전 대칭';
+
+  // 상대 소환수는 카드 스탯·정체를 그대로 가진다
+  resetBoard({ turnCount: 3 });
+  await BE.playBossCard(card({ name: '약졸', cardType: 'unit', attack: 3, hp: 10, defense: 0, themeId: 'th-x', skills: [{}] }));
+  const weak = state.bossMinions[0];
+  check(S, '상대 소환수는 카드 스탯 그대로 (공3·체10, 예전 하한 8·16) + themeId·skills 유지',
+    !!weak && weak.attack === 3 && weak.maxHp === 10 && weak.themeId === 'th-x' && Array.isArray(weak.skills),
+    weak ? JSON.stringify({ a: weak.attack, hp: weak.maxHp, t: weak.themeId, s: !!weak.skills }) : '없음');
+
+  // 상대 소환수의 전투의 함성이 발동한다
+  resetBoard({ boss: { maxHp: 300, currentHp: 300, shield: 0 } });
+  await BE.playBossCard(card({ name: '수호병', cardType: 'unit', skills: [{ shield: 7 }] }));
+  check(S, '상대 소환수 함성 발동 (방어막 +7) (예전: 함성 없음)', state.currentBoss.shield === 7, `${state.currentBoss.shield}`);
+
+  // 상대 함정은 뒷면 세트 — 즉발이 아니다
+  resetBoard({ playerHp: 50 });
+  await BE.playBossCard(card({ name: '상대함정', cardType: 'trap', trapTrigger: 'foeAttacks', skills: [{ damage: 9 }] }));
+  check(S, '상대 함정은 뒷면 세트 (예전: 즉발 주문으로 터짐)',
+    BE.getTrapZone('boss').length === 1 && state.playerHp === 50,
+    `zone=${BE.getTrapZone('boss').length} php=${state.playerHp}`);
+
+  // 전장 만석이면 거절 — 공격 +2 영구 버프 없음
+  resetBoard({ bossMinions: [minion({ attack: 5 }), minion({ attack: 5 }), minion({ attack: 5 }), minion({ attack: 5 })] });
+  await BE.playBossCard(card({ name: '다섯째', cardType: 'unit', skills: [{}] }));
+  check(S, '상대 전장 만석이면 거절, 공격 +2 없음 (예전: 전 소환수 +2 영구)',
+    state.bossMinions.length === 4 && state.bossMinions.every(m => m.attack === 5),
+    `${state.bossMinions.map(m => m.attack)}`);
+
+  // 마나 부족 상대 카드는 관문에서 거절된다 (봇 경로 = trusted 아님)
+  resetBoard({ playerHp: 50 });
+  state.bossMana = 1; state.bossMaxMana = 5;
+  const ok = BE.playCardFor(BE.getSide('boss'), card({ name: '비싼주문', cardType: 'spell', cost: 5, skills: [{ damage: 10 }] }));
+  check(S, '마나 부족 상대 카드는 거절 (예전 PvP 경로: 무관문)', ok === false && state.playerHp === 50, `ok=${ok} php=${state.playerHp}`);
+
+  // 보스 함정이 파이프라인 전체를 탄다 (드로우까지)
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 5 })], boss: { maxHp: 300, currentHp: 300, shield: 0 },
+    bossHand: [], bossDeck: [card()] });
+  BE.__test.setTrap('boss', card({ name: '상대덫', cardType: 'trap', trapTrigger: 'foeAttacks', skills: [{ shield: 5, drawCards: 1 }] }));
+  BE.resolveMinionAttack(0, 'face');
+  // 함정은 공격이 **닿기 전에** 터진다 — 얻은 방어막 5가 곧바로 5 피해를 흡수해 체력은 그대로다
+  check(S, '상대 함정이 효과 전체를 탄다 (방어막이 타격을 흡수 + 드로우) (예전: 4종 흉내, 드로우 死효과)',
+    state.currentBoss.currentHp === 300 && state.currentBoss.shield === 0 && state.bossHand.length === 1,
+    `hp=${state.currentBoss.currentHp} sh=${state.currentBoss.shield} hand=${state.bossHand.length}`);
+
+  // 보스 함정 상태이상은 내 최전방 소환수로 (본체에 raw로 걸리지 않는다)
+  resetBoard({ playerMinions: [minion({ name: '앞', attack: 5, statuses: {} }), minion({ name: '뒤', statuses: {} })] });
+  BE.__test.setTrap('boss', card({ name: '동결덫', cardType: 'trap', trapTrigger: 'foeAttacks', skills: [{ statusEffect: { type: 'freeze', duration: 1 } }] }));
+  BE.resolveMinionAttack(0, 'face');
+  check(S, '상대 함정 상태이상은 내 최전방 소환수로 (예전: 본체에 raw applyStatus)',
+    !!(state.playerMinions[0].statuses || {}).freeze && BE.getBattleStatusSnapshot().player.length === 0,
+    JSON.stringify({ front: state.playerMinions[0].statuses, face: BE.getBattleStatusSnapshot().player }));
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -1626,15 +1688,18 @@ async function suiteBossTurn() {
   // 보스 주문 — 실드 관통은 전열을 무시
   resetBoard({ playerMinions: [minion({ name: '벽' })] });
   await BE.playBossCard(card({ name: '관통주문', cardType: 'spell', skills: [{ damage: 15, pierceShield: true }] }));
-  check(S, '보스 주문: 관통은 전열을 넘어 본체',
-    state.playerHp === 35 && state.playerMinions[0].currentHp === 30,
+  // 재기준선(DECISIONS #94): 관통은 **대상 규칙이 아니다** — 플레이어 주문과 같이 고른 대상(최전방)을 치고
+  // 방어막·수비만 무시한다. 예전 보스 전용 해석기만 전열을 건너뛰었다.
+  check(S, '보스 주문: 관통은 전열을 건너뛰지 않는다 (플레이어 규칙과 같음)',
+    state.playerHp === 50 && state.playerMinions[0].currentHp === 15,
     `php=${state.playerHp} 벽=${state.playerMinions[0].currentHp}`);
 
   // 보스 광역 주문
   resetBoard({ playerMinions: [minion({ name: 'A' }), minion({ name: 'B' })] });
   await BE.playBossCard(card({ name: '광역', cardType: 'spell', skills: [{ damage: 10, isAoeSpell: true }] }));
-  check(S, '보스 광역: 전부 + 본체 70%',
-    state.playerMinions.every(m => m.currentHp === 20) && state.playerHp === 43,
+  // 재기준선(DECISIONS #94): 광역 본체 피해는 플레이어와 같이 100% (예전 보스 전용 ×0.7)
+  check(S, '보스 광역: 전부 + 본체 100% (예전 70%)',
+    state.playerMinions.every(m => m.currentHp === 20) && state.playerHp === 40,
     `${state.playerMinions.map(m => m.currentHp)} php=${state.playerHp}`);
 
   // ⭐ 보스 광역이 수비력을 존중하는가 (실전에서 22체력/8수비 벽이 20에 죽었다)
@@ -1683,9 +1748,10 @@ async function suiteBossTurn() {
   check(S, '보스 주문 드로우 2장', state.bossHand.length === 2 && state.bossDeck.length === 1,
     `손패=${state.bossHand.length} 덱=${state.bossDeck.length}`);
 
-  resetBoard({ bossHand: [card(), card(), card(), card(), card()], bossDeck: [card()] });
+  // 재기준선(DECISIONS #94): 손패 상한은 양 진영 7 — 6장에서 2장 뽑으면 7에서 멈춘다
+  resetBoard({ bossHand: [card(), card(), card(), card(), card(), card()], bossDeck: [card(), card()] });
   await BE.playBossCard(card({ name: '드로우', cardType: 'spell', skills: [{ drawCards: 2 }] }));
-  check(S, '보스 손패 상한 5에서 멈춘다', state.bossHand.length === 5, `${state.bossHand.length}`);
+  check(S, '보스 손패 상한 7에서 멈춘다 (예전 5)', state.bossHand.length === 7, `${state.bossHand.length}`);
 
   // ⭐ 보스 약화 · 무효화
   resetBoard({ playerMinions: [minion({ name: '내병사', attack: 12 })] });
@@ -2339,7 +2405,8 @@ export async function runAll() {
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
-    ['공격 대칭', suiteAttackSymmetry], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['공격 대칭', suiteAttackSymmetry], ['시전 대칭', suiteCastSymmetry],
+    ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];
