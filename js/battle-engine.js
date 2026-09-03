@@ -1,6 +1,6 @@
 // battle-engine.js - 정통 카드 배틀 엔진 (소환수 / 주문 / 건축물 & 보스 멀티액션)
 
-import { ELEMENT_CONFIG, PLAYER_BASE_HP } from './config.js';
+import { ELEMENT_CONFIG, PLAYER_BASE_HP, sanitizeAndClampCardData } from './config.js';
 import { audio } from './audio.js';
 import { state } from './storage.js';
 import { createCardElement } from './card-renderer.js';
@@ -319,17 +319,23 @@ export function buildBossTacticalDeck(boss) {
     bossDeck.push(...pool.slice(0, Math.min(6, pool.length)).map(c => ({ ...c, isUserCard: true })));
   }
 
-  // 2. 보스 고유 파워 카드
+  // 2. 보스 고유 파워 카드 — ⚖️ **플레이어와 같은 파워 예산**을 지난다. PvP 상대 덱과 같은 관문 (DECISIONS #32/#95).
+  //    🐛 이 카드들은 함성을 내지 않고 스탯을 하한으로 깎던 옛 보스 전용 시전기에 맞춰 예산의 약 2배로 짜여 있었다
+  //       (화염의 지옥견: 2코스트 14/4/20 + 함성 14 — 예산 4.9에 8.7). 카드가 플레이어 규칙으로 돌아가자
+  //       2턴에 본체 37, 3턴에 65가 들어와 3턴에 졌다. 보스의 힘은 콤보와 체력이지 카드가 아니다.
+  //    등급이 없는 파워 카드는 **레어**로 친다 — 플레이어의 레어 카드와 같은 예산(같은 규칙, 등급만 정함).
+  //    커먼이면 보스가 30턴 동안 본체를 못 뚫는 교착, 에픽이면 원본과 거의 같아 11턴에 지면서 보스는 100+ 잔여 (#95 실측).
+  const budgeted = (c) => { const fixed = sanitizeAndClampCardData({ ...c, rarity: c.rarity || 'rare' }); return { ...fixed, skills: [fixed.skill] }; };
   const powerCards = (BOSS_POWER_CARDS || []).filter(c => c.element === el || c.element === 'dark');
   const pool = powerCards.length > 0 ? powerCards : (BOSS_POWER_CARDS || []);
-  bossDeck.push(...battleRng().shuffle(pool).slice(0, 4));
+  bossDeck.push(...battleRng().shuffle(pool).slice(0, 4).map(budgeted));
 
   // 3. 최소 8장 보충
   while (bossDeck.length < 8) {
     const randCard = (BOSS_POWER_CARDS && BOSS_POWER_CARDS.length > 0)
       ? battleRng().pick(BOSS_POWER_CARDS)
       : { id: `boss-atk-${battleRng().int(100000, 999999)}`, name: '심연의 참격', cardType: 'spell', skills: [{ damage: 16, description: '16 암흑 피해' }] };
-    bossDeck.push({ ...randCard });
+    bossDeck.push(budgeted(randCard));
   }
 
   return battleRng().shuffle(bossDeck);
@@ -1225,7 +1231,7 @@ export function attackWithMinion(slotIdx) {
     beginTargeting({
       kind: 'attack',
       valid: keys,
-      hint: `[${entity.name}]의 공격 대상을 선택하세요`,
+      hint: `[${entity.name}]의 공격 대상을 선택하세요 — 소환수를 치면 그 공격력만큼 반격을 받습니다`,
       onPick: (key) => resolveMinionAttack(slotIdx, key),
       onCancel: () => renderBattleUI()
     });
@@ -1309,11 +1315,24 @@ export function resolveAttack(side, slotIdx, targetKey = null, { attacker = null
     if (!target) {
       dealFaceDamage(foe, finalAtk, { source: entity.name, attacker: side });
     } else {
+      // ⚔️ 전투는 **서로** 때린다 (DECISIONS #95). 방어자의 공격력(+그 진영 공격 오라)이 공격자에게
+      //    되돌아온다. 공격자의 수비력·방어 오라·취약·감전도 같은 damageEntity가 처리한다 — 규칙 한 벌.
+      //    반격 값은 피해를 주기 **전**에 읽는다: 동시 피해라 방어자가 죽어도 반격은 들어간다.
+      //    건축물은 공격하지 않으므로 반격도 하지 않는다. 본체는 공격력이 없으니 반격이 없다.
+      //    🐛 예전엔 공격이 공짜였다 — 고화력 소환수가 매 턴 때려도 아무 손해가 없어 전장에 영원히 남았고,
+      //       실측에서 상대 전장 4기 만석·내 전장 0기로 끝났다 (#94).
+      const counterAtk = (target.cardType !== 'structure' && target.attack > 0)
+        ? target.attack + auraAttackBonus(target, foe) : 0;
       const hit = damageEntity(target, finalAtk, { defBonus: auraDefenseBonus(target, foe) });
-      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${hit.dealt} 피해)${describeDamageExtras(hit)}</span>`);
+      const back = counterAtk > 0 ? damageEntity(entity, counterAtk, { defBonus: auraDefenseBonus(entity, side) }) : null;
+      addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${hit.dealt} 피해)${describeDamageExtras(hit)}${back ? ` <span class="text-orange-300">· 반격 ${back.dealt}${describeDamageExtras(back)}</span>` : ''}</span>`);
       if (hit.died) {
         addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(target.name)}] 처치!</span>`);
         foe.minions = removeDead(foe.minions);
+      }
+      if (back && back.died) {
+        addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(entity.name)}] 반격에 쓰러졌습니다!</span>`);
+        side.minions = removeDead(side.minions);
       }
     }
   }

@@ -1582,6 +1582,74 @@ async function suiteAttackSymmetry() {
 }
 
 // ============================================================
+// 9d-2. 전투 반격 — 소환수 전투는 서로 때린다 (DECISIONS #95)
+// ------------------------------------------------------------
+// 🐛 예전엔 공격이 공짜였다: 방어자만 피해를 입어 고화력 소환수가 매 턴 때려도 전장에 영원히 남았다
+//    (#94 실측: 상대 전장 4기 만석 · 내 전장 0기). 이제 방어자의 공격력(+그 진영 공격 오라)이 공격자에게
+//    되돌아오고, 공격자의 수비력·방어 오라는 같은 damageEntity가 처리한다. 본체·건축물은 반격하지 않는다.
+// ============================================================
+function suiteRetaliation() {
+  const S = '전투 반격';
+
+  // ① 기본: 내 공10이 상대 공6·체30을 치면 상대 -10, 나 -6
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10, currentHp: 20, maxHp: 20 })],
+    bossMinions: [minion({ name: '적병', attack: 6, currentHp: 30 })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '소환수 전투는 서로 때린다: 방어자 -10, 공격자 -6 (예전: 공격자 무피해)',
+    state.bossMinions[0].currentHp === 20 && state.playerMinions[0].currentHp === 14,
+    `foe=${state.bossMinions[0].currentHp} me=${state.playerMinions[0].currentHp}`);
+
+  // ② 반격은 공격자의 수비력으로 줄어든다 (같은 damageEntity)
+  resetBoard({ playerMinions: [minion({ name: '내갑병', attack: 10, defense: 2, currentHp: 20, maxHp: 20 })],
+    bossMinions: [minion({ name: '적병', attack: 6, currentHp: 30 })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '반격은 공격자 수비력으로 줄어든다: 6-2=4', state.playerMinions[0].currentHp === 16, `${state.playerMinions[0].currentHp}`);
+
+  // ③ 본체 공격은 반격 없음 (본체는 공격력이 없다)
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10, currentHp: 20, maxHp: 20 })], bossMinions: [] });
+  BE.resolveMinionAttack(0, 'face');
+  check(S, '본체 공격에는 반격이 없다', state.currentBoss.currentHp === 290 && state.playerMinions[0].currentHp === 20,
+    `bhp=${state.currentBoss.currentHp} me=${state.playerMinions[0].currentHp}`);
+
+  // ④ 건축물은 반격하지 않는다 (공격하지 않는 것과 같은 규칙)
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10, currentHp: 20, maxHp: 20 })],
+    bossMinions: [minion({ name: '적탑', cardType: 'structure', attack: 0, currentHp: 30 })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '건축물(공0)은 반격하지 않는다', state.bossMinions[0].currentHp === 20 && state.playerMinions[0].currentHp === 20,
+    `tower=${state.bossMinions[0].currentHp} me=${state.playerMinions[0].currentHp}`);
+
+  // ⑤ 대칭: 상대 소환수가 내 소환수를 쳐도 내 공격력만큼 되돌아간다
+  resetBoard({ playerHp: 50, playerMinions: [minion({ name: '내벽', attack: 5, currentHp: 30 })],
+    bossMinions: [minion({ name: '적맹공', attack: 16, currentHp: 22, maxHp: 22 })] });
+  BE.foeMinionAttack(0);
+  check(S, '상대 공격자도 내 소환수의 공격력만큼 피해 (대칭): 16→내벽 14, 5→적 17 (예전: 22)',
+    state.playerMinions[0].currentHp === 14 && state.bossMinions[0].currentHp === 17,
+    `wall=${state.playerMinions[0].currentHp} foe=${state.bossMinions[0].currentHp}`);
+
+  // ⑥ 동시 피해: 방어자가 죽어도 반격은 들어간다
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10, currentHp: 20, maxHp: 20 })],
+    bossMinions: [minion({ name: '적약병', attack: 6, currentHp: 5, maxHp: 5 })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '동시 피해: 방어자가 죽어도 반격 6은 들어간다', state.bossMinions.length === 0 && state.playerMinions[0].currentHp === 14,
+    `foes=${state.bossMinions.length} me=${state.playerMinions[0].currentHp}`);
+
+  // ⑦ 반격으로 죽은 공격자는 전장에서 제거된다 (양쪽 다 죽을 수도 있다)
+  resetBoard({ playerMinions: [minion({ name: '내돌격병', attack: 10, currentHp: 4, maxHp: 4 }), minion({ name: '내후위', attack: 3 })],
+    bossMinions: [minion({ name: '적병', attack: 6, currentHp: 8, maxHp: 8 })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '반격으로 죽은 공격자는 전장에서 빠진다 (둘 다 처치)',
+    state.bossMinions.length === 0 && state.playerMinions.length === 1 && state.playerMinions[0].name === '내후위',
+    `foes=${state.bossMinions.length} mine=${state.playerMinions.map(m => m.name)}`);
+
+  // ⑧ 방어자 진영의 건축물 공격 오라가 반격에도 붙는다 (오라는 읽는 시점에 계산)
+  resetBoard({ playerMinions: [minion({ name: '내병', attack: 10, currentHp: 30 })], bossMinions: [
+    minion({ name: '적병', attack: 6, currentHp: 30 }),
+    minion({ name: '적탑', cardType: 'structure', attack: 0, skills: [{ passiveEffect: { aura: { scope: 'all', attackBonus: 3 } } }] })] });
+  BE.resolveMinionAttack(0, 'foe:0');
+  check(S, '방어자 진영 공격 오라 +3이 반격에 붙는다: 6+3=9', state.playerMinions[0].currentHp === 21, `${state.playerMinions[0].currentHp}`);
+}
+
+// ============================================================
 // 9e. 시전 대칭 — 카드 시전이 양 진영 한 함수 (DECISIONS #94)
 // ------------------------------------------------------------
 // 🐛 보스 전용 시전기는 소환수 스탯을 공8·방4·체16 하한으로 재작성했고(themeId·skills도 버림),
@@ -1776,6 +1844,40 @@ async function suitePvpInit() {
     state.cardsCollection = snapCollection;
     detachPvpSession();
   }
+}
+
+// ============================================================
+// 9i. 보스 카드 예산 · 스텝 강화 1회 (DECISIONS #95)
+// ------------------------------------------------------------
+// 🐛 보스 파워 카드 9장이 전부 파워 예산 초과였다(옛 보스 전용 시전기가 함성을 안 내던 시절의 수치).
+//    스텝 강화(+4 / 만석 +3)는 영구 중첩이라 10턴에 +7~12가 됐다. 둘 다 #87 기준선에 없던 힘이다.
+// ============================================================
+async function suiteBossBudget() {
+  const S = '보스 카드 예산';
+
+  // ① 보스 파워 카드는 플레이어와 같은 파워 예산을 지난다
+  resetBoard();
+  const deck = BE.buildBossTacticalDeck({ element: 'fire', name: '검증보스' });
+  const power = deck.filter(c => String(c.id).startsWith('boss-card') || String(c.id).startsWith('boss-atk'));
+  const over = power.filter(c => { const p = evaluateCardPower(c); return p.overBudget || (p.illegal || []).length > 0; });
+  check(S, '보스 파워 카드는 파워 예산을 지난다 (예전: 9장 전부 초과 — 2코 14/4/20 + 함성 14)',
+    power.length > 0 && over.length === 0, `power=${power.length} over=${over.map(c => c.name)}`);
+  check(S, '등급 없는 보스 파워 카드는 레어로 친다 (커먼: 30턴 교착 / 에픽: 원본과 동일 — #95 실측)',
+    power.every(c => c.rarity === 'rare'), `${power.map(c => c.rarity)}`);
+
+  // ② 스텝 강화는 소환수당 한 번
+  resetBoard({ bossMinions: [minion({ name: '상대병', attack: 5 }), minion({ name: '상대병2', attack: 5 })] });
+  await BE.__test.bossStep({ type: 'minion_buff', name: '고양', buffAtk: 4 });
+  await BE.__test.bossStep({ type: 'minion_buff', name: '고양', buffAtk: 4 });
+  check(S, 'minion_buff는 소환수당 한 번 (+4 → 9; 예전: 영구 중첩 13)',
+    state.bossMinions.every(m => m.attack === 9), `${state.bossMinions.map(m => m.attack)}`);
+
+  // ③ 만석 강화(+3)도 같은 규칙 — 이미 강화된 소환수는 건너뛴다
+  resetBoard({ bossMinions: [minion({ attack: 5 }), minion({ attack: 5 }), minion({ attack: 5 }), minion({ attack: 5 })] });
+  await BE.__test.bossStep({ type: 'summon_or_buff', name: '소환/강화', value: 1 });
+  await BE.__test.bossStep({ type: 'summon_or_buff', name: '소환/강화', value: 1 });
+  check(S, '만석 강화 +3도 소환수당 한 번 (→ 8; 예전: 11)',
+    state.bossMinions.length === 4 && state.bossMinions.every(m => m.attack === 8), `${state.bossMinions.map(m => m.attack)}`);
 }
 
 // ============================================================
@@ -2541,8 +2643,8 @@ export async function runAll() {
     ['상태이상', suiteStatus], ['함정', suiteTraps], ['연계', suiteCombos],
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
-    ['공격 대칭', suiteAttackSymmetry], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];

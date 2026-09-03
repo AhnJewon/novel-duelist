@@ -140,7 +140,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (412항목):
+전투 로직은 **하네스가 있습니다** (424항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -322,7 +322,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (412항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (424항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -518,3 +518,17 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 99. **보스 고유는 콤보·체력·대사·의도 UI뿐입니다.** 새 보스 전용 규칙을 엔진에 넣지
     마세요 — 봇의 **판단**은 `boss-ai.js`에, 규칙은 진영 매개 함수 한 벌에 둡니다.
     PvE는 "로컬 봇과의 PvP"입니다. → [DECISIONS #94](docs/DECISIONS.md)
+
+100. **소환수 전투는 서로 때립니다.** 방어자의 공격력(+오라)이 공격자에게 되돌아오고,
+    공격자의 수비력·오라·취약·감전은 같은 `damageEntity`가 처리합니다 — `resolveAttack`
+    **한 곳**입니다. 본체·건축물은 반격하지 않습니다. 공격이 공짜였을 때는 고화력
+    소환수가 영원히 전장에 남았습니다. → [DECISIONS #95](docs/DECISIONS.md)
+
+101. **보스 파워 카드에 예산 밖 수치를 넣지 마세요.** `buildBossTacticalDeck`이
+    `sanitizeAndClampCardData`(레어 등급)를 통과시킵니다 — PvP 상대 덱과 같은 관문입니다.
+    예산의 2배였던 카드가 플레이어 규칙으로 돌아가자 3턴에 본체 100이 사라졌습니다.
+    보스의 힘은 콤보와 체력으로 주세요. → [DECISIONS #95](docs/DECISIONS.md)
+
+102. **콤보 스텝 강화는 소환수당 한 번입니다** (`stepBuffed`). 영구 중첩으로 되돌리면
+    2~3턴마다 +3/+4가 쌓여 10턴에 공격력 +12가 됩니다 — 대응 수단이 없는 눈덩이입니다.
+    → [DECISIONS #95](docs/DECISIONS.md)

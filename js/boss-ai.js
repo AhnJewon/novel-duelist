@@ -210,6 +210,14 @@ export function createBossController(ops) {
   async function executeStep(step) {
     const side = me(), target = foe();
     let val = step.value || 0;
+    // 🔥 스텝 강화는 **소환수당 한 번**이다 (stepBuffed). 영구 중첩이면 minion_buff +4와 만석 +3이 2~3턴마다
+    //    쌓여 10턴에 +7~12가 됐다 — 대응 수단이 없는 눈덩이였다 (실측 #95: 토큰 공격력 23·27).
+    //    minion_buff는 7단계 전까지 죽은 코드였으므로 이 중첩은 #87 기준선에 없던 힘이다.
+    const buffOnce = (minions, amount) => {
+      let n = 0;
+      for (const bm of minions) { if (bm.stepBuffed) continue; bm.attack += amount; bm.stepBuffed = true; n++; }
+      return n;
+    };
     // 💥 콤보 딜 하향 — 마나 제한을 받지 않는 유일한 딜이라 여기 한 곳에서 줄인다 (DECISIONS #87)
     if ((step.type === 'attack' || step.type === 'magic') && val > 0) {
       val = Math.max(1, Math.round(val * BOSS_STEP_DAMAGE_MULT));
@@ -235,18 +243,20 @@ export function createBossController(ops) {
         audio.playSummon();
         ops.addBattleLog(`<span class="text-purple-400 font-bold">👾 [스텝/소환] ${nameOf(side)}이(가) [${escapeHtml(add.name)}] 을(를) 소환했습니다!</span>`);
       } else {
-        side.minions.forEach(bm => { bm.attack += 3; });
-        ops.addBattleLog(`<span class="text-red-400">🔥 [스텝/강화] ${nameOf(side)}이(가) 모든 부하의 공격력을 +3 강화했습니다!</span>`);
+        const n = buffOnce(side.minions, 3);
+        ops.addBattleLog(n > 0
+          ? `<span class="text-red-400">🔥 [스텝/강화] ${nameOf(side)}이(가) 부하 ${n}기의 공격력을 +3 강화했습니다!</span>`
+          : `<span class="text-slate-500">🔥 [스텝/강화] 부하들이 이미 강화되어 있습니다.</span>`);
       }
     } else if (step.type === 'minion_buff') {
       // 🐛 데이터(data.js 바알 3패턴)에 있는데 처리기가 없어 **조용히 아무 일도 안 하던** 스텝.
       //    형제 스텝 summon_or_buff의 강화 분기와 같은 뜻으로 구현한다.
       const amount = step.buffAtk || 3;
-      if (side.minions.length > 0) {
-        side.minions.forEach(bm => { bm.attack += amount; });
-        ops.addBattleLog(`<span class="text-red-400">🔥 [스텝/${escapeHtml(step.name || '강화')}] ${nameOf(side)}의 부하 ${side.minions.length}기 공격력 +${amount}!</span>`);
+      const n = side.minions.length > 0 ? buffOnce(side.minions, amount) : 0;
+      if (n > 0) {
+        ops.addBattleLog(`<span class="text-red-400">🔥 [스텝/${escapeHtml(step.name || '강화')}] ${nameOf(side)}의 부하 ${n}기 공격력 +${amount}!</span>`);
       } else {
-        ops.addBattleLog(`<span class="text-slate-500">🔥 [스텝/${escapeHtml(step.name || '강화')}] 강화할 부하가 없습니다.</span>`);
+        ops.addBattleLog(`<span class="text-slate-500">🔥 [스텝/${escapeHtml(step.name || '강화')}] ${side.minions.length > 0 ? '부하들이 이미 강화되어 있습니다.' : '강화할 부하가 없습니다.'}</span>`);
       }
     } else if (step.type === 'debuff') {
       if (step.status && step.status.type) {

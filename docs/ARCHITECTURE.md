@@ -204,6 +204,7 @@ initBattle();                      // 5. 전투 초기화
   │                       소환수·건축물: 전장 배치 → 연계 → 함성
   ├─ attackWithMinion(slot) → resolveAttack(player, slot, targetKey)
   │                       canAttackFace → 본체는 dealFaceDamage(target) / 소환수는 damageEntity(+오라)
+  │                       소환수 전투는 **서로** 때린다 — 방어자의 공격력이 공격자에게 반격 (DECISIONS #95)
   └─ playerEndTurn() → endTurn(player)   건축물 턴 종료 패시브 →
         핸드오프: PvE = 봇 턴 예약 / PvP = endTurn 전송 + 내 화면에서 startTurn(boss) 미러
 
