@@ -21,6 +21,12 @@ export function readCustomOverrides() {
   };
 
   return {
+    // 🎛️ 원칙: **유저가 고른 것은 그대로, 비운 것은 LLM이 정한다** (DECISIONS #98).
+    //    카드 타입은 항상 고른다(라디오). 속성은 "AI 결정"(빈 값)일 수 있다.
+    //    🐛 예전엔 둘을 프롬프트로만 말하고 코드로 강제하지 않아, LLM이 다른 타입·속성을 답하면
+    //       화면 선택이 LLM 값으로 덮어써졌다.
+    cardType: (document.querySelector('input[name="forge-card-type-radio"]:checked') || {}).value || v('forge-card-type'),
+    element: v('forge-element'),
     themeId: selectedThemeId(),
     themeName: v('custom-theme-name'),
     themeKeyword: v('custom-theme-keyword'),
@@ -45,6 +51,7 @@ export function readCustomOverrides() {
 /** 커스텀 값을 LLM 프롬프트 지시문으로 변환 */
 export function customOverridesToPrompt(o) {
   const lines = [];
+  if (o.element) lines.push(`- 속성(element)은 반드시 "${o.element}"로 할 것`);
   if (o.themeId) {
     // 기존 카드군을 골랐다 — id를 그대로 쓰게 해야 새 카드군이 생기지 않는다
     lines.push(`- 카드군은 기존 카드군 "${o.themeName}"에 편입시킬 것. "themeId"에 "${o.themeId}"를 그대로 복사하고 "themeName"도 한 글자도 바꾸지 말 것.`);
@@ -85,6 +92,10 @@ export function customOverridesToPrompt(o) {
 export function applyCustomOverrides(data, o) {
   if (!o) return data;
   const out = { ...data };
+  // 🎛️ 유저가 고른 타입·속성은 LLM 답과 무관하게 그대로다. 속성은 뒤에서 카드군 속성 정책(coerceCardElement, 규칙 7)이
+  //    한 번 더 볼 수 있다 — 그건 카드군의 규칙이지 LLM의 취향이 아니다.
+  if (o.cardType) out.cardType = o.cardType;
+  if (o.element) out.element = o.element;
   // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"
   //    지시에만 기대면 4B 모델이 흘려서 소속이 조용히 새 카드군으로 샌다.
   //    코드에서 못을 박아야 키워드를 바꿔도 소속이 안 바뀐다.

@@ -26,6 +26,21 @@ let currentCardTheme = null;
 //    코드가 셀렉트를 되쓰지 않는다. 예전에는 되썼기 때문에 "AI 결정"이 한 번
 //    기획하면 조용히 고정값으로 변했다 → DECISIONS #92
 let currentForgeRarity = null;
+// 🎲 속성도 같은 구조다: #forge-element(유저 의도, 빈 값 = AI 결정) → currentForgeElement(확정) → 미리보기·저장
+let currentForgeElement = null;
+const FORGE_ELEMENTS = ['fire', 'water', 'lightning', 'holy', 'dark', 'nature'];
+
+/**
+ * 이 카드의 속성. 우선순위: 유저가 고른 값 > AI가 확정한 값 > 아직 아무도 안 정했으면 추첨.
+ * 셀렉트를 되쓰지 않으므로 "AI 결정"을 고른 유저는 다음 카드도 AI가 정한다.
+ */
+function forgeElement() {
+  const sel = document.getElementById('forge-element');
+  if (sel && sel.value) return sel.value;
+  if (currentForgeElement) return currentForgeElement;
+  currentForgeElement = FORGE_ELEMENTS[Math.floor(Math.random() * FORGE_ELEMENTS.length)];
+  return currentForgeElement;
+}
 
 // 📐 이번 카드의 **정산이 끝난** 수치(마나·공/방/체). 기획(applyGeneratedCardData)이
 //    채우고 저장(completeForgedCard)과 미리보기가 그대로 쓴다.
@@ -113,8 +128,9 @@ export async function generatePromptWithLLM(isRandom = false) {
   if (btnEl) btnEl.disabled = true;
 
   const targetType = currentForgeCardType || 'unit';
-  const elementSelect = document.getElementById('forge-element');
-  const targetElem = (elementSelect && elementSelect.value) || 'fire';
+  // 🎲 속성 칸이 "AI 결정"(빈 값)이면 LLM이 콘셉트에 맞게 고른다. 고른 값은 customDirective가 강제한다.
+  const chosenElem = readCustomOverrides().element;
+  const targetElem = chosenElem || '자유 — 콘셉트에 맞게 고른다';
   // 컨셉과 의미가 가까운 카드군만 싣는다 (전체를 실으면 컨텍스트가 넘친다)
   const knownThemes = await getRelevantArchetypesPrompt(concept || targetType, 6);
 
@@ -778,7 +794,9 @@ export async function applyGeneratedCardData(rawData) {
     const titleEl = document.getElementById('forge-title');
     if (titleEl) titleEl.value = data.title;
   }
-  if (data.element) document.getElementById('forge-element').value = data.element;
+  // 🎲 확정 속성은 모듈 변수에만 담는다. #forge-element(유저 의도)에 되쓰면 "AI 결정"이 한 번 기획하는 것만으로
+  //    고정값으로 변한다 — 등급과 같은 함정 (DECISIONS #92/#98)
+  if (data.element) currentForgeElement = data.element;
   // ⭐ 확정 등급은 모듈 변수에만 담는다. #forge-rarity(유저 의도)를 되쓰면
   //    "AI 결정"이 한 번 기획하는 것만으로 고정값으로 변한다 → DECISIONS #92
   if (data.rarity) currentForgeRarity = data.rarity;
@@ -792,7 +810,7 @@ export async function applyGeneratedCardData(rawData) {
     if (hidden) hidden.value = data.cardType;
   }
   const promptInput = document.getElementById('forge-prompt');
-  const targetElem = data.element || (document.getElementById('forge-element') ? document.getElementById('forge-element').value : 'fire');
+  const targetElem = data.element || forgeElement();
   const targetType = data.cardType || currentForgeCardType || 'unit';
 
   // 🏷️ 시각 프롬프트: LLM이 준 영어 핵심 키워드를 태그 제네레이터가 확장한다.
@@ -911,8 +929,7 @@ export function clearForgePrompt() {
 export function expandCurrentPromptWithDanTagGen() {
 
   const promptInput = document.getElementById('forge-prompt');
-  const elementSelect = document.getElementById('forge-element');
-  const element = elementSelect ? elementSelect.value : 'fire';
+  const element = forgeElement();
   const cardType = currentForgeCardType || 'unit';
   
   const currentPrompt = promptInput.value.trim();
@@ -923,7 +940,7 @@ export function expandCurrentPromptWithDanTagGen() {
 }
 
 export function updateForgePromptPreview() {
-  const element = document.getElementById('forge-element') ? document.getElementById('forge-element').value : 'fire';
+  const element = forgeElement();
   const rarity = forgeRarity();
   renderForgeRarityHint();
   // 🖼️ 해상도 셀렉트는 설정값의 화면이다 (팩·설정 모달과 한 값을 공유한다).
@@ -970,7 +987,7 @@ export async function generateAICard() {
   }
 
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
-  const element = document.getElementById('forge-element').value;
+  const element = forgeElement();
   const rarity = forgeRarity();
   const userPrompt = document.getElementById('forge-prompt').value.trim() || 'fantasy elemental hero';
   const cardType = currentForgeCardType || 'unit';
@@ -1015,7 +1032,7 @@ export async function generateAICard() {
 
 export async function generateMockCard() {
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
-  const element = document.getElementById('forge-element').value;
+  const element = forgeElement();
   const rarity = forgeRarity();
   const prompt = document.getElementById('forge-prompt').value.trim() || 'fantasy elemental hero';
 

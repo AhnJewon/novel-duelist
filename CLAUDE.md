@@ -544,3 +544,8 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 104. **새 카드군 창작은 `themeId`를 비워야 합니다.** 유저가 이름만 준 경우 `applyCustomOverrides`가
     LLM이 복사해 온 기존 `themeId`를 지웁니다. 남겨두면 `pinnedTheme`가 기존 카드군에 고정해
     새 카드군이 영영 생기지 않습니다. → [DECISIONS #96](docs/DECISIONS.md)
+
+105. **연성소 선택칸은 "고른 것은 그대로, 비운 것은 LLM"입니다.** 칸을 추가하면 `readCustomOverrides`(읽기) ·
+    `customOverridesToPrompt`(지시) · `applyCustomOverrides`(강제) **세 곳을 한 쌍으로** 만드세요. 프롬프트로만 말하면
+    4B 모델이 흘리고, 확정값을 셀렉트에 되쓰면 "AI 결정"이 고정값으로 변합니다 — 모듈 변수 + 해석기(`forgeRarity`·
+    `forgeElement`)로. → [DECISIONS #98](docs/DECISIONS.md)
