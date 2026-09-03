@@ -272,6 +272,18 @@ function artistMode() {
   return (v === 'off' || v === 'custom' || v === 'style') ? v : 'slm';
 }
 
+/**
+ * 작가 태그를 이미지 모델에 맞게 적는다.
+ * NovelAI V4 계열은 작가 태그에 `artist:` 접두를 쓴다(데이터셋 표기). V3 이하는 맨 이름.
+ * 유저가 이미 접두를 붙였으면 그대로 둔다.
+ */
+function formatArtistTag(name) {
+  const n = String(name || '').trim();
+  if (!n || /^artist:/i.test(n)) return n;
+  const imageModel = String((state.settings && state.settings.model) || '');
+  return /diffusion-4/.test(imageModel) ? `artist:${n}` : n;
+}
+
 /** custom 모드에서 쓸 작가 목록 */
 function customArtists() {
   return String((state.settings && state.settings.tagSlmArtists) || '')
@@ -496,6 +508,71 @@ function cleanSlmTags(raw, alreadyHave = [], contextText = '') {
 }
 
 /**
+ * 🖌️ TIPO에게 **작가만** 묻는다 — 완성된 태그 목록 뒤에 `artist:`를 마지막 줄로 두고 이어쓰게 한다.
+ *
+ * 🐛 예전엔 본문 요청에서 `artist:` 줄을 비워 두고 모델이 "알아서" 채우길 기대했다(DECISIONS #48).
+ *    TIPO는 마지막 필드(`tag:`)의 이어쓰기만 하므로 앞 필드로 돌아가 작가를 쓰는 일은 거의 없다 —
+ *    실측 3/3 빈 배열, 그래서 그림체는 늘 화풍 태그 폴백이었다.
+ *    `artist:`를 프롬프트의 **마지막**에 두면 매번 실제 Danbooru 작가 태그가 나온다
+ *    (실측: junga, wudiyuga, toinaka … 40~130ms). `(1420)` 같은 게시물 수 꼬리는 잘라낸다.
+ *
+ * @returns {string[]} 작가 태그 0~1개 (형태 검증을 통과한 것만)
+ */
+/** Danbooru의 `artist:` 자리에 오지만 사람이 아닌 메타 태그 — 프롬프트에 넣으면 그림체가 아니라 잡음이다 */
+const ARTIST_META_TAGS = new Set([
+  'banned artist', 'artist request', 'artist name', 'unknown artist', 'various artists', 'anonymous artist',
+  'official art', 'third-party edit', 'self-upload', 'original', 'artist', 'none', 'empty'
+]);
+
+async function suggestArtistWithTipo(tags, { timeoutMs = 8000, attempts = 2 } = {}) {
+  const tagLine = (tags || []).map(t => String(t).trim()).filter(Boolean).slice(0, 24).join(', ');
+  if (!tagLine) return [];
+  // 호출이 100ms 안쪽이라, 형태 검증에 걸리면(괄호 한정자·파편) 한 번 더 뽑는다 — 실측 3번 중 1번은 첫 시도가 걸렸다
+  for (let i = 0; i < attempts; i++) {
+    const got = await suggestArtistOnce(tagLine, timeoutMs);
+    if (got.length) return got;
+  }
+  return [];
+}
+
+async function suggestArtistOnce(tagLine, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${baseUrl()}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: _resolvedModel || modelName(),
+        prompt: `quality: masterpiece\nrating: safe\ncharacters: <|empty|>\ncopyrights: <|empty|>\n` +
+                `aspect ratio: 1.0\ntarget: <|long|>\ntag: ${tagLine}\nartist:`,
+        raw: true,
+        stream: false,
+        // 온도를 낮춰 **흔한** 작가가 나오게 한다 — 꼬리의 희귀 태그는 파편(`inh y3`)이거나 NovelAI가 모르는 이름이다
+        options: { temperature: 0.7, top_p: 0.9, top_k: 40, num_predict: 24, stop: ['\n', '<|'] }
+      })
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const first = String(data.response || '').split(',')[0]
+      .replace(/\(\s*\d[\d,]*\s*\)/g, '')      // Danbooru 자동완성식 게시물 수 꼬리 "(1420)"
+      .replace(/<\|[^|]*\|>/g, '')
+      .replace(/_/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim().toLowerCase();
+    if (!isPlausibleArtistTag(first)) return [];
+    if (ARTIST_META_TAGS.has(first)) return [];                      // 'banned artist' 같은 메타 태그는 작가가 아니다
+    if (first.split(' ').some(w => w.length < 3)) return [];        // 'inh y3' 류 파편
+    return [first];
+  } catch (e) {
+    clearTimeout(timer);
+    return [];
+  }
+}
+
+/**
  * 성긴 시드를 SLM으로 확장한다.
  * 실패하거나 모델이 없으면 null — 호출부가 규칙 기반으로 폴백한다.
  *
@@ -534,6 +611,10 @@ export async function expandWithSlm(seeds, { element = 'fire', cardType = 'unit'
     const cleaned = cleanSlmTags(data.response, core, context || seeds);
     // 작가 태그는 메타 라인에 실려 오므로 정제 전 원문에서 따로 뽑는다
     cleaned.artists = artistMode() === 'slm' ? extractArtists(data.response) : [];
+    // 🖌️ 본문에서 작가가 안 나왔으면(거의 늘 그렇다) **작가만 묻는 2차 호출**로 받는다 (DECISIONS #99)
+    if (artistMode() === 'slm' && cleaned.artists.length === 0 && p === TAG_SLM_PRESETS.tipo) {
+      cleaned.artists = await suggestArtistWithTipo(cleaned.tags.concat(core), { timeoutMs: 8000 });
+    }
     return cleaned.tags.length >= 5 ? cleaned : null;
   } catch (e) {
     clearTimeout(timer);
@@ -581,10 +662,13 @@ export async function expandTagsDetailed(seeds, element = 'fire', cardType = 'un
   let artists = [];
   const aMode = artistMode();
   if (aMode === 'custom') {
-    artists = pickCustomArtists();
+    artists = pickCustomArtists().map(formatArtistTag);
   } else if (aMode === 'slm') {
+    // SLM 작가 → (없으면) 유저가 적어 둔 목록 → (그것도 없으면) 화풍 태그
     const fromSlm = (slm && slm.artists) ? slm.artists.slice(0, 1) : [];
-    artists = fromSlm.length ? fromSlm : pickArtStyle();
+    const fromUser = fromSlm.length ? [] : pickCustomArtists();
+    const picked = fromSlm.length ? fromSlm : fromUser;
+    artists = picked.length ? picked.map(formatArtistTag) : pickArtStyle();
   } else if (aMode === 'style') {
     artists = pickArtStyle();
   }
