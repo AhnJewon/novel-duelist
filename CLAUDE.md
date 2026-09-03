@@ -532,3 +532,13 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 102. **콤보 스텝 강화는 소환수당 한 번입니다** (`stepBuffed`). 영구 중첩으로 되돌리면
     2~3턴마다 +3/+4가 쌓여 10턴에 공격력 +12가 됩니다 — 대응 수단이 없는 눈덩이입니다.
     → [DECISIONS #95](docs/DECISIONS.md)
+
+103. **생각(think)과 JSON 출력을 한 호출에 같이 시키지 마세요.** Qwen3.5는 `think:true` +
+    `format:json`이면 예산을 전부 생각에 쓰고 본문을 **빈 채** 끝냅니다 — 그게 "추론 모드
+    JSON 파싱 실패"의 정체였습니다. JSON 호출은 항상 `think:false`, 심층 추론은 두 단계
+    (자유 서술 기획 → JSON 정형화)이며 `callOllamaChat`이 자동으로 나눕니다. 생각 지원
+    모델에는 think를 **명시**하세요 — 기본값이 "생각함"입니다. → [DECISIONS #96](docs/DECISIONS.md)
+
+104. **새 카드군 창작은 `themeId`를 비워야 합니다.** 유저가 이름만 준 경우 `applyCustomOverrides`가
+    LLM이 복사해 온 기존 `themeId`를 지웁니다. 남겨두면 `pinnedTheme`가 기존 카드군에 고정해
+    새 카드군이 영영 생기지 않습니다. → [DECISIONS #96](docs/DECISIONS.md)

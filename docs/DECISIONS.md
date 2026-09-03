@@ -3943,3 +3943,49 @@ LLM 산문을 규칙 텍스트로 쓰면 데이터와 어긋날 수 있고, 그�
 ### 검증
 하네스 412 → **424** (전투 반격 8 · 보스 카드 예산 4). fail-first: 옛 코드에서 반격 6개(공격자 무피해 `me=20`,
 `foe=22`, 오라 `30`)·예산 3개(초과 4장, 중첩 `13,13`, `11,11,11,11`)가 예측한 값으로 빨강. 수정 후 424/424, 연속 2회.
+
+---
+
+<a id="96"></a>
+## #96 — 추론 모드의 JSON 파싱 실패 · 새 카드군이 생기지 않던 이유
+
+유저 지적: *"카드 생성 부분이 이상하게 동작해 카드군 생성도 제대로 못하고, 추론 모드로 하면 계속 JSON 파싱 실패."*
+
+### 🧠 추론 모드 — 생각과 JSON을 한 호출에 시켰다
+
+Ollama `/api/chat`에 직접 프로브(모델 `hf.co/bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M`, Ollama 0.33.2):
+
+| 요청 | 결과 |
+|---|---|
+| `think:true` + `format:json`, 예산 400 | `done_reason: length`, **content 0자**, thinking 1,243자 |
+| think 필드 **생략** + `format:json`, 예산 700 | `done_reason: length`, **content 0자**, thinking 2,399자 (이 모델은 기본값이 "생각함") |
+| `think:false` + `format:json`, 예산 700 | `done_reason: stop`, 293토큰, JSON 파싱 성공 |
+
+생각과 JSON 문법 제약을 함께 걸면 모델은 예산이 다할 때까지 생각만 하고 본문을 쓰지 못한다.
+`callOllamaChat`은 deep 모드에서 think를 넘기지 않은 호출에 `think = isDeep`을 넣었으므로 **카드팩·보스 연성·프로필**이
+전부 이 길을 탔고, 빈 본문 대신 thinking 텍스트를 JSON으로 파싱하려다 "JSON 파싱 실패"를 냈다.
+카드 연성(card-forge)만 자체 2단계(1단계 think·자유 서술 → 2단계 think:false·JSON)여서 멀쩡했다 — 다만 1단계가
+`thinkingText || raw`로 **본문 대신 사고 과정**을 돌려줘 2단계에 중언부언이 붙었다.
+
+**고친 것 (`ai-service.js`)**
+- JSON 호출은 항상 `think:false`. deep + 생각 지원 모델 + format이면 `callOllamaChat`이 **두 단계**를 스스로 돈다:
+  ① `think:true`·`format:null`로 기획 → ② 마지막 user 메시지에 기획안을 붙여 `think:false`·JSON 정형화.
+  모든 호출부가 코드 변경 없이 추론 모드를 얻는다.
+- 자유 서술 호출은 `raw || thinkingText` — 본문 우선.
+- `num_predict`: think:true 3072(생각만 700토큰 넘김), JSON 2048(보스 연성 3패턴 JSON이 1024를 넘길 수 있다).
+- 생각 지원 모델에는 think를 **반드시 명시**한다 — 기본값이 "생각함"이라 필드를 빼면 위 버그가 그대로 돌아온다.
+
+### ✏️ 새 카드군이 안 생겼다 — `themeId`가 기존 카드군에 못을 박았다
+
+빠른 모드 연성을 실제로 돌리니 카드는 정상 생성됐고 기존 카드군 `심연의 그림자단`에 **pinned** 됐다(LLM이 재사용 규칙대로
+themeId를 복사). "AI가 결정" 모드는 프롬프트의 REUSE RULE("카드군은 적을수록 좋다")대로 거의 항상 기존을 재사용하는 게
+의도다. 문제는 **"직접 입력 / 새 카드군 창작"** 경로: `applyCustomOverrides`가 유저 이름을 `themeName`에 쓰면서 LLM이 복사해 온
+기존 `themeId`를 **지우지 않았다.** `applyGeneratedCardData`는 실재하는 `themeId`를 소속의 권위로 삼으므로(#17) 유저의
+새 카드군은 무시되고 기존 카드군에 고정됐다. → 유저 이름만 있고 id가 없으면 `themeId = null`. 소속 판정은 `proposeArchetype`
+(문자열·임베딩 게이트 → 회색지대만 LLM 판정)에 맡긴다. 임베딩 게이트는 새 이름 6종("기계 공학단", "해적 연합" 등)을 전부
+미흡수로 판정했다 — 게이트 임계값(0.72)은 문제가 아니었다.
+
+### 검증
+- 프로브 3종(위 표). `applyCustomOverrides({themeId:'theme_frost_coven'}, {themeName:'기계 공학단'})` → `themeId: null`.
+- 빠른 모드 연성 실제 1회: 19초, 카드 생성·소속 고정 정상.
+- 추론 모드 `callOllamaChat({reasoningMode:'deep'})`(think 미지정·JSON) 실제 1회: 69초(1단계 기획 + 2단계 정형화), 12개 키의 카드 JSON 파싱 성공, 사고 과정 10,474자 캡처. 예전 같은 호출은 본문 0자로 실패했다.

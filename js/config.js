@@ -809,30 +809,23 @@ export function enforcePowerBudget(cardData, skill) {
     }
   };
 
-  // 3. 🐛 **스탯을 먼저 깎는다** (등급 하한까지).
-  //
-  //    예전에는 효과 제거가 먼저였다. 그래서 스탯 상한 근처의 카드는 효과를
-  //    통째로 잃고 바닐라가 됐다 (합성 최악 조건에서 23%).
-  //    효과는 카드의 **정체성**이고 스탯은 상대적으로 대체 가능하다 —
-  //    "12 피해를 주는 8/18"이 "아무것도 안 하는 10/22"보다 카드답다.
-  //
-  //    ⚠️ 등급 하한 아래로는 여기서 내려가지 않는다. 그 아래까지 깎으면
-  //       등급 표기와 실제 성능이 어긋난다. 그건 5단계의 일이다.
+  // 3. 🛡️ **스탯을 먼저 깎는다** (기초 스탯보다 효과를 우선 보존).
+  //    유저 지침: "기본적으로 기초 스탯보다는 효과 쪽이 좀 더 남았으면 좋겠어. 스탯을 먼저 깎는 거지."
+  //    효과는 카드의 **정체성**이고 스탯은 상대적으로 대체 가능하다.
+  //    3-a: 먼저 등급 하한까지 스탯을 깎는다.
+  //    3-b: 효과가 지워질 위기라면, 효과를 지우기 전에 스탯을 절대 하한(1/4/0)까지 먼저 깎아 효과를 사수한다.
   const isBodyless = (cardType === 'spell' || cardType === 'trap');
   if (!isBodyless) {
     shaveStats(caps.atkRange[0], caps.hpRange[0], caps.defRange[0]);
+    if (usedPower() > affordablePower(rarity, cost, cardType) && !out.isVanilla) {
+      shaveStats(1, 4, 0);
+    }
   }
 
-  // 4. 그래도 넘치면 비싼 효과부터 제거
-  //    🏛️ 여기에도 건축물 예외가 있었지만 없앴다 (위 1단계 주석 참고).
-  //       타입별 예산이 생긴 뒤로는 건축물 패시브가 예산에 정상적으로 들어간다.
-  //
-  //    ⚠️ **소환수가 아니면 마지막 효과는 남긴다.**
-  //    소환수는 효과가 없어도 스탯으로 싸우지만, 마법·함정·건축물은 효과가
-  //    **전부**다. 효과를 다 지우면 발동해도 아무 일이 없는 백지 카드가 된다.
-  //    (실측: 효과 없는 함정 "운명을 뒤집는 계략"이 실제로 생성됐다)
-  //    남은 초과분은 5단계 스탯 깎기와 7단계 코스트 인상이 감당한다.
-  const mustKeepEffect = (cardType !== 'unit');
+  // 4. 그래도 넘치면 비싼 부가 효과부터 제거
+  //    ⚠️ 바닐라 의도(isVanilla: true)가 아니면 마지막 1개 핵심 효과는 반드시 남긴다.
+  //    스탯을 깎아서라도 카드의 개성(스킬)을 살리고, 남은 초과분은 7단계 코스트 인상으로 지불한다.
+  const mustKeepEffect = !out.isVanilla;
   let effects = listActiveEffects(out).sort((a, b) => b.cost - a.cost);
   for (const e of effects) {
     if (usedPower() <= affordablePower(rarity, cost, cardType)) break;
@@ -842,8 +835,10 @@ export function enforcePowerBudget(cardData, skill) {
     removed.push({ ...e, reason: `예산 초과 (${rarity} / 마나 ${cost})` });
   }
 
-  // 5. 그래도 넘치면 등급 하한 **아래로도** 깎는다 (절대 하한: 공1 / 체4 / 방0)
-  shaveStats(1, 4, 0);
+  // 5. 스탯 절대 하한 점검 (공1 / 체4 / 방0)
+  if (!isBodyless) {
+    shaveStats(1, 4, 0);
+  }
 
   // 6. 🃏 효과가 하나도 안 남았으면 **바닐라 카드**가 된다.
   //
@@ -861,7 +856,15 @@ export function enforcePowerBudget(cardData, skill) {
   const realEffects = listActiveEffects(out).filter(e => e.key !== 'trapTrigger');
   if (realEffects.length === 0) {
     if (cardType === 'unit') {
-      out.isVanilla = true;
+      if (out.isVanilla) {
+        // 유저가 의도적으로 바닐라로 만든 경우 유지
+      } else {
+        // ⚔️ 유저 지침: "기본적으로 기초 스탯보다는 효과 쪽이 좀 더 남았으면 좋겠어"
+        // 바닐라 전락 방지 — 등급 하한 기본 피해 효과를 부여하고 스탯을 깎아 밸런스를 맞춘다.
+        out.damage = (caps.spellDamage && caps.spellDamage[0]) || 10;
+        out.isVanilla = false;
+        shaveStats(1, 4, 0);
+      }
     } else if (cardType === 'structure') {
       // ⚠️ `||`로는 부족하다. 예산이 오라만 지우고 **빈 객체 `{}`**를 남기면
       //    truthy라서 폴백이 안 걸리고, 설명문이 통째로 비어 버린다 (실측).
@@ -1525,7 +1528,21 @@ export function sanitizeAndClampCardData(cardData) {
   // 2. 스킬 수치 정수화 및 클램핑
   // 🐛 수정: 예전에는 cardData.skill만 봤다. 스타터 카드와 카드팩 카드는
   //          skills[] 배열만 갖고 있어서, 이 함수를 태우면 효과가 통째로 사라졌다.
-  const sourceSkill = cardData.skill || (Array.isArray(cardData.skills) && cardData.skills[0]) || null;
+  let sourceSkill = cardData.skill || (Array.isArray(cardData.skills) && cardData.skills[0]) || null;
+  if (typeof sourceSkill === 'string') {
+    sourceSkill = { description: sourceSkill };
+  } else if (!sourceSkill && (cardData.damage || cardData.shield || cardData.heal || cardData.skillName || cardData.statusEffect)) {
+    sourceSkill = {
+      name: cardData.skillName || `${cardData.name || '영웅'}의 비기`,
+      description: cardData.skillDesc || cardData.description,
+      damage: cardData.damage || 0,
+      shield: cardData.shield || 0,
+      heal: cardData.heal || 0,
+      multiHit: cardData.multiHit,
+      drawCards: cardData.drawCards,
+      statusEffect: cardData.statusEffect
+    };
+  }
   const skill = sourceSkill ? { ...sourceSkill } : {};
   if (skill.damage !== undefined && skill.damage > 0) {
     skill.damage = Math.min(caps.spellDamage[1], Math.max(caps.spellDamage[0] - 2, parseInt(skill.damage) || 0));

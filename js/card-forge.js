@@ -113,6 +113,8 @@ export async function generatePromptWithLLM(isRandom = false) {
   if (btnEl) btnEl.disabled = true;
 
   const targetType = currentForgeCardType || 'unit';
+  const elementSelect = document.getElementById('forge-element');
+  const targetElem = (elementSelect && elementSelect.value) || 'fire';
   // 컨셉과 의미가 가까운 카드군만 싣는다 (전체를 실으면 컨텍스트가 넘친다)
   const knownThemes = await getRelevantArchetypesPrompt(concept || targetType, 6);
 
@@ -262,8 +264,7 @@ ${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
 ⚖️ 타입별 효과 예산 (카드 타입마다 넣을 수 있는 효과의 양이 다르다):
-- **소환수**는 스탯(공/체/방)이 예산을 많이 쓴다 → 효과는 **1~2개**로 절제하라.
-  낮은 등급 소환수는 효과가 아예 없는 것도 정상이다 (바닐라 카드).
+- **소환수**는 스탯(공/체/방)과 함께 **고유한 전투 스킬(피해, 방어막, 회복, 상태이상 등)**을 반드시 1개 이상 가져야 한다. 스탯보다 효과가 카드의 정체성이다.
 - **건축물**은 공격하지 않으므로 체력이 싸다 → 지속 패시브 + 효과 1개 정도.
 - **마법**은 스탯이 없어 예산 전부가 효과로 가지만, 일회용이라 총량이 낮다 → **1~2개**.
 - **함정**은 조건부라 총량 보상을 받는다 → 같은 마나에서 가장 많은 효과 (**2~3개**).
@@ -348,7 +349,6 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "skill": {
     "name": "컨셉에 맞춘 독창적인 스킬명",
     "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",
-    "isVanilla": "효과 없는 바닐라로 만들 때만 true. 그러면 아래 수치는 전부 0/생략.",
     "flavorText": "카드의 분위기 한 줄 (40자 이내). ⚠️ 효과·수치를 쓰지 마라 — 규칙 텍스트는 시스템이 데이터에서 만든다.",
     "cost": 1-3,
     "damage": 0-22,
@@ -428,19 +428,84 @@ ${customDirective}`;
   const currentReasoningMode = reasoningSelect ? reasoningSelect.value : (state.settings.reasoningMode || 'fast');
 
   try {
-    const basePrompt = `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`;
-    const sysMsg = { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' };
+    let cardData;
+    let deepPlanText = '';
 
-    let cardData = await callOllamaChat({
-      messages: [sysMsg, { role: 'user', content: basePrompt }],
-      timeoutMs: 300000, // 5분 타임아웃
-      reasoningMode: currentReasoningMode
-    });
+    // 🧠 추론 모드 분기 (Separated Reasoning Pipeline)
+    if (currentReasoningMode === 'deep') {
+      // 🧠 1단계: 모델의 실제 Thinking 모드로 심층 추론 실행 (think: true)
+      if (loadingEl) {
+        const t = loadingEl.querySelector('span');
+        if (t) t.innerText = '🧠 1/2단계: Qwen 3.5 모델이 캐릭터 서사 및 스킬 밸런스를 심층 추론(Thinking) 중...';
+      }
+      const brainstormPrompt = `당신은 전설적인 서브컬처 TCG 카드 디자이너입니다.
+유저 콘셉트: "${concept || '강력한 판타지 영웅'}"
+카드 타입: ${targetType}
+속성: ${targetElem}
+
+이 카드의 깊이 있는 세계관과 전략적 가치를 위해 심층적으로 추론하고 기획해 주세요:
+1. 캐릭터 서사 및 외형 콘셉트 심층 분석
+2. 속성과 카드 타입에 걸맞은 전투 스타일 추론
+3. 독창적인 시그니처 스킬의 전략적 메커니즘 및 밸런스 추론 (피해, 방어막, 회복, 연타, 상태이상 등)
+4. 스탯 vs 스킬 파워 분배 근거 (기초 스탯보다 고유 스킬 효과를 우선 살리는 근거)
+5. 한 줄 명대사 (플레이버 텍스트) 및 비주얼 키워드`;
+
+      let planText = '';
+      try {
+        planText = await callOllamaChat({
+          messages: [
+            { role: 'system', content: 'You are a master Anime TCG card designer. Analyze the character concept deeply in Korean: lore, combat style, innovative skill mechanics, and stat power budget reasoning.' },
+            { role: 'user', content: brainstormPrompt }
+          ],
+          timeoutMs: 120000,
+          reasoningMode: 'deep',
+          think: true, // 🧠 실제 모델의 네이티브 Chain-of-Thought Thinking 활성화!
+          format: null // 자유 서술형 텍스트로 심층 추론
+        });
+        deepPlanText = planText;
+        window.__deepPlanText = planText;
+      } catch (e) {
+        console.warn('[Forge Deep] 1단계 자유 기획 생략, 직접 기획으로 진행:', e.message);
+        window.__deepPlanError = e.message;
+      }
+
+      // ⚡ 2단계: 정형화 카드 데이터 변환 (JSON Structuring)
+      if (loadingEl) {
+        const t = loadingEl.querySelector('span');
+        if (t) t.innerText = '⚡ 2/2단계: 추론된 기획안을 TCG 카드 데이터로 정형화 중...';
+      }
+      let cleanPlan = (planText && typeof planText === 'string') ? planText.trim() : '';
+      if (cleanPlan.length > 3000) {
+        cleanPlan = cleanPlan.slice(-2800);
+      }
+      const structuredPrompt = cleanPlan.length > 30
+        ? `${userDirective}\n\n[1단계 심층 추론 및 기획안]\n${cleanPlan}\n\n위 기획안의 서사와 스킬을 충실히 반영하여, 아래 규격에 맞게 카드 데이터를 JSON으로 출력하세요:\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`
+        : `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`;
+
+      const sysMsg = { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' };
+      cardData = await callOllamaChat({
+        messages: [sysMsg, { role: 'user', content: structuredPrompt }],
+        timeoutMs: 120000,
+        reasoningMode: 'deep',
+        think: false, // ⚡ 2단계는 고속 정형화이므로 think: false
+        format: 'json'
+      });
+    } else {
+      // ⚡ Fast 모드: 즉시 단일 호출로 고속 JSON 생성
+      const basePrompt = `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`;
+      const sysMsg = { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' };
+
+      cardData = await callOllamaChat({
+        messages: [sysMsg, { role: 'user', content: basePrompt }],
+        timeoutMs: 120000,
+        reasoningMode: 'fast',
+        format: 'json'
+      });
+    }
+
+    cardData = normalizeIncomingCardData(cardData);
 
     // 🔁 규칙 위반이면 **한 번만** 되묻는다.
-    //    프롬프트로 예방하고, 어기면 짚어서 고치게 하고,
-    //    그래도 어기면 sanitizeAndClampCardData가 결정론적으로 잘라낸다.
-    //    ⚠️ 재시도를 늘리면 카드 한 장에 수십 초가 더 든다. 1회로 고정.
     const problems = validateCardPlan(cardData, targetType);
     if (problems.length > 0) {
       console.info('[Forge] 규칙 위반 — LLM에게 재요청합니다:\n' + problems.map(p => ' • ' + p).join('\n'));
@@ -449,14 +514,18 @@ ${customDirective}`;
         if (t) t.innerText = '🔁 규칙 위반을 고쳐 다시 기획 중...';
       }
       try {
+        const sysMsg = { role: 'system', content: 'You are an authentic TCG card designer. Output ONLY a single valid raw JSON object.' };
+        const basePrompt = `${userDirective}\nRandom Seed Nonce: ${nonceId}\n${systemPrompt}`;
         const retry = await callOllamaChat({
           messages: [sysMsg, { role: 'user', content: basePrompt + buildRetryDirective(problems) }],
-          timeoutMs: 300000,
-          reasoningMode: currentReasoningMode
+          timeoutMs: 120000,
+          reasoningMode: 'fast',
+          think: false,
+          format: 'json'
         });
-        const stillBad = validateCardPlan(retry, targetType);
-        // 재시도가 더 낫거나 같으면 채택한다 (더 나빠졌으면 원본을 쓴다)
-        if (stillBad.length < problems.length) cardData = retry;
+        const normRetry = normalizeIncomingCardData(retry);
+        const stillBad = validateCardPlan(normRetry, targetType);
+        if (stillBad.length < problems.length) cardData = normRetry;
         if (stillBad.length > 0) {
           console.info(`[Forge] 재요청 후에도 ${stillBad.length}건 남음 — 결정론적 보수로 처리합니다.`);
         }
@@ -465,8 +534,25 @@ ${customDirective}`;
       }
     }
 
-    applyGeneratedCardData(cardData);
+    await applyGeneratedCardData(cardData);
+
+    // 🧠 UI에 실제 추론 과정(Reasoning Log) 표시
+    const reasoningDetails = document.getElementById('forge-reasoning-details');
+    const reasoningContent = document.getElementById('forge-reasoning-content');
+    if (reasoningDetails && reasoningContent) {
+      const displayReasoning = deepPlanText || window.__lastReasoning;
+      if (displayReasoning && typeof displayReasoning === 'string' && displayReasoning.trim().length > 10) {
+        reasoningContent.textContent = displayReasoning.trim();
+        reasoningDetails.classList.remove('hidden');
+        reasoningDetails.open = true; // 🧠 유저가 모델의 심층 사고 과정을 바로 확인할 수 있도록 자동 펼침
+      } else {
+        reasoningDetails.classList.add('hidden');
+        reasoningDetails.open = false;
+      }
+    }
   } catch (err) {
+    console.error('LLM 생성 실패 상세 스택:', err);
+    window.__lastForgeError = { message: err.message, stack: err.stack };
     console.warn('LLM 생성 실패 또는 타임아웃, 스마트 규칙 기반 생성기로 대체합니다:', err.message);
     generatePromptSmartRandom(concept);
   } finally {
@@ -604,10 +690,97 @@ export function generatePromptSmartRandom(concept) {
   }
 }
 
+/**
+ * 📦 LLM 응답 카드 데이터 사전 정규화:
+ * - 최상위에 흩어진 flat 스킬 필드(damage, shield, heal, skillName 등)를 skill 객체로 결합
+ * - skill이 문자열인 경우 { description: ... } 객체로 변환
+ * - power, value, atk 등 동의어 필드를 damage 등으로 매핑
+ */
+export function normalizeIncomingCardData(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out = { ...raw };
+
+  let s = out.skill;
+  if (Array.isArray(out.skills) && out.skills[0] && typeof out.skills[0] === 'object') {
+    s = s || out.skills[0];
+  } else if (out.ability && typeof out.ability === 'object') {
+    s = s || out.ability;
+  }
+
+  if (typeof s === 'string') {
+    s = { description: s };
+  } else if (s && typeof s === 'object') {
+    s = { ...s };
+  } else {
+    s = {};
+  }
+
+  // flat 필드가 최상위에 있다면 s로 통합
+  if (out.skillName && !s.name) s.name = out.skillName;
+  if (out.skillDesc && !s.description) s.description = out.skillDesc;
+  if (out.damage !== undefined && s.damage === undefined) s.damage = out.damage;
+  if (out.shield !== undefined && s.shield === undefined) s.shield = out.shield;
+  if (out.heal !== undefined && s.heal === undefined) s.heal = out.heal;
+  if (out.multiHit !== undefined && s.multiHit === undefined) s.multiHit = out.multiHit;
+  if (out.drawCards !== undefined && s.drawCards === undefined) s.drawCards = out.drawCards;
+  if (out.manaGain !== undefined && s.manaGain === undefined) s.manaGain = out.manaGain;
+  if (out.statusEffect !== undefined && s.statusEffect === undefined) s.statusEffect = out.statusEffect;
+  if (out.passiveEffect !== undefined && s.passiveEffect === undefined) s.passiveEffect = out.passiveEffect;
+  if (out.destroy !== undefined && s.destroy === undefined) s.destroy = out.destroy;
+  if (out.searchDeck !== undefined && s.searchDeck === undefined) s.searchDeck = out.searchDeck;
+  if (out.summonToken !== undefined && s.summonToken === undefined) s.summonToken = out.summonToken;
+  if (out.pierceShield !== undefined && s.pierceShield === undefined) s.pierceShield = out.pierceShield;
+  if (out.doubleCastNext !== undefined && s.doubleCastNext === undefined) s.doubleCastNext = out.doubleCastNext;
+  if (out.flavorText !== undefined && s.flavorText === undefined) s.flavorText = out.flavorText;
+  if (out.isVanilla !== undefined && s.isVanilla === undefined) s.isVanilla = out.isVanilla;
+
+  // 동의어 필드 보정
+  if (s.damage === undefined) {
+    if (s.power !== undefined) s.damage = s.power;
+    else if (s.atk !== undefined) s.damage = s.atk;
+    else if (s.value !== undefined && (s.effectType === 'damage' || !s.effectType)) s.damage = s.value;
+  }
+  if (s.shield === undefined && s.value !== undefined && s.effectType === 'shield') {
+    s.shield = s.value;
+  }
+  if (s.heal === undefined && s.value !== undefined && s.effectType === 'heal') {
+    s.heal = s.value;
+  }
+
+  // ⚔️ 유저 지침: "기본적으로 기초 스텟 보다는 효과쪽이 좀더 남았으면 좋겠어"
+  // LLM이 isVanilla를 켰거나 효과 수치를 누락했어도, 카드의 고유 스킬을 사수한다.
+  s.isVanilla = false;
+  out.isVanilla = false;
+
+  const hasEffect = (s.damage > 0) || (s.shield > 0) || (s.heal > 0) || (s.drawCards > 0)
+    || (s.manaGain > 0) || (s.multiHit > 1) || s.pierceShield || s.doubleCastNext
+    || (s.statusEffect && s.statusEffect.type && s.statusEffect.type !== 'none')
+    || s.destroy || s.searchDeck || s.summonToken || s.passiveEffect;
+
+  if (!hasEffect) {
+    const desc = s.description || '';
+    const dmgMatch = desc.match(/(\d+)\s*(?:피해|데미지|damage)/i);
+    const shdMatch = desc.match(/(\d+)\s*(?:방어막|실드|shield)/i);
+    const healMatch = desc.match(/(\d+)\s*(?:회복|치유|heal)/i);
+
+    if (dmgMatch) s.damage = parseInt(dmgMatch[1]);
+    else if (shdMatch) s.shield = parseInt(shdMatch[1]);
+    else if (healMatch) s.heal = parseInt(healMatch[1]);
+    else {
+      const r = out.rarity || 'rare';
+      s.damage = r === 'legendary' ? 22 : (r === 'epic' ? 18 : (r === 'rare' ? 14 : 10));
+    }
+  }
+
+  out.skill = s;
+  out.skills = [s];
+  return out;
+}
+
 export async function applyGeneratedCardData(rawData) {
-  // 🎛️ 사용자 지정 값을 먼저 덮어쓴 뒤 밸런스 검증(등급·마나 예산)을 태운다.
-  //     순서가 반대면 사용자가 정한 수치가 검증을 건너뛴다.
-  const data = sanitizeAndClampCardData(applyCustomOverrides(rawData, readCustomOverrides()));
+  // 🎛️ 사전 정규화 후 사용자 지정 값을 덮어쓰고 밸런스 검증(등급·마나 예산)을 태운다.
+  const normalized = normalizeIncomingCardData(rawData);
+  const data = sanitizeAndClampCardData(applyCustomOverrides(normalized, readCustomOverrides()));
   // 📐 정산을 마친 수치를 기억한다 — 저장이 다시 굴리지 않고 이 값을 쓴다 (DECISIONS #93)
   currentPlannedStats = pickPlannedStats(data);
   if (data.name) document.getElementById('forge-name').value = data.name;
@@ -660,6 +833,9 @@ export async function applyGeneratedCardData(rawData) {
   }
 
   if (parsedSkill) {
+    if (!parsedSkill.name || !parsedSkill.name.trim()) {
+      parsedSkill.name = `${data.name || '영웅'}의 비기`;
+    }
     if (typeof parsedSkill.multiHit === 'number') {
       parsedSkill.multiHit = Math.min(3, Math.max(1, Math.round(parsedSkill.multiHit)));
     }

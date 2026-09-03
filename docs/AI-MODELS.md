@@ -187,6 +187,11 @@ const MODEL_PROFILES = [
 
 `think` 파라미터도 Qwen 3 계열 전용이라 `supportsThinking()`으로 분기합니다.
 
+⚠️ **생각(think)과 JSON(`format`)을 한 호출에 함께 켜지 마세요.** Qwen 3.5는 `think:true` + `format:json`이면
+`num_predict` 예산을 전부 thinking에 쓰고 content가 빈 채 `done_reason: length`로 끝납니다 (실측: 예산 400·700 모두 0자).
+이 모델은 think 필드를 **생략해도** 생각하므로 JSON 호출엔 `think:false`를 명시합니다. 심층 추론이 필요하면
+`callOllamaChat`이 두 단계(자유 서술 기획 → JSON 정형화)로 나눕니다 → DECISIONS #96.
+
 ---
 
 ---

@@ -84,7 +84,7 @@ export function supportsThinking(modelName = '') {
  * 🤖 로컬 Ollama /api/chat 호출 및 클린 JSON 추출
  * 넉넉한 300초(5분) 심층 추론 타임아웃
  */
-export async function callOllamaChat({ messages, model = null, temperature = 0.7, timeoutMs = 300000, reasoningMode = null }) {
+export async function callOllamaChat({ messages, model = null, temperature = 0.7, timeoutMs = 300000, reasoningMode = null, format = 'json', think = undefined }) {
   const baseUrl = state.settings.llmUrl || 'http://127.0.0.1:11434';
   let targetModel = model || state.settings.llmModel || 'qwen3.5:4b';
   const mode = reasoningMode || state.settings.reasoningMode || 'fast';
@@ -104,12 +104,34 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
     }
   }
 
+  // 🧠 생각(thinking)과 JSON 출력은 **한 호출에 같이 쓰지 않는다.**
+  //    🐛 Qwen3.5는 think:true + format:json이면 num_predict 예산을 전부 thinking에 쓰고 content가 **빈 채**
+  //       done_reason:'length'로 끝난다 (실측 2026-09-03: 예산 400·700 모두 content 0자, thinking 1.2~2.4천 자).
+  //       코드는 그 thinking 텍스트를 JSON으로 파싱하려다 "JSON 파싱 실패"를 냈다 — 추론 모드의
+  //       카드팩·보스 연성·프로필처럼 think를 안 넘긴 호출이 전부 이 길이었다. (DECISIONS #96)
+  //    → JSON 호출은 항상 think:false. 심층 추론은 **두 단계**로 나눈다:
+  //       1) think:true · 자유 서술로 기획   2) 그 기획안을 붙여 think:false · JSON 정형화.
+  //       (card-forge의 심층 파이프라인이 이미 이렇게 하고 있었다 — 그것을 모든 호출부의 기본으로 올린다)
+  const wantsThinking = think === true || (think === undefined && isDeep && supportsThinking(targetModel));
+  if (format && wantsThinking) {
+    const plan = await callOllamaChat({
+      messages, model: targetModel, temperature, timeoutMs, reasoningMode: 'deep', think: true, format: null
+    });
+    let planText = (typeof plan === 'string') ? plan.trim() : '';
+    if (planText.length > 3000) planText = planText.slice(-2800);
+    const withPlan = planText.length > 30 ? appendToLastUserMessage(messages,
+      `\n\n[1단계 심층 기획안 — 이 내용을 충실히 반영하되, 지금은 위 규격의 JSON 객체 하나만 출력할 것]\n${planText}`) : messages;
+    return callOllamaChat({
+      messages: withPlan, model: targetModel, temperature, timeoutMs, reasoningMode: 'deep', think: false, format
+    });
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   // 🧠 심층 추론(Reasoning) vs 초고속(Fast) 지시 주입
   const systemContent = isDeep
-    ? 'You are a creative Anime TCG card designer. Think deeply about character lore, game balance, and visual aesthetic, then output a valid raw JSON object.'
+    ? 'You are a creative Anime TCG card designer. Think deeply about character lore, archetype, and balanced skill effects, then output the result.'
     : 'You are a fast, precise Anime TCG card designer. Output the valid raw JSON object directly without overthinking.';
 
   const optimizedMessages = [
@@ -125,33 +147,36 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
     const bodyPayload = {
       model: targetModel,
       messages: optimizedMessages,
-      format: 'json',
       stream: false,
       options: {
         temperature: effectiveTemp,
         top_p: 0.9,
         top_k: 50,
-        // 🇰🇷 한국어 반복 페널티 완화 (2026-09-01)
-        // 한국어는 조사(은/는/이/가)·어미(~합니다)·게임 용어("피해","방어막")가
-        // 정상적으로 반복된다. presence/frequency 페널티를 걸면 모델이 올바른 조사를
-        // 피해 어색한 대체어를 고른다 ("카드를 서치한다" -> "카드에서 탐색하다").
-        // 다양성은 seed 랜덤화 + nonce로 이미 확보하므로 페널티는 0으로 둔다.
         presence_penalty: 0,
         frequency_penalty: 0,
-        repeat_penalty: 1.05,   // 1.15는 한국어에 과함. 1.0~1.08 권장 범위
+        repeat_penalty: 1.05,
         seed: randomSeed,
         repeat_last_n: 64,
-        num_ctx: isDeep ? 16384 : 8192,
-        num_predict: isDeep ? -1 : 1024,
+        num_ctx: 16384,
+        // 🐛 예전엔 think:true에 1500이었다 — Qwen3.5는 생각만 700토큰을 넘겨 본문을 쓰기 전에 잘렸다.
+        //    JSON은 생각을 끄므로 예산 전부가 본문이다. 보스 연성(콤보 3패턴)처럼 긴 JSON도 1024를 넘길 수 있어 2048.
+        num_predict: (think === true) ? 3072 : 2048,
         stop: STOP_TOKENS
       }
     };
 
-    // ⚡ 과추론 제어: fast 모드에서 thinking을 끈다.
-    // think 파라미터는 Qwen 3 계열 전용이다. Gemma 등 thinking 모드가 없는 모델은
-    // 이 필드를 무시하므로 보내도 무해하지만, 지원 모델에만 보내 의도를 명확히 한다.
-    if (!isDeep && supportsThinking(targetModel)) {
-      bodyPayload.think = false;
+    if (format) {
+      bodyPayload.format = format;
+    }
+
+    // 🧠 생각(Thinking) 모드 제어 — 위 분기 덕에 여기 오는 JSON 호출은 늘 think:false다.
+    //    명시값이 있으면 그것을, 없으면 (자유 서술 + deep + 지원 모델)일 때만 true.
+    //    ⚠️ 생각을 지원하는 모델에는 **반드시 false를 명시**한다 — Qwen3.5는 기본값이 "생각함"이라
+    //       필드를 빼면 위 버그가 그대로 돌아온다 (실측: think 생략 + json → content 0자).
+    if (think !== undefined) {
+      bodyPayload.think = !!think;
+    } else if (supportsThinking(targetModel)) {
+      bodyPayload.think = !format && isDeep;
     }
 
     const response = await fetch(`${baseUrl}/api/chat`, {
@@ -163,17 +188,32 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`Ollama HTTP ${response.status} 응답 오류 (모델: ${targetModel})`);
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Ollama HTTP ${response.status} 응답 오류 (모델: ${targetModel}): ${errText}`);
     }
 
     const data = await response.json();
-    if (data.message && data.message.thinking) {
-      console.log('%c🧠 [Qwen 3.5 카드 설계 추론 과정 (Reasoning)]', 'color: #a855f7; font-weight: bold;\n', data.message.thinking);
+    const thinkingText = (data.message && data.message.thinking) ? data.message.thinking.trim() : '';
+    if (thinkingText) {
+      console.log('%c🧠 [Qwen 3.5 카드 설계 추론 과정 (Reasoning)]', 'color: #a855f7; font-weight: bold; font-size: 13px;\n', thinkingText);
+      window.__lastReasoning = thinkingText;
     }
 
     let raw = (data.message && data.message.content) ? data.message.content.trim() : '';
     if (!raw && data.response) raw = data.response.trim();
-    if (!raw && data.message && data.message.thinking) raw = data.message.thinking.trim();
+
+    // format이 없으면 자유 텍스트를 그대로 반환 (추론 1단계 등).
+    // 🐛 예전엔 thinking을 **우선** 돌려줬다 — 모델이 생각을 끝내고 정리해 쓴 본문(진짜 기획안)을 버리고
+    //    중언부언하는 사고 과정을 2단계 프롬프트에 붙였다. 본문이 비었을 때만 생각을 대신 쓴다.
+    if (!format) {
+      return raw || thinkingText;
+    }
+
+    // format이 json인데 본문이 비고 thinking에 json 블록이 있는 경우 보정
+    if (!raw && thinkingText) {
+      const cb = thinkingText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      raw = cb ? cb[0] : thinkingText;
+    }
 
     return repairAndParseJson(raw);
   } catch (err) {
@@ -182,37 +222,98 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
   }
 }
 
+/** 마지막 user 메시지 뒤에 텍스트를 붙인 사본 (원본 배열은 건드리지 않는다) */
+function appendToLastUserMessage(messages, text) {
+  const out = messages.map(m => ({ ...m }));
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role === 'user') { out[i].content = `${out[i].content}${text}`; return out; }
+  }
+  out.push({ role: 'user', content: text.trim() });
+  return out;
+}
+
 /**
  * 🛠️ 불완전/미완료 JSON 자동 복구 및 안전 파서
  */
 export function repairAndParseJson(raw) {
-  let text = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('JSON 파싱 실패: 응답 문자열이 비어 있습니다.');
+  }
+
+  // 0. 마크다운 코드블록(```json ... ```)이 있으면 최우선 추출
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  let text = codeBlockMatch ? codeBlockMatch[1].trim() : raw.trim();
+
+  // 1. 추론/생각 태그 및 사고 과정 헤더 제거
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+  // 미닫힘 <think>... 태그가 남아있다면 제거
+  text = text.replace(/<think>[\s\S]*$/i, '');
+  // Ollama가 message.thinking을 분리하지 못했거나 Thinking Process 헤더가 있는 경우 정리
+  text = text.replace(/^Thinking Process:[\s\S]*?(?=(?:```|\{|\n\s*\{))/i, '').trim();
 
   // 비정상적 숫자/단어 무한 반복 루프 필터링 (예: 1단, 2단, 3단...)
   text = text.replace(/(\d+단[,\s]*){3,}/g, '');
 
-  // 1. 정상 JSON 직렬화 시도
+  // 1단계: 순수 JSON 직렬화 시도 (이미 깨끗한 경우 즉시 반환)
   try {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
     return JSON.parse(text);
   } catch (e) {}
 
-  // 2. 미완료된 중괄호/대괄호/따옴표, 오타 마침표, 탈출 따옴표, 후행 콤마 자동 보정
+  // 2단계: 문자열 내 다중 객체 중 실제 카드/보스 객체 블록 탐색
+  // (사고 과정 등에 예시 조각 {"cardType": "unit"} 등이 섞여 있어도 진짜 카드 객체를 식별)
+  const extractBalancedObjects = (str) => {
+    const objs = [];
+    let depth = 0;
+    let start = -1;
+    let inQuote = false;
+    let esc = false;
+    for (let i = 0; i < str.length; i++) {
+      const c = str[i];
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === '"') { inQuote = !inQuote; continue; }
+      if (!inQuote) {
+        if (c === '{') {
+          if (depth === 0) start = i;
+          depth++;
+        } else if (c === '}') {
+          depth--;
+          if (depth === 0 && start !== -1) {
+            objs.push(str.slice(start, i + 1));
+            start = -1;
+          }
+        }
+      }
+    }
+    return objs;
+  };
+
+  const candidateBlocks = extractBalancedObjects(text);
+  // 카드 객체일 가능성이 가장 높은 블록 찾기 ("name" 및 "cardType" 또는 "skill" 보유)
+  const bestBlock = candidateBlocks.find(b => (b.includes('"name"') && (b.includes('"cardType"') || b.includes('"skill"') || b.includes('"attack"'))))
+    || candidateBlocks[candidateBlocks.length - 1] // 마지막 블록이 보통 최종 출력
+    || null;
+
+  let targetJsonStr = bestBlock || text;
+
+  // 타겟에서 정상 파싱 재시도
   try {
-    const startIdx = text.indexOf('{');
-    if (startIdx === -1) throw new Error('JSON 시작 중괄호({)가 없습니다.');
-    let sub = text.slice(startIdx);
+    return JSON.parse(targetJsonStr);
+  } catch (e) {}
 
-    // 🔧 따옴표 바깥의 오타 마침표 제거 (예: "...". , 또는 "...".\n,)
+  // 3단계: 문법적 결함 복구 (후행 콤마, 따옴표 내 개행, 미닫힘 따옴표 및 괄호 수리)
+  try {
+    let sub = targetJsonStr;
+    const firstBrace = sub.indexOf('{');
+    if (firstBrace !== -1) sub = sub.slice(firstBrace);
+
+    // 따옴표 바깥의 오타 마침표 제거
     sub = sub.replace(/"\s*\.\s*(?=[\n,\]\}])/g, '"');
-
-    // 🔧 문자열 내부의 단일따옴표 감싸기 제거 (예: "'고대의 비전석'" -> "고대의 비전석")
-    sub = sub.replace(/:\s*"\'([^\']+)\'"/g, ': "$1"');
-
-    // 🔧 이중 따옴표 탈출 찌꺼기 제거 (예: "\"적에게...\"" -> "적에게...")
-    sub = sub.replace(/:\s*"\\?"([^"]+?)\\?""\s*([,\n\}])/g, ': "$1"$2');
+    // 단일따옴표 감싸기 제거
+    sub = sub.replace(/:\s*'([^']+)'/g, ': "$1"');
+    // 후행 콤마 제거 (, } -> } 및 , ] -> ])
+    sub = sub.replace(/,\s*([\}\]])/g, '$1');
 
     let inQuote = false;
     let escaped = false;
@@ -235,16 +336,14 @@ export function repairAndParseJson(raw) {
     if (inQuote) sub += '"';
     while (openBrackets > 0) { sub += ']'; openBrackets--; }
     while (openBraces > 0) { sub += '}'; openBraces--; }
-
-    // 후행 콤마 제거 (, } -> })
     sub = sub.replace(/,\s*([\}\]])/g, '$1');
 
     return JSON.parse(sub);
   } catch (err) {
-    console.warn('[JSON Parser] 표준 복구 실패 -> 스마트 필드 추출기로 완벽 복구 시도:', err.message);
+    console.warn('[JSON Parser] 표준 복구 실패 -> 스마트 AST 추출기로 완벽 복구 시도:', err.message);
   }
 
-  // 3. 🛡️ 스마트 정규식 카드/보스 AST 추출기 (JSON 문법이 심하게 깨져도 100% 카드 데이터 복원)
+  // 4단계: 🛡️ 스마트 정규식 카드/보스 AST 추출기 (JSON 구조가 파괴되어도 효과/스탯 100% 보존)
   try {
     const getStr = (pattern, def = '') => {
       const m = text.match(pattern);
@@ -254,6 +353,11 @@ export function repairAndParseJson(raw) {
     const getNum = (pattern, def = 0) => {
       const m = text.match(pattern);
       if (m && m[1]) return parseInt(m[1], 10) || def;
+      return def;
+    };
+    const getBool = (pattern, def = false) => {
+      const m = text.match(pattern);
+      if (m && m[1]) return /true/i.test(m[1]);
       return def;
     };
 
@@ -269,16 +373,29 @@ export function repairAndParseJson(raw) {
         attack: getNum(/"attack"\s*:\s*(\d+)/i, 15),
         defense: getNum(/"defense"\s*:\s*(\d+)/i, 10),
         hp: getNum(/"hp"\s*:\s*(\d+)/i, 30),
-        visualPrompt: getStr(/"visualPrompt"\s*:\s*"([^"]+)"/i, 'masterpiece, best_quality'),
+        themeName: getStr(/"themeName"\s*:\s*["']?([^",\n\}]+)/i, null),
+        themeKeyword: getStr(/"themeKeyword"\s*:\s*["']?([^",\n\}]+)/i, null),
+        visualSeeds: getStr(/"visualSeeds"\s*:\s*["']?([^"\n\}]+)/i, ''),
         skill: {
-          name: getStr(/"skill"[\s\S]*?"name"\s*:\s*["']?([^",\n\}]+)/i, `${extractedName}의 일격`),
-          description: getStr(/"description"\s*:\s*["']?([^"\n\}]+)/i, '강력한 피해를 입힙니다.'),
+          name: getStr(/"skill"[\s\S]*?"name"\s*:\s*["']?([^",\n\}]+)/i, getStr(/"skillName"\s*:\s*["']?([^",\n\}]+)/i, `${extractedName}의 일격`)),
+          description: getStr(/"description"\s*:\s*["']?([^"\n\}]+)/i, '효과를 발동합니다.'),
+          flavorText: getStr(/"flavorText"\s*:\s*["']?([^"\n\}]+)/i, ''),
+          isVanilla: getBool(/"isVanilla"\s*:\s*(true|false)/i, false),
           cost: getNum(/"skill"[\s\S]*?"cost"\s*:\s*(\d+)/i, 2),
-          damage: getNum(/"damage"\s*:\s*(\d+)/i, 15),
+          damage: getNum(/"damage"\s*:\s*(\d+)/i, 0),
           shield: getNum(/"shield"\s*:\s*(\d+)/i, 0),
           heal: getNum(/"heal"\s*:\s*(\d+)/i, 0),
           multiHit: getNum(/"multiHit"\s*:\s*(\d+)/i, 1),
           drawCards: getNum(/"drawCards"\s*:\s*(\d+)/i, 0),
+          manaGain: getNum(/"manaGain"\s*:\s*(\d+)/i, 0),
+          pierceShield: getBool(/"pierceShield"\s*:\s*(true|false)/i, false),
+          doubleCastNext: getBool(/"doubleCastNext"\s*:\s*(true|false)/i, false),
+          destroy: getNum(/"destroy"\s*:\s*(\d+)/i, 0),
+          searchDeck: getNum(/"searchDeck"\s*:\s*(\d+)/i, 0),
+          summonToken: getNum(/"summonToken"\s*:\s*(\d+)/i, 0),
+          damageReduction: getNum(/"damageReduction"\s*:\s*(\d+)/i, 0),
+          attackDown: getNum(/"attackDown"\s*:\s*(\d+)/i, 0),
+          silence: getBool(/"silence"\s*:\s*(true|false)/i, false),
           statusEffect: {
             type: getStr(/"statusEffect"[\s\S]*?"type"\s*:\s*["']?([^",\n\}]+)/i, 'none'),
             duration: getNum(/"duration"\s*:\s*(\d+)/i, 0),

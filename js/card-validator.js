@@ -30,7 +30,9 @@ const IMPLEMENTED_FIELDS = new Set([
   // 🃏 바닐라 카드의 플레이버 텍스트 (효과가 없을 때 설명 슬롯에 들어간다)
   'flavorText', 'isVanilla',
   // 💫 본체 지정 상태이상 옵트인 (BODY_STATUS_COST_MULT 할증을 치른다)
-  'bodyStatus'
+  'bodyStatus',
+  // 🏷️ LLM이 종종 함께 반환하는 무해한 메타/참조 필드 (불필요한 재요청 방지)
+  'effectType', 'value', 'element', 'target', 'power', 'type', 'buff', 'duration', 'scope', 'keywords'
 ]);
 
 /** 상대 행동/지속 조건에 반응하는 문구 — 함정 전용이다 */

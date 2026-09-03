@@ -850,6 +850,17 @@
             <!-- JS로 동적 렌더링 -->
           </div>
 
+          <!-- 🧠 AI 심층 추론 과정 (Reasoning Log) 표시 영역 -->
+          <details id="forge-reasoning-details" class="hidden w-full max-w-[320px] rounded-xl border border-purple-500/50 bg-[#151128] overflow-hidden transition shadow-lg shadow-purple-950/40">
+            <summary class="cursor-pointer px-3 py-2 text-xs font-bold text-purple-300 hover:text-purple-100 flex items-center justify-between select-none">
+              <span class="flex items-center gap-1.5"><i data-lucide="brain" class="w-4 h-4 text-purple-400"></i> <span>🧠 AI 심층 추론(Thinking) 과정</span></span>
+              <span class="text-[10px] text-purple-400 underline">확인</span>
+            </summary>
+            <div class="p-3 border-t border-purple-900/60">
+              <pre id="forge-reasoning-content" class="text-[11px] font-mono leading-relaxed whitespace-pre-wrap text-slate-300 bg-black/60 p-2.5 rounded-lg border border-purple-950 max-h-60 overflow-y-auto"></pre>
+            </div>
+          </details>
+
           <!-- 덱에 저장 완료 알림 / 액션 버튼 -->
           <div id="forge-success-box" class="hidden w-full max-w-[300px] p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-xs text-center font-bold space-y-2">
             <div class="flex items-center justify-center gap-1.5">

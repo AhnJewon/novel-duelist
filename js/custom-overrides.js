@@ -88,7 +88,14 @@ export function applyCustomOverrides(data, o) {
   // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"
   //    지시에만 기대면 4B 모델이 흘려서 소속이 조용히 새 카드군으로 샌다.
   //    코드에서 못을 박아야 키워드를 바꿔도 소속이 안 바뀐다.
-  if (o.themeId) out.themeId = o.themeId;
+  if (o.themeId) {
+    out.themeId = o.themeId;
+  } else if (o.themeName) {
+    // ✏️ 새 카드군 창작 — 유저가 이름만 줬다. 그런데 4B 모델은 "겹치면 기존 id를 복사하라"는 재사용 규칙을
+    //    따라 기존 themeId를 같이 뱉는다. 그걸 남겨두면 applyGeneratedCardData가 그 기존 카드군에 **고정**해
+    //    유저의 새 카드군은 영영 생기지 않았다 (DECISIONS #96). 소속 판정은 proposeArchetype(게이트·LLM 판정)에 맡긴다.
+    out.themeId = null;
+  }
   if (o.themeName) out.themeName = o.themeName;
   if (o.themeKeyword) out.themeKeyword = o.themeKeyword;
   if (o.rarity) out.rarity = o.rarity;
