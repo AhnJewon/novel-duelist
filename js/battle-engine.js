@@ -137,9 +137,12 @@ export function getSide(key) {
   return sides[key];
 }
 
-/** 두 진영 요약 — 동기화 검증·디버깅용 */
+/** 두 진영 요약 — 동기화 검증·디버깅용 (두 클라이언트에서 같은 시점에 찍어 비교한다) */
 export function describeBattleSides() {
-  return { player: describeSide(sides.player), boss: describeSide(sides.boss) };
+  return {
+    player: describeSide(sides.player), boss: describeSide(sides.boss),
+    seed: currentBattleSeed(), turn: state.turnCount, active: activeSideKey, leader: leaderKey
+  };
 }
 
 /**
@@ -236,6 +239,7 @@ export const __test = {
     state.bossMaxMana = 1;
     activeSideKey = SIDE_PLAYER;
     leaderKey = SIDE_PLAYER;
+    reshuffleGen = { player: 0, boss: 0 };
     botController.reset();
     // ⚠️ 대상 선택 모드도 반드시 끈다. 켜진 채로 남으면 다음 검사의
     //    attackWithMinion이 "취소"로 해석해 곧바로 반환한다 —
@@ -333,20 +337,69 @@ export function buildBossTacticalDeck(boss) {
   return battleRng().shuffle(bossDeck);
 }
 
+// 🎲 좌석 — 리더 A, 팔로워 B. 덱의 instanceId에 붙여 양 클라이언트에서 같은 카드를 같은 이름으로 부른다.
+function seatOf(sideKey) {
+  return sideKey === leaderKey ? 'A' : 'B';
+}
+
+// 📚 리셔플 세대 — 같은 카드의 재등장 id가 겹치지 않게. initBattle/reset이 0으로.
+let reshuffleGen = { player: 0, boss: 0 };
+
+/**
+ * 덱을 섞고 좌석·위치로 instanceId를 붙인다. 양 클라이언트가 같은 RNG 위치에서 같은 입력 순서로
+ * 부르면 같은 덱이 나온다 — PvP 락스텝의 뿌리다.
+ * 🐛 예전엔 플레이어 덱은 `id#idx`, 보스 덱은 id 없음, 원격 덱은 `foe-i`로 제각각이라
+ *    전송된 카드를 손패에서 찾지 못해 상대 손패 수가 줄지 않았다 (DECISIONS #94).
+ */
+function seatDeck(cards, seat, gen = 0) {
+  return battleRng().shuffle(cards.map(c => ({ ...c })))
+    .map((c, i) => ({ ...c, instanceId: `${seat}:${c.id}#${gen}.${i}` }));
+}
+
 /**
  * 전투 시작.
- * @param opts.seed 난수 시드. 지정하면 전투가 그대로 재현된다.
- *                  P2P 대전에서는 양쪽이 같은 시드를 공유해 락스텝을 맞춘다.
+ * @param opts.seed   난수 시드. 지정하면 전투가 그대로 재현된다. P2P는 양쪽이 같은 시드를 공유한다.
+ * @param opts.leader 라운드 리더(선공) 진영 키. PvE 'player', PvP는 호스트 진영(내 화면 기준).
+ * @param opts.foe    상대 진영 정의. 기본 { controller:'bot' } = 보스 목록의 현재 보스.
+ *                    PvP는 { controller:'remote', deck: cards[], profile, avatar }.
+ *
+ * 🎲 결정론: 시드 → **리더 덱 먼저, 팔로워 덱 다음** 순서로 섞고, 양쪽 4장씩 같은 방식으로 뽑는다.
+ *    🐛 예전엔 양 클라이언트가 여기서 buildBossTacticalDeck(보관함 크기만큼 RNG 소비)을 돌린 뒤
+ *       pvp-ui가 상대 덱을 **셔플 없이** 덮어썼다 — RNG 스트림이 시작부터 갈라졌고, 원격 상대의
+ *       체력은 50(기준 100)이었다 (DECISIONS #94).
  */
-export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
+export function initBattle({ seed = null, leader = SIDE_PLAYER, foe = null } = {}) {
   const usedSeed = seedBattleRng(seed);
-  const bossTemplate = state.bossesList[state.currentBossIdx] || BOSS_DATA[0];
-  state.currentBoss = {
-    ...bossTemplate,
-    currentHp: bossTemplate.maxHp,
-    shield: bossTemplate.shield || 0,
-    actionIdx: 0
-  };
+  const foeSpec = foe || { controller: 'bot' };
+  const remote = foeSpec.controller === 'remote';
+
+  if (remote) {
+    // 🌐 원격 듀얼리스트 — 보스 전용 요소(콤보·대사)는 비운다. 체력은 플레이어와 같은 기준값.
+    const fp = foeSpec.profile || {};
+    state.currentBoss = {
+      name: fp.name || '상대 듀얼리스트',
+      titleEn: fp.title || 'Opponent',
+      element: fp.element || 'dark',
+      avatarEmoji: fp.avatarEmoji || '👤',
+      imageUrl: foeSpec.avatar || '',
+      maxHp: PLAYER_BASE_HP,
+      currentHp: PLAYER_BASE_HP,
+      shield: 0,
+      comboPatterns: [],
+      dialogueOnStart: '',
+      dialogueLowHp: '',
+      actionIdx: 0,
+      isDuelist: true
+    };
+  } else {
+    const bossTemplate = state.bossesList[state.currentBossIdx] || BOSS_DATA[0];
+    state.currentBoss = {
+      ...bossTemplate,
+      currentHp: bossTemplate.maxHp,
+      shield: bossTemplate.shield || 0,
+      actionIdx: 0
+    };
+  }
 
   state.turnCount = 1;
   // 🐛 보스 턴 도중에 전투를 리셋하면 isAnimating이 true로 남아 조작이 영구 잠겼다
@@ -364,23 +417,13 @@ export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   const phaseBadge = document.getElementById('boss-phase-badge');
   if (phaseBadge) phaseBadge.classList.add('hidden');
   state.playerMinions = [];
-  
-  // 보스 전용 전술 덱 & 손패 구축 (손패 4장으로 적극적 카드 전개!)
-  state.bossDeck = buildBossTacticalDeck(state.currentBoss);
-  // 📚 상대의 **고정 덱** — 덱이 비면 플레이어처럼 이 목록을 다시 섞는다.
-  //    🐛 예전엔 빌 때마다 buildBossTacticalDeck을 다시 돌려 덱 내용이 바뀌었다 (DECISIONS #94).
-  state.bossDeckSource = state.bossDeck.slice();
-  state.bossHand = [state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift(), state.bossDeck.shift()].filter(Boolean);
-  state.bossLastCastCard = null;
-
-  // 👾 보스 전장은 **비어서 시작한다.**
-  //    🐛 예전에는 소환수 2기를 깔고 시작했다. 플레이어는 1마나뿐인 1턴에
-  //       막을 것을 낼 수 없는데 그 2기가 곧바로 본체를 때려,
-  //       아무것도 못 한 채 2턴에 죽었다.
-  //       (측정: 턴1 보스 딜 59 = 콤보 16 + 소환수 3기 43 vs 플레이어 체력 50)
-  //    보스는 콤보 스텝으로 매 턴 소환하므로 전장은 금방 채워진다 —
-  //    시작 보드를 없애는 것은 **압박을 없애는 게 아니라 뒤로 미루는 것**이다.
+  // 👾 상대 전장은 **비어서 시작한다.**
+  //    🐛 예전에는 보스 소환수 2기를 깔고 시작했다. 플레이어는 1마나뿐인 1턴에 막을 것을 낼 수 없는데
+  //       그 2기가 곧바로 본체를 때려 아무것도 못 한 채 2턴에 죽었다 (턴1 보스 딜 59 vs 체력 50).
+  //    보스는 콤보 스텝으로 매 턴 소환하므로 전장은 금방 채워진다 — 압박을 뒤로 미루는 것이다.
   state.bossMinions = [];
+  state.bossLastCastCard = null;
+  state.playerLastCastCard = null;
 
   bossStatus = createStatusState();
   playerStatus = createStatusState();
@@ -388,6 +431,8 @@ export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   bossBuffs = createBuffs();
   trapZones = { player: [], boss: [] };
   sides = createSides({ playerStatus, bossStatus, playerBuffs, bossBuffs, trapZones });
+  sides.boss.controller = remote ? 'remote' : 'bot';
+  reshuffleGen = { player: 0, boss: 0 };
   // 💎 상대 마나도 플레이어처럼 1에서 시작해 턴 시작마다 자란다 (한 집: state.bossMana)
   state.bossMana = 1;
   state.bossMaxMana = 1;
@@ -398,30 +443,34 @@ export function initBattle({ seed = null, leader = SIDE_PLAYER } = {}) {
   _pendingSummonSlot = null;
   _pendingPicked = null;
 
-  const activeDeckCards = getActiveDeckCards();
-  state.playerDeck = battleRng().shuffle(activeDeckCards);
-  state.playerHand = [];
-  
-  // 첫 턴 4장 드로우
-  for (let i = 0; i < 4; i++) {
-    if (state.playerDeck.length > 0) {
-      state.playerHand.push(state.playerDeck.pop());
-    }
+  // 📚 덱 — 플레이어는 출전 덱, 봇은 전술 덱(플레이어 카드 + 보스 파워 카드), 원격은 받은 덱.
+  //    양쪽 **고정 덱 목록**을 저장해 두고 덱이 비면 그것을 다시 섞는다 (drawFor).
+  const playerSource = getActiveDeckCards();
+  const bossSource = remote ? (foeSpec.deck || []).map(c => ({ ...c })) : buildBossTacticalDeck(state.currentBoss);
+  state.bossDeckSource = bossSource.slice();
+
+  // 🎲 리더 덱 먼저, 팔로워 덱 다음 — 양 클라이언트가 같은 순서로 RNG를 쓴다. 4장씩 같은 방식(pop).
+  const order = leaderKey === SIDE_PLAYER ? [SIDE_PLAYER, SIDE_BOSS] : [SIDE_BOSS, SIDE_PLAYER];
+  for (const key of order) {
+    sides[key].deck = seatDeck(key === SIDE_PLAYER ? playerSource : bossSource, seatOf(key));
+    sides[key].hand = [];
   }
+  for (const key of order) drawTo(sides[key], 4);
 
   clearBattleLogs();
-  addBattleLog(`<span class="text-amber-400 font-bold">⚔️ [${state.currentBoss.name}] 과의 결전이 시작되었습니다!</span>`);
-  addBattleLog(`<span class="text-slate-400">출전 덱(${activeDeckCards.length}장)을 셔플하여 전장에 진입했습니다. <span class="text-slate-600">(seed: ${usedSeed})</span></span>`);
-  
-  const userCardCount = (state.bossDeck || []).filter(c => c.isUserCard).length + (state.bossHand || []).filter(c => c.isUserCard).length;
-  if (userCardCount > 0) {
-    addBattleLog(`<span class="text-purple-300 font-bold">🔮 보스가 플레이어의 마도서에서 ${userCardCount}장의 카드를 감지하여 자신의 덱에 편성했습니다!</span>`);
+  addBattleLog(`<span class="text-amber-400 font-bold">⚔️ [${escapeHtml(state.currentBoss.name)}] 과의 결전이 시작되었습니다!</span>`);
+  addBattleLog(`<span class="text-slate-400">출전 덱(${playerSource.length}장)을 셔플하여 전장에 진입했습니다. <span class="text-slate-600">(seed: ${usedSeed}${remote ? ` · ${leaderKey === SIDE_PLAYER ? '내가 선공' : '상대가 선공'}` : ''})</span></span>`);
+
+  if (!remote) {
+    const userCardCount = (state.bossDeck || []).filter(c => c.isUserCard).length + (state.bossHand || []).filter(c => c.isUserCard).length;
+    if (userCardCount > 0) {
+      addBattleLog(`<span class="text-purple-300 font-bold">🔮 보스가 플레이어의 마도서에서 ${userCardCount}장의 카드를 감지하여 자신의 덱에 편성했습니다!</span>`);
+    }
+    if (state.currentBoss.themeName) {
+      addBattleLog(`<span class="text-amber-300 font-bold">⚜️ [테마 보스] 이 보스는 <b>[${escapeHtml(state.currentBoss.themeName)}]</b> 카드군 덱을 사용합니다!</span>`);
+    }
+    triggerLiveBossReaction('start');
   }
-  
-  if (state.currentBoss.themeName) {
-    addBattleLog(`<span class="text-amber-300 font-bold">⚜️ [테마 보스] 이 보스는 <b>[${escapeHtml(state.currentBoss.themeName)}]</b> 카드군 덱을 사용합니다!</span>`);
-  }
-  triggerLiveBossReaction('start');
   renderBattleUI();
   updateBossIntent();
 }
@@ -444,7 +493,8 @@ function drawFor(side, count = 1) {
         addBattleLog(`<span class="text-red-400">${mine ? '' : `${escapeHtml(s.name)}의 `}덱이 비었습니다!</span>`);
         return;
       }
-      s.deck = battleRng().shuffle(source);
+      // 좌석·세대가 붙은 새 instanceId — 이미 손에 있는 지난 세대 사본과 겹치지 않는다
+      s.deck = seatDeck(source, seatOf(s.key), ++reshuffleGen[s.key]);
       addBattleLog(`<span class="text-purple-400">${mine ? '출전 덱' : `${escapeHtml(s.name)}의 덱`}(${source.length}장)을 다시 섞어 보충했습니다!</span>`);
     },
     onDraw: () => audio.playDraw()
@@ -1798,8 +1848,9 @@ export function startTurn(side) {
   // 🏛️ 건축물 턴 시작 패시브 (마나 공급 등) — 상대 건축물도 일한다
   triggerStructureStartTurnPassives(side);
 
-  // 📥 드로우 1장. 원격 상대는 카드 정체가 액션에 실려 오므로 여기서 뽑지 않는다.
-  if (side.controller !== 'remote') drawFor(side, 1);
+  // 📥 드로우 1장 — 원격 상대도 뽑는다. 좌석 덱은 양 클라이언트에서 순서가 같으므로
+  //    내 화면의 거울이 뽑는 카드가 곧 상대가 실제로 뽑은 카드다 (손패 내용은 UI가 숨긴다).
+  drawFor(side, 1);
   return true;
 }
 

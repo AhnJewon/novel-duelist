@@ -25,7 +25,6 @@
 //   카드는 handIdx가 아니라 **instanceId**로 가리킨다. 손패 정렬이 미세하게
 //   달라도 같은 카드를 집도록.
 
-import { state } from './storage.js';
 import { setBattleMode, isPvp } from './combat-side.js';
 
 let _session = null;      // pvp-session.js가 만든 세션

@@ -227,41 +227,19 @@ function beginPvpBattle(seed, foeDeck) {
     _borrowedThemeIds.push(t.id);
   }
 
-  // 상대 덱을 "보스 덱" 자리에 앉힌다. 호스트가 라운드 리더(선공) — 양 클라이언트가 같은
-  // turnCount를 가지려면 리더의 턴 시작에만 카운터가 올라야 한다 (battle-engine의 startTurn).
-  initBattle({ seed, leader: _isHost ? 'player' : 'boss' });
-
-  state.bossDeck = foeCards.map((c, i) => ({ ...c, instanceId: c.instanceId || `foe-${i}` }));
-  state.bossHand = state.bossDeck.splice(0, 4);
-
-  // 🐛 initBattle()은 PvE 보스를 세팅하므로 보스 고유 하수인(화염의 저주 토템,
-  //    지옥불 사냥개 등)이 전장에 깔린 채로 시작한다.
-  //    PvP에서 상대 전장은 반드시 비어 있어야 한다.
-  //    (함정 존은 battle-engine 모듈 지역 변수라 initBattle이 이미 비운다)
-  state.bossMinions = [];
+  // 🌐 상대(원격 듀얼리스트)를 상대 진영에 앉힌다 — 덱·체력·좌석 셔플은 엔진이 결정론적으로 한다.
+  //    호스트가 라운드 리더(선공). 양 클라이언트가 같은 시드로 같은 덱 순서를 만든다.
+  //    🐛 예전엔 여기서 initBattle 뒤에 상대 덱을 셔플 없이 덮어쓰고 체력 50짜리 보스 객체를
+  //       손으로 만들었다 — RNG가 갈라지고 체력 기준(100)도 어긋났다 (DECISIONS #94).
+  initBattle({
+    seed,
+    leader: _isHost ? 'player' : 'boss',
+    foe: { controller: 'remote', deck: foeCards, profile: _foeProfile || {}, avatar: _foeAvatar || '' }
+  });
 
   if (foeDeck && foeDeck.rejected && foeDeck.rejected.length > 0) {
     addBattleLog(`<span class="text-amber-300">⚖️ 상대 덱 ${foeDeck.rejected.length}장이 밸런스 검증으로 조정되었습니다.</span>`);
   }
-
-  // 상대는 보스가 아니라 **듀얼리스트**다. PvE 보스의 흔적을 전부 지운다.
-  const fp = _foeProfile || {};
-  state.currentBoss = {
-    name: fp.name || '상대 듀얼리스트',
-    titleEn: fp.title || 'Opponent',
-    element: fp.element || 'dark',
-    avatarEmoji: fp.avatarEmoji || '👤',
-    imageUrl: _foeAvatar || '',
-    maxHp: 50,
-    currentHp: 50,
-    shield: 0,
-    // ⚠️ 보스 전용 요소는 반드시 비운다 — 안 그러면 스크립트 콤보·대사가 튀어나온다
-    comboPatterns: [],
-    dialogueOnStart: '',
-    dialogueLowHp: '',
-    isDuelist: true
-  };
-  // (상대 마나는 initBattle이 1로 두고, 상대 턴 시작(startTurn)이 키운다)
 
   setStatus('playing');
   // 대전이 시작되면 전장으로 데려간다 (대전 탭에는 매칭 UI만 있다)

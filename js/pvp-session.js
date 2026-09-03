@@ -13,7 +13,9 @@ import { sanitizeAndClampCardData, evaluateCardPower } from './config.js';
 import { setBattleMode } from './combat-side.js';
 import { profileForWire, sendableAvatar } from './player-profile.js';
 
-export const PVP_PROTOCOL_VERSION = 1;
+// v2: 좌석 덱(리더 먼저 셔플, instanceId = 좌석:id#세대.위치) · 리더의 턴 시작에만 turnCount 증가 ·
+//     상대 턴 시작을 수신 측에서도 돌린다. v1 클라이언트와 락스텝이 맞지 않으므로 거절한다 (DECISIONS #94)
+export const PVP_PROTOCOL_VERSION = 2;
 
 // ============================================================
 // 덱 페이로드 — 이미지 없이 5KB 남짓

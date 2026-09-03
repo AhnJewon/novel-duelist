@@ -25,7 +25,7 @@ import { COMBO_TRIGGERS, COMBO_SCALINGS, COMBO_SCOPES, SCOPE_POWER_MULT,
          selfView, foeView, HAND_CAP } from '/js/archetype-identity.js';
 import { ARCHETYPE_COMBO_ACTIONS, runArchetypeCombo, belongsToTheme } from '/js/archetype-combos.js';
 import { triggerArchetypeCombo } from '/js/archetype-service.js';
-import { attachPvpSession, detachPvpSession, handleRemoteAction } from '/js/pvp-battle.js';
+import { attachPvpSession, detachPvpSession, handleRemoteAction, slimCardForWire } from '/js/pvp-battle.js';
 import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          collectDamageOverTime, decayStatuses, consumeBlockingStatus,
          getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
@@ -1714,6 +1714,70 @@ async function suiteBotController() {
 }
 
 // ============================================================
+// 9g. 대전 초기화 결정론 — 좌석 덱, 원격 상대 체력 기준, 손패 정체 (DECISIONS #94)
+// ------------------------------------------------------------
+// 🐛 예전엔 양 클라이언트가 initBattle에서 전술 덱을 만들며(보관함 크기만큼 RNG 소비) 상대 덱을
+//    셔플 없이 덮어썼고, 전송 카드에 instanceId가 없어 상대 손패 수가 줄지 않았으며, 원격 체력은 50이었다.
+// ============================================================
+async function suitePvpInit() {
+  const S = '대전 초기화';
+  const dummy = { sendAction() {} };
+  const foeDeck = Array.from({ length: 8 }, (_, i) => card({ id: 'fd' + i, name: '상대카드' + i, cost: 1 }));
+  const snapCollection = state.cardsCollection;   // 참조 보존 — 검사 뒤 되돌린다 (저장하지 않는다)
+  const remoteInit = () => BE.initBattle({ seed: 11, leader: 'player', foe: { controller: 'remote', deck: foeDeck } });
+  const ids = (arr) => arr.map(c => c.instanceId);
+
+  try {
+    attachPvpSession(dummy, { foeName: '검증상대', isHost: true });
+
+    // ① 같은 시드 → 양쪽 덱·손패 순서가 같고, instanceId는 좌석(A=리더, B=팔로워)으로 시작한다
+    remoteInit();
+    const first = { mine: ids(state.playerDeck), foe: ids(state.bossDeck), foeHand: ids(state.bossHand) };
+    remoteInit();
+    const second = { mine: ids(state.playerDeck), foe: ids(state.bossDeck), foeHand: ids(state.bossHand) };
+    check(S, '같은 시드 → 상대 덱·손패 순서 동일, 좌석 id (A:/B:)',
+      JSON.stringify(first) === JSON.stringify(second)
+        && first.foe.every(id => String(id).startsWith('B:')) && first.mine.every(id => String(id).startsWith('A:'))
+        && first.foeHand.length === 4,
+      `foe=${first.foe.slice(0, 2)} mine=${first.mine.slice(0, 2)} hand=${first.foeHand.length}`);
+
+    // ② 원격 상대: 체력은 PLAYER_BASE_HP, 콤보 없음, 컨트롤러 remote (예전: 보스 템플릿 체력 130 / 50)
+    check(S, `원격 상대 체력 = PLAYER_BASE_HP (${PLAYER_BASE_HP}), 콤보 없음, controller=remote`,
+      state.currentBoss.maxHp === PLAYER_BASE_HP && state.currentBoss.isDuelist === true
+        && (state.currentBoss.comboPatterns || []).length === 0 && BE.getSide('boss').controller === 'remote',
+      `hp=${state.currentBoss.maxHp} duelist=${state.currentBoss.isDuelist} ctrl=${BE.getSide('boss').controller}`);
+
+    // ③ 내 덱 순서는 보관함 크기와 무관하다 (예전: 상대 자리에 전술 덱을 만들며 RNG를 먼저 소비)
+    state.cardsCollection = [...snapCollection,
+      card({ id: 'extra1', rarity: 'legendary' }), card({ id: 'extra2', rarity: 'epic' }), card({ id: 'extra3', element: 'dark' })];
+    remoteInit();
+    const withExtra = ids(state.playerDeck);
+    state.cardsCollection = snapCollection;
+    check(S, '원격 초기화: 내 덱 순서가 보관함 크기와 무관', JSON.stringify(withExtra) === JSON.stringify(first.mine),
+      `${withExtra.slice(0, 3)} vs ${first.mine.slice(0, 3)}`);
+
+    // ④ 원격 playCard가 좌석 id로 손패를 찾아 제거한다 (예전: id 불일치 → 스냅샷 재생, 손패 수 불변)
+    remoteInit();
+    const foeCard = state.bossHand[0];
+    await BE.applyFoeAction({ kind: 'playCard', instanceId: foeCard.instanceId, card: slimCardForWire(foeCard), slot: null, picked: null });
+    check(S, '원격 playCard: 좌석 id로 손패에서 찾아 제거 (4→3), 전장 1기',
+      state.bossHand.length === 3 && state.bossMinions.length === 1 && String(foeCard.instanceId).startsWith('B:'),
+      `hand=${state.bossHand.length} field=${state.bossMinions.length} id=${foeCard.instanceId}`);
+
+    // ⑤ 내 턴 종료 → 원격 상대의 턴 시작이 내 화면에서도 돌고, 상대도 **진짜 카드**를 뽑는다
+    remoteInit();
+    const foeHand0 = state.bossHand.length, foeDeck0 = state.bossDeck.length;
+    BE.playerEndTurn();
+    check(S, '내 턴 종료 → 원격 상대 턴 시작: 드로우 1 (예전: 원격은 드로우 생략)',
+      state.bossHand.length === foeHand0 + 1 && state.bossDeck.length === foeDeck0 - 1 && state.bossMana === 1,
+      `hand=${state.bossHand.length} deck=${state.bossDeck.length} mana=${state.bossMana}`);
+  } finally {
+    state.cardsCollection = snapCollection;
+    detachPvpSession();
+  }
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -2477,7 +2541,7 @@ export async function runAll() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['대전 초기화', suitePvpInit], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];
