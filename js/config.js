@@ -856,15 +856,11 @@ export function enforcePowerBudget(cardData, skill) {
   const realEffects = listActiveEffects(out).filter(e => e.key !== 'trapTrigger');
   if (realEffects.length === 0) {
     if (cardType === 'unit') {
-      if (out.isVanilla) {
-        // 유저가 의도적으로 바닐라로 만든 경우 유지
-      } else {
-        // ⚔️ 유저 지침: "기본적으로 기초 스탯보다는 효과 쪽이 좀 더 남았으면 좋겠어"
-        // 바닐라 전락 방지 — 등급 하한 기본 피해 효과를 부여하고 스탯을 깎아 밸런스를 맞춘다.
-        out.damage = (caps.spellDamage && caps.spellDamage[0]) || 10;
-        out.isVanilla = false;
-        shaveStats(1, 4, 0);
-      }
+      // 효과가 없으면 바닐라다. 여기서 피해 효과를 **지어내지 않는다** — 예산 정산 뒤 효과를 되살리면
+      // 검사를 통과한 뒤 카드가 조용히 예산을 넘기고(규칙 35), 모든 소환수가 "피해 N" 카드로 균질화된다(#85).
+      // 스탯보다 효과를 살리는 유저 지침은 위 3-b(효과를 지우기 전에 스탯을 절대 하한까지 깎기)와
+      // mustKeepEffect(바닐라 의도가 아니면 마지막 효과 보존)가 이미 지킨다 — 여기까지 왔다면 LLM이 효과를 안 준 것이다.
+      out.isVanilla = true;
     } else if (cardType === 'structure') {
       // ⚠️ `||`로는 부족하다. 예산이 오라만 지우고 **빈 객체 `{}`**를 남기면
       //    truthy라서 폴백이 안 걸리고, 설명문이 통째로 비어 버린다 (실측).

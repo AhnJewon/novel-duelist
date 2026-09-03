@@ -264,7 +264,8 @@ ${forgeSelectedTheme ? '\n' + playstyleGuide(forgeSelectedTheme, targetType) + '
 - ❌ 나쁜 예: 억지로 카드군을 붙인 범용 카드
 
 ⚖️ 타입별 효과 예산 (카드 타입마다 넣을 수 있는 효과의 양이 다르다):
-- **소환수**는 스탯(공/체/방)과 함께 **고유한 전투 스킬(피해, 방어막, 회복, 상태이상 등)**을 반드시 1개 이상 가져야 한다. 스탯보다 효과가 카드의 정체성이다.
+- **소환수**는 콘셉트에 맞는 고유 스킬(피해, 방어막, 회복, 상태이상 등) **1개를 우선 설계**하라. 스탯보다 효과가
+  카드의 정체성이다 — 예산이 넘치면 시스템이 **스탯을 먼저** 깎아 효과를 살린다. 정말 효과가 없는 카드만 바닐라("isVanilla": true).
 - **건축물**은 공격하지 않으므로 체력이 싸다 → 지속 패시브 + 효과 1개 정도.
 - **마법**은 스탯이 없어 예산 전부가 효과로 가지만, 일회용이라 총량이 낮다 → **1~2개**.
 - **함정**은 조건부라 총량 보상을 받는다 → 같은 마나에서 가장 많은 효과 (**2~3개**).
@@ -349,6 +350,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "skill": {
     "name": "컨셉에 맞춘 독창적인 스킬명",
     "_writeOrder": "⚠️ description은 **맨 마지막에** 쓴다. 아래 수치를 먼저 정하고, 그 수치를 그대로 옮겨 적을 것.",
+    "isVanilla": "효과 없는 바닐라 소환수일 때만 true (드물다). 그러면 아래 수치는 전부 0/생략.",
     "flavorText": "카드의 분위기 한 줄 (40자 이내). ⚠️ 효과·수치를 쓰지 마라 — 규칙 텍스트는 시스템이 데이터에서 만든다.",
     "cost": 1-3,
     "damage": 0-22,
@@ -546,7 +548,9 @@ ${customDirective}`;
     const reasoningDetails = document.getElementById('forge-reasoning-details');
     const reasoningContent = document.getElementById('forge-reasoning-content');
     if (reasoningDetails && reasoningContent) {
-      const displayReasoning = deepPlanText || window.__lastReasoning;
+      // 🐛 예전엔 `|| window.__lastReasoning`으로 폴백해 **빠른 모드** 카드에 이전 심층 실행의 사고 과정이 붙어 보였다.
+      //    보이는 것은 이번 실행의 기획 메모만.
+      const displayReasoning = deepPlanText;
       if (displayReasoning && typeof displayReasoning === 'string' && displayReasoning.trim().length > 10) {
         reasoningContent.textContent = displayReasoning.trim();
         reasoningDetails.classList.remove('hidden');
@@ -753,30 +757,10 @@ export function normalizeIncomingCardData(raw) {
     s.heal = s.value;
   }
 
-  // ⚔️ 유저 지침: "기본적으로 기초 스텟 보다는 효과쪽이 좀더 남았으면 좋겠어"
-  // LLM이 isVanilla를 켰거나 효과 수치를 누락했어도, 카드의 고유 스킬을 사수한다.
-  s.isVanilla = false;
-  out.isVanilla = false;
-
-  const hasEffect = (s.damage > 0) || (s.shield > 0) || (s.heal > 0) || (s.drawCards > 0)
-    || (s.manaGain > 0) || (s.multiHit > 1) || s.pierceShield || s.doubleCastNext
-    || (s.statusEffect && s.statusEffect.type && s.statusEffect.type !== 'none')
-    || s.destroy || s.searchDeck || s.summonToken || s.passiveEffect;
-
-  if (!hasEffect) {
-    const desc = s.description || '';
-    const dmgMatch = desc.match(/(\d+)\s*(?:피해|데미지|damage)/i);
-    const shdMatch = desc.match(/(\d+)\s*(?:방어막|실드|shield)/i);
-    const healMatch = desc.match(/(\d+)\s*(?:회복|치유|heal)/i);
-
-    if (dmgMatch) s.damage = parseInt(dmgMatch[1]);
-    else if (shdMatch) s.shield = parseInt(shdMatch[1]);
-    else if (healMatch) s.heal = parseInt(healMatch[1]);
-    else {
-      const r = out.rarity || 'rare';
-      s.damage = r === 'legendary' ? 22 : (r === 'epic' ? 18 : (r === 'rare' ? 14 : 10));
-    }
-  }
+  // ⚠️ 여기서 효과를 **지어내지 않는다.** 예전 정리 전 코드는 isVanilla를 강제로 끄고, 효과가 없으면 설명문에서
+  //    정규식으로 숫자를 뽑거나 등급별 기본 피해(10~22)를 넣었다 — 규칙 35(정산 뒤 효과 되살리기 금지)·81(자연어
+  //    정규식 수리 금지) 위반이고, 모든 소환수가 "피해 N" 카드로 균질화된다(#85). 효과가 없으면 바닐라가 맞다.
+  //    이 함수의 일은 **모양 맞추기**(flat → skill 객체, 동의어)뿐이다 (DECISIONS #97).
 
   out.skill = s;
   out.skills = [s];

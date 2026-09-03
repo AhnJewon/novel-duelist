@@ -33,3 +33,6 @@ secrets.*
 
 # 검증용으로 불러온 유저 덱 내보내기 (개인 데이터 — 커밋하지 않는다)
 _verify/user-deck.json
+
+# 다른 에이전트(Antigravity) 세션의 스크래치 — 참고용으로만 보관, 로드되지 않는다
+_archive/antigravity-*/

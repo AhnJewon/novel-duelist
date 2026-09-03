@@ -168,7 +168,11 @@ export async function callOllamaChat({ messages, model = null, temperature = 0.7
         top_k: 50,
         presence_penalty: 0,
         frequency_penalty: 0,
-        repeat_penalty: 1.05,
+        // 🇰🇷 한국어 반복 페널티 완화 (2026-09-01, docs/AI-MODELS.md)
+        // 한국어는 조사(은/는/이/가)·어미(~합니다)·게임 용어("피해","방어막")가 정상적으로 반복된다.
+        // presence/frequency 페널티를 걸면 모델이 올바른 조사를 피해 어색한 대체어를 고른다
+        // ("카드를 서치한다" -> "카드에서 탐색하다"). 다양성은 seed 랜덤화 + nonce로 이미 확보한다.
+        repeat_penalty: 1.05,   // 1.15는 한국어에 과함. 1.0~1.08 권장 범위
         seed: randomSeed,
         repeat_last_n: 64,
         num_ctx: 16384,
