@@ -549,3 +549,12 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     `customOverridesToPrompt`(지시) · `applyCustomOverrides`(강제) **세 곳을 한 쌍으로** 만드세요. 프롬프트로만 말하면
     4B 모델이 흘리고, 확정값을 셀렉트에 되쓰면 "AI 결정"이 고정값으로 변합니다 — 모듈 변수 + 해석기(`forgeRarity`·
     `forgeElement`)로. → [DECISIONS #98](docs/DECISIONS.md)
+
+106. **연성소는 유저의 요구를 들어주는 곳입니다.** 유저가 직접 친 이름(`data-by-user`)은 잠기고, 효과 설명은
+    `validateRequestedEffects`가 누락을 대조해 되묻습니다. "예산 초과 허용"(`allowOverBudget`)이면 `enforcePowerBudget`은
+    **아무것도 깎지 않고** 마나만 올린 뒤 초과분을 `powerDebt`로 돌려주며, 연성소가 가루(`dustForExcessPower`)로
+    결제합니다. 카드의 요구를 조용히 깎는 코드를 다시 넣지 마세요. → [DECISIONS #100](docs/DECISIONS.md)
+
+107. **크롭 가이드는 렌더러 규칙 그대로 계산하세요** (`visibleRegionOnImage` 한 곳: object-fit cover → object-position →
+    scale 원점). 근사치(`85/scale`)로 그리면 프레임이 실제 카드와 어긋나 "이미 크롭된 이미지를 편집하는" 것처럼 보입니다.
+    화면의 태그 칸은 **시드**입니다 — 실제 전송 프롬프트는 `getLastImageRequest()`로 보여 주세요. → [DECISIONS #100](docs/DECISIONS.md)

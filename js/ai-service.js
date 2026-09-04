@@ -472,6 +472,11 @@ export function repairAndParseJson(raw) {
   throw new Error(`JSON 파싱 및 복구 실패: 원문 구조가 올바르지 않습니다.`);
 }
 
+// 🖼️ 마지막으로 NovelAI에 **실제로 보낸** 프롬프트/네거티브/시드. 화면의 태그 칸은 시드일 뿐이고 전송 직전에
+//    SLM이 28~30태그로 확장하고 작가 태그를 붙이므로, 이걸 보여주지 않으면 "프롬프트가 다르다"는 의심이 맞다 (DECISIONS #100).
+let lastImageRequest = null;
+export function getLastImageRequest() { return lastImageRequest; }
+
 /**
  * 🎨 NovelAI Diffusion V4.5 이미지 생성 정식 규격 호출
  * DanTagGen 태그 파이프라인 + V4.5 필수 파라미터 (params_version: 3, v4_prompt) 완벽 적용
@@ -549,6 +554,7 @@ export async function generateNovelAIImage({ prompt, negativePrompt = '', elemen
     action: 'generate',
     parameters: params
   };
+  lastImageRequest = { prompt: expandedPrompt, negative: finalNegative, seed: params.seed, width, height, model: modelId, at: Date.now() };
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

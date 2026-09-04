@@ -3,7 +3,7 @@ import { createCardElement } from './card-renderer.js';
 import { audio } from './audio.js';
 import { openSettingsModal } from './ui.js';
 import { rollRandomRarity, rollCardCost, RARITY_BALANCE_CAPS, sanitizeAndClampCardData, buildStructurePassive, describeStructurePassive, normalizeStructurePassive } from './config.js';
-import { callOllamaChat, generateNovelAIImage } from './ai-service.js';
+import { callOllamaChat, generateNovelAIImage, getLastImageRequest } from './ai-service.js';
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
@@ -43,6 +43,23 @@ function renderForgeDustCost() {
   set('forge-dust-have', getDust().toLocaleString('ko-KR'));
   box.classList.remove('hidden');
   box.classList.toggle('border-red-500/70', need > getDust());
+}
+
+/**
+ * 🖼️ 방금 NovelAI에 실제로 보낸 프롬프트를 미리보기 아래에 펼친다.
+ * 🐛 유저 지적: "이미지 프롬프트가 실제 사용되는 프롬프트 전부를 보여주는 건 아닌 것 같다" — 맞았다. 태그 칸은 시드고,
+ *    전송 직전에 SLM이 28~30태그로 확장하고 작가 태그·품질 태그를 붙인다 (DECISIONS #100).
+ */
+function renderFinalPromptPanel() {
+  const req = getLastImageRequest();
+  const details = document.getElementById('forge-final-prompt-details');
+  if (!details) return;
+  if (!req) { details.classList.add('hidden'); return; }
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('forge-final-prompt-content', req.prompt);
+  set('forge-final-negative-content', req.negative);
+  set('forge-final-prompt-meta', `— ${req.width}×${req.height} · seed ${req.seed} · ${req.prompt.split(',').length}태그`);
+  details.classList.remove('hidden');
 }
 
 /** 옵션(예산 초과 허용 등)을 바꿨을 때 마지막 기획을 다시 정산한다 — LLM 재호출 없음 */
@@ -1055,6 +1072,7 @@ export async function generateAICard() {
     });
 
     await completeForgedCard(name, element, rarity, userPrompt, imageUrl);
+    renderFinalPromptPanel();
   } catch (err) {
     alert(`카드 이미지 생성 안내: ${err.message}\n(기본 큐레이티드 아트로 안전하게 카드를 완성합니다)`);
     const mockImages = {

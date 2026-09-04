@@ -874,6 +874,16 @@
             </div>
           </details>
 
+          <!-- 🖼️ 실제 전송 프롬프트 (연성 직후) — 태그 칸은 시드, 전송본은 SLM 확장 + 작가 태그 (DECISIONS #100) -->
+          <details id="forge-final-prompt-details" class="hidden w-full max-w-[320px] rounded-xl border border-cyan-500/40 bg-[#0f1a24] overflow-hidden shadow-lg">
+            <summary class="cursor-pointer px-3 py-2 text-xs font-bold text-cyan-300 hover:text-cyan-100 select-none">🖼️ 실제 전송된 이미지 프롬프트 <span id="forge-final-prompt-meta" class="text-[10px] text-slate-500 font-normal"></span></summary>
+            <div class="p-3 border-t border-cyan-900/60 space-y-2">
+              <pre id="forge-final-prompt-content" class="text-[10.5px] font-mono leading-relaxed whitespace-pre-wrap text-slate-300 bg-black/60 p-2.5 rounded-lg border border-cyan-950 max-h-40 overflow-y-auto"></pre>
+              <p class="text-[10px] text-slate-500">네거티브</p>
+              <pre id="forge-final-negative-content" class="text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-slate-500 bg-black/40 p-2 rounded-lg border border-slate-800 max-h-24 overflow-y-auto"></pre>
+            </div>
+          </details>
+
           <!-- 덱에 저장 완료 알림 / 액션 버튼 -->
           <div id="forge-success-box" class="hidden w-full max-w-[300px] p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-xs text-center font-bold space-y-2">
             <div class="flex items-center justify-center gap-1.5">
@@ -1635,6 +1645,16 @@
             </div>
             
             <textarea id="crop-card-prompt-input" rows="2" class="w-full bg-[#0d1020] border border-purple-500/40 focus:border-amber-400 rounded-xl p-2.5 text-[11px] text-white outline-none leading-relaxed" placeholder="카드의 Danbooru 프롬프트 태그를 직접 수정할 수 있습니다..."></textarea>
+            <p class="text-[10px] text-slate-500 leading-snug">위 태그는 <b>시드</b>입니다. 생성 시 태그 SLM이 28~30태그로 확장하고 작가·품질 태그를 붙입니다. 실제 전송본은 생성 뒤 아래에 보입니다.</p>
+            <pre id="crop-final-prompt" class="hidden text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-cyan-200 bg-black/60 p-2 rounded-lg border border-cyan-900/60 max-h-28 overflow-y-auto"></pre>
+
+            <!-- ✏️ 성능과 무관한 카드 정보 수정 (수치·효과·코스트는 밸런스 정산 대상이라 여기서 안 바꾼다) -->
+            <div class="p-2.5 rounded-xl bg-[#0d1020] border border-slate-700/60 space-y-1.5">
+              <p class="text-[10.5px] font-bold text-slate-300">✏️ 카드 정보 수정 <span class="text-slate-500 font-normal">— 이름·영문 제목·플레이버 (성능 무관)</span></p>
+              <input type="text" id="crop-card-name-input" placeholder="카드 이름" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+              <input type="text" id="crop-card-title-input" placeholder="영문 제목 (선택)" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+              <input type="text" id="crop-card-flavor-input" placeholder="플레이버 한 줄 (효과처럼 읽히면 안 됩니다)" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
+            </div>
 
             <!-- 📐 리롤 이미지 비율 및 해상도 선택기 -->
             <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-[#0d1020] border border-purple-500/30">
