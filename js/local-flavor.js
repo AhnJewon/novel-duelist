@@ -9,6 +9,9 @@
 // ⚠️ 이 파일은 아무것도 static import 하지 않는다. config·card-renderer·tag-slm이 이걸 import 하므로
 //    여기서 되import 하면 순환이 된다. 테이블 덮어쓰기는 loadLocalFlavor() 안에서 **동적 import**로 한다.
 //    (battle-rules.js와 같은 이유 — 여러 모듈이 공유하는 무의존 모듈)
+//    예외: korean-grammar.js는 아무것도 import 하지 않으므로 순환이 생길 수 없다.
+
+import { fixParticles } from './korean-grammar.js';
 
 let _pack = null;        // 적용된 팩 (없으면 null)
 let _terms = [];         // [[정규식, 치환]] — 규칙 텍스트 낱말 교체
@@ -33,7 +36,9 @@ export function flavorRewrite(text) {
   if (!isFlavorActive() || !text || _terms.length === 0) return text;
   let out = String(text);
   for (const [re, to] of _terms) out = out.replace(re, to);
-  return out;
+  // 🇰🇷 낱말을 갈아끼우면 받침이 달라져 조사가 어긋난다 ("15 피해를" → "15 자극를").
+  //    프로젝트의 조사 교정기를 그대로 태운다 (규칙 46 — 어법은 규칙 기반 한 곳에서).
+  return fixParticles(out);
 }
 
 // ── 🖼️ 이미지 생성 ────────────────────────────────────────────

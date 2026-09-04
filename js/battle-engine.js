@@ -36,6 +36,7 @@ import {
 } from './pvp-battle.js';
 import { readDirectAttack } from './card-keywords.js';
 import { SLOT_CAP, THORNS_TURNS } from './battle-rules.js';
+import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
 
 // 전장 슬롯은 양 진영 동일 (battle-rules.js). 🐛 예전엔 보스만 3이었다 → DECISIONS #94
 export const BATTLE_SLOTS = SLOT_CAP;
@@ -1955,7 +1956,9 @@ export function addBattleLog(msg) {
   if (!logBox) return;
   const entry = document.createElement('div');
   entry.className = 'text-xs leading-relaxed';
-  entry.innerHTML = msg;
+  // 🎭 전투 로그도 로컬 플레이버 팩을 지난다 — 카드는 "자극"이라 적혀 있는데 로그만 "피해"면 어긋난다.
+  //    팩이 없거나 꺼져 있으면 원문 그대로다 (하네스는 withFlavorDisabled로 돌므로 영향 없음).
+  entry.innerHTML = flavorRewrite(msg);
   logBox.appendChild(entry);
   logBox.scrollTop = logBox.scrollHeight;
 }

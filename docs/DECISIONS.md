@@ -4254,12 +4254,13 @@ LLM이 조건을 안 적으면 sanitize 기본값이 foePlaysUnit이고, 적어�
 | 팩 필드 | 바뀌는 곳 |
 |---|---|
 | `statusNames` · `effectLabels` · `keywords` | `STATUS_EFFECTS.name` · `EFFECT_COSTS.label` · `KEYWORD_DEFINITIONS` (부팅 때 덮어씀, 원본 보관) |
-| `terms` | `describeSkillFromData`가 만든 규칙 텍스트와 카드 뱃지의 낱말 (`flavorRewrite`) |
+| `terms` | `describeSkillFromData`가 만든 규칙 텍스트 · 카드 뱃지 · 전투 로그의 낱말 (`flavorRewrite`) |
 | `image.rating` · `image.positive` · `image.negative` | TIPO의 `rating:` 줄, NovelAI 프롬프트/네거티브 |
 | `llm.conceptDirective` | 카드 기획 프롬프트 꼬리 (연성소·카드팩 공용) |
 
 효과 필드·수치·예산·전투 로직은 팩이 건드릴 수 없다. `flavorRewrite`는 **우리가 데이터에서 만든** 문장의 낱말만 바꾼다 —
 LLM 산문을 정규식으로 수리하는 것이 아니다(규칙 81).
+낱말을 바꾸면 받침이 달라져 조사가 어긋나므로(“15 피해를” → “15 자극를”) `korean-grammar.js`의 `fixParticles`를 태운다(규칙 46).
 
 ### 설계 결정
 - **확장점은 static import를 하나도 하지 않는다.** `config`·`card-renderer`·`tag-slm`이 이걸 import 하므로 되import 하면
