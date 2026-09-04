@@ -1,6 +1,18 @@
 // data.js - 게임 데이터 (스타터 카드, 6대 속성 보스, 속성별 보스 부하)
 
 export const DEFAULT_STARTER_CARDS = [
+  // ⚠️ 이 목록의 모든 카드는 **`sanitizeAndClampCardData`를 그대로 통과한 값**이다 (DECISIONS #110).
+  //
+  // 🐛 예전에는 아니었다. 13장 중 10장이 예산을 넘었고(레이븐은 4.26배), 부팅 때
+  //    `rebalanceExistingCards()`가 등급별 스탯 하한까지 끌어올리며 **코스트를 올려서** 맞췄다.
+  //    그래서 3마나로 적어 둔 아스카가 실제로는 6마나로 손에 들어왔다 — 마나 커브가 통째로 밀려 있었다.
+  //
+  // 새 카드를 추가하거나 수치를 고치면 **반드시** 하네스의 '기본 카드' 스위트를 돌리세요.
+  // 예산 초과나 sanitize 차이가 있으면 저장 시점에 카드가 조용히 달라집니다.
+  //
+  // 🧬 종족(races)은 이미지·연계·검색에 쓰인다(#106). 기물(`construct`)은 사이클(기생)에 걸리지
+  //    않는다(#107) — 골렘·수정탑이 그 예시다. 인간 6장은 종족 덱(`comboScope:'race'`)의 씨앗이다.
+
   // === [소환수 / Unit] ===
   {
     id: 'starter-1',
@@ -8,26 +20,23 @@ export const DEFAULT_STARTER_CARDS = [
     name: '홍련의 검성 아스카',
     title: 'Crimson Blademaster',
     element: 'fire',
+    races: ['human'],
     themeId: 'theme_crimson_knights',
     themeName: '홍련의 검사단',
     rarity: 'legendary',
-    cost: 3,
+    cost: 4,
     attack: 18,
-    defense: 6,
-    hp: 28,
+    defense: 8,
+    hp: 30,
     imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
     prompt: '1girl, masterpiece, best quality, red hair, crimson flaming katana, knight armor, intense gaze, fire sparks',
     skills: [{
-      name: '일섬: 3연속 홍련참',
-      // ⚠️ 엔진은 multiHit을 damage에 **곱한다** (18 × 3 = 54).
-      //    "총 18"이라 적혀 있어 실제의 1/3로 오해하게 만들었다.
-      description: '3연속 베기로 매회 18씩 총 54 화염 피해를 입히고 2턴간 화상(6)을 부여합니다. 30% 확률로 치명타 1.8배.',
+      name: '일섬: 홍련참',
+      description: '적 1체에게 18 피해 · 적 1체에게 화상 6 (2턴).',
       cost: 3,
       damage: 18,
-      multiHit: 3,
-      critChance: 0.3,
-      critMultiplier: 1.8,
-      statusEffect: { type: 'burn', duration: 2, value: 6 }
+      statusEffect: { type: 'burn', duration: 2, value: 6 },
+      targetSide: 'foe', targetScope: 'single', targetCount: 1, damageTarget: 'any'
     }]
   },
   {
@@ -36,70 +45,74 @@ export const DEFAULT_STARTER_CARDS = [
     name: '빙결의 대마도사 루시아',
     title: 'Archmage of Frost',
     element: 'water',
+    races: ['human'],
     themeId: 'theme_frost_coven',
     themeName: '서리 마법결사',
     rarity: 'epic',
-    cost: 2,
-    attack: 12,
-    defense: 8,
-    hp: 22,
+    cost: 3,
+    attack: 14,
+    defense: 6,
+    hp: 26,
     imageUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
     prompt: '1girl, masterpiece, ice sorceress, blue silver hair, crystal staff, snowflakes, freezing aura',
     skills: [{
-      name: '프로스트 노바 & 기절',
-      description: '12 냉기 피해를 주고 적을 1턴간 기절시키며 카드 1장을 드로우합니다.',
-      cost: 2,
-      damage: 12,
-      drawCards: 1,
-      statusEffect: { type: 'stun', duration: 1, value: 0 }
+      name: '빙결의 손아귀',
+      // 빙결은 **공격력 약화**다 (기절이 아니다 — DECISIONS #105)
+      description: '적 전장의 기물 1체에게 14 피해 · 적 전장의 기물 1체에게 빙결 5 (2턴).',
+      cost: 3,
+      damage: 14,
+      statusEffect: { type: 'freeze', duration: 2, value: 5 },
+      targetSide: 'foe', targetScope: 'single', targetCount: 1, damageTarget: 'field'
     }]
   },
   {
     id: 'starter-3',
     cardType: 'unit',
     name: '뇌제 발키리 브륀힐트',
-    title: 'Thunder Valkyrie',
+    title: 'Valkyrie of Thunder',
     element: 'lightning',
-    themeId: 'theme_thunder_valkyrie',
-    themeName: '뇌제 발키리아',
-    rarity: 'epic',
-    cost: 3,
-    attack: 20,
-    defense: 5,
-    hp: 24,
+    races: ['human'],
+    themeId: 'theme_thunder_valkyries',
+    themeName: '뇌명의 발키리',
+    rarity: 'rare',
+    cost: 5,
+    attack: 10,
+    defense: 4,
+    hp: 20,
     imageUrl: 'https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop&q=80',
     prompt: '1girl, valkyrie, golden hair, lightning spear, wings of light, electric aura',
     skills: [{
-      name: '천벌의 뇌창 & 과충전',
-      description: '20 번개 피해를 주고 다음 카드를 2연속 발동합니다. 40% 확률로 치명타 1.8배.',
+      name: '천공의 연쇄뢰',
+      // 광역 감전 → 아무나 한 대 때리면 걸린 전원이 함께 맞는다 (DECISIONS #105)
+      description: '적 전체에게 감전 5 (3턴).',
       cost: 3,
-      damage: 20,
-      critChance: 0.4,
-      doubleCastNext: true
+      statusEffect: { type: 'shock', duration: 3, value: 5 },
+      targetSide: 'foe', targetScope: 'all', targetCount: 0
     }]
   },
   {
     id: 'starter-4',
     cardType: 'unit',
     name: '성역의 수호사제 세라피나',
-    title: 'Guardian Priestess',
+    title: 'Sanctuary Priestess',
     element: 'holy',
-    themeId: 'theme_sanctuary_priestess',
-    themeName: '성역의 수호사제',
+    races: ['human'],
+    themeId: 'theme_holy_sanctuary',
+    themeName: '성역의 수호자',
     rarity: 'rare',
-    cost: 2,
-    attack: 6,
-    defense: 14,
-    hp: 26,
+    cost: 3,
+    attack: 10,
+    defense: 4,
+    hp: 20,
     imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
     prompt: '1girl, holy priestess, blonde, white gold robes, glowing halo, holy barrier',
     skills: [{
-      name: '아이기스의 무적 은혜',
-      description: '방어막 14를 얻고 본체 체력 8을 회복하며 1턴간 무적 결계를 펼칩니다.',
-      cost: 2,
-      shield: 14,
-      heal: 8,
-      invulnerableTurns: 1
+      name: '성역의 축복',
+      description: '본체 방어막 +10 · 본체 체력 10 회복.',
+      cost: 3,
+      shield: 10,
+      heal: 10,
+      targetSide: 'self', targetScope: 'single', targetCount: 1
     }]
   },
   {
@@ -108,54 +121,194 @@ export const DEFAULT_STARTER_CARDS = [
     name: '심연의 암살자 레이븐',
     title: 'Abyssal Assassin',
     element: 'dark',
-    themeId: 'theme_abyssal_shadows',
+    races: ['human'],
+    themeId: 'theme_abyss_shadows',
     themeName: '심연의 그림자단',
     rarity: 'rare',
-    cost: 1,
+    cost: 4,
     attack: 10,
-    defense: 3,
-    hp: 18,
+    defense: 4,
+    hp: 20,
     imageUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=600&auto=format&fit=crop&q=80',
     prompt: '1boy, dark assassin, hooded cloak, glowing violet eyes, twin daggers',
     skills: [{
-      name: '그림자 흡혈 암살',
-      description: '적 방어막을 무시하고 10 피해를 준 뒤 그 50%를 본체 체력으로 흡혈합니다. 상대 체력 35% 이하면 처형으로 2배 피해.',
-      cost: 1,
-      damage: 10,
+      name: '그림자 관통',
+      description: '적 1체에게 12 피해 · 방어막 관통.',
+      cost: 3,
+      damage: 12,
       pierceShield: true,
-      lifestealPercent: 0.5,
-      executeThreshold: 0.35
+      targetSide: 'foe', targetScope: 'single', targetCount: 1, damageTarget: 'any'
+    }]
+  },
+  {
+    id: 'starter-generic-1',
+    cardType: 'unit',
+    name: '방랑의 용병 검사',
+    title: 'Wandering Mercenary',
+    element: 'nature',
+    races: ['human'],
+    rarity: 'common',
+    cost: 2,
+    attack: 6,
+    defense: 2,
+    hp: 14,
+    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
+    prompt: '1boy, wandering lone mercenary swordsman, leather cloak, broadsword, rugged handsome, fantasy anime style',
+    skills: [{
+      name: '용병의 일격',
+      description: '적 1체에게 8 피해.',
+      cost: 2,
+      damage: 8,
+      targetSide: 'foe', targetScope: 'single', targetCount: 1, damageTarget: 'any'
+    }]
+  },
+  {
+    id: 'starter-generic-4',
+    cardType: 'unit',
+    name: '고대의 바위 골렘',
+    title: 'Ancient Stone Golem',
+    element: 'nature',
+    // 기물이라 사이클(기생)에 걸리지 않는다 — 기계에 기생충이 자랄 수는 없다 (DECISIONS #107)
+    races: ['construct'],
+    rarity: 'rare',
+    cost: 3,
+    attack: 10,
+    defense: 8,
+    hp: 24,
+    imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
+    prompt: 'giant ancient stone moss golem, glowing green core crystal, massive rock fists, protective guardian stance',
+    skills: [{
+      name: '암반의 방벽',
+      description: '본체 방어막 +10.',
+      cost: 3,
+      shield: 10,
+      targetSide: 'self', targetScope: 'single', targetCount: 1
+    }]
+  },
+  {
+    // 바닐라 — 효과가 없고 스탯과 플레이버만 있는 카드. 소환수 전용이다 (규칙 37).
+    //   기본 카드에 한 장도 없어서 신규 플레이어가 바닐라를 볼 일이 없었다.
+    id: 'starter-vanilla-1',
+    cardType: 'unit',
+    name: '잠든 새끼 용',
+    title: 'Slumbering Wyrmling',
+    element: 'fire',
+    races: ['dragon'],
+    rarity: 'rare',
+    cost: 2,
+    attack: 13,
+    defense: 5,
+    hp: 24,
+    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
+    prompt: 'small sleeping baby dragon, curled up, scales, glowing embers, cozy nest, fantasy illustration',
+    skills: [{
+      name: '고요한 숨결',
+      description: '아직 날개를 펴는 법을 모른다. 그래도 이빨은 자란다.',
+      cost: 2,
+      isVanilla: true,
+      flavorText: '아직 날개를 펴는 법을 모른다. 그래도 이빨은 자란다.',
+      // 바닐라도 대상 개념이 없지만 sanitize가 기본값을 채운다 — 적어 두지 않으면 기획값과 저장값이 갈린다
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
     }]
   },
 
-  // === [주문/마법 / Spell - 필드 비점유 즉발 발동] ===
+  {
+    // 💠 1마나 커먼 — **1턴에 낼 것**이 없으면 첫 턴이 통째로 버려진다.
+    //    실측: 새 커브만으로는 오픈 핸드가 4/4/2/5마나로 나와 1턴에 아무것도 못 냈다 (DECISIONS #110).
+    id: 'starter-common-1',
+    cardType: 'unit',
+    name: '견습 검사',
+    title: 'Novice Swordsman',
+    element: 'fire',
+    races: ['human'],
+    rarity: 'common',
+    cost: 1,
+    attack: 6,
+    defense: 2,
+    hp: 14,
+    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
+    prompt: '1boy, young novice swordsman, simple leather armor, training sword, determined expression, fantasy anime',
+    skills: [{
+      name: '서툰 베기',
+      description: '검을 처음 쥔 손은 늘 떨린다. 그래도 앞으로 나선다.',
+      cost: 1,
+      isVanilla: true,
+      flavorText: '검을 처음 쥔 손은 늘 떨린다. 그래도 앞으로 나선다.',
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
+    }]
+  },
+  {
+    id: 'starter-common-2',
+    cardType: 'unit',
+    name: '수호 방패병',
+    title: 'Shield Guard',
+    element: 'holy',
+    races: ['human'],
+    rarity: 'common',
+    cost: 2,
+    attack: 6,
+    defense: 2,
+    hp: 14,
+    imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
+    prompt: '1boy, shield bearer guard, tower shield, chainmail, steadfast stance, holy emblem, fantasy anime',
+    skills: [{
+      name: '방패 올리기',
+      description: '본체 방어막 +6.',
+      cost: 2,
+      shield: 6,
+      targetSide: 'self', targetScope: 'single', targetCount: 1
+    }]
+  },
+  // === [주문 / Spell] ===
+  {
+    // 💠 1마나 커먼 주문 — 1턴에 쓸 수 있는 제거기
+    id: 'starter-common-3',
+    cardType: 'spell',
+    name: '작은 불꽃',
+    title: 'Cinder Flick',
+    element: 'fire',
+    rarity: 'common',
+    cost: 1,
+    attack: 0,
+    defense: 0,
+    hp: 0,
+    imageUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80',
+    prompt: 'small flickering ember spark in cupped hands, tiny flame magic, warm glow, simple fantasy illustration',
+    skills: [{
+      name: '불씨 튀기기',
+      description: '적 1체에게 12 피해.',
+      cost: 1,
+      damage: 12,
+      targetSide: 'foe', targetScope: 'single', targetCount: 1, damageTarget: 'any'
+    }]
+  },
   {
     id: 'starter-spell-1',
     cardType: 'spell',
     name: '종말의 메테오 스트라이크',
-    title: 'Apocalypse Meteor Strike',
+    title: 'Apocalypse Meteor',
     element: 'fire',
     rarity: 'legendary',
-    cost: 3,
-    attack: 22,
+    cost: 5,
+    attack: 0,
     defense: 0,
     hp: 0,
     imageUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80',
     prompt: 'giant blazing meteor falling from dark stormy sky, apocalyptic inferno, magical runes, fantasy digital art',
     skills: [{
-      name: '천체 붕괴 폭격',
-      description: '[즉발 주문] 적 보스와 모든 부하에게 22의 화염 피해를 퍼붓고 2턴간 화상을 입힙니다.',
-      cost: 3,
-      damage: 22,
-      isAoeSpell: true,
-      statusEffect: { type: 'burn', duration: 2, value: 8 }
+      name: '종말의 낙하',
+      description: '적 전체에게 20 피해 · 적 전체에게 화상 8 (2턴).',
+      cost: 5,
+      damage: 20,
+      statusEffect: { type: 'burn', duration: 2, value: 8 },
+      targetSide: 'foe', targetScope: 'all', targetCount: 0, damageTarget: 'any'
     }]
   },
   {
     id: 'starter-spell-2',
     cardType: 'spell',
     name: '시공의 왜곡: 타임 리프',
-    title: 'Chrono Rift & Time Warp',
+    title: 'Time Leap',
     element: 'holy',
     rarity: 'epic',
     cost: 2,
@@ -165,102 +318,21 @@ export const DEFAULT_STARTER_CARDS = [
     imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
     prompt: 'glowing clockwork portal, time rift, holy golden feathers, sacred divine light, cosmic dust',
     skills: [{
-      name: '시간의 은총',
-      description: '[즉발 주문] 마나 +1 충전, 카드 1장 드로우, 본체 체력 8 회복, 1턴간 무적 결계.',
+      name: '시간의 도약',
+      description: '마나 +1 · 카드 1장 드로우.',
       cost: 2,
       manaGain: 1,
       drawCards: 1,
-      invulnerableTurns: 1,
-      heal: 8
-    }]
-  },
-
-  // === [건축물/성물 / Structure - 전장 배치 및 턴마다 지속 패시브] ===
-  {
-    id: 'starter-struct-1',
-    cardType: 'structure',
-    name: '신비의 마나 수정탑',
-    title: 'Arcane Mana Pylon',
-    element: 'water',
-    rarity: 'rare',
-    cost: 2,
-    attack: 0,
-    defense: 8,
-    hp: 22,
-    imageUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-    prompt: 'crystal magical tower, floating glowing blue crystals, mana fountain, fantasy architecture, ancient runes',
-    skills: [{
-      name: '마나 공명 오라',
-      description: '[건축물 패시브] 매 턴 시작 시 마나 +1을 공급하고, 턴 종료 시 본체 방어막 +6을 충전합니다.',
-      cost: 2,
-      passiveEffect: {
-        type: 'mana_battery',
-        manaPerTurn: 1,
-        endTurnShield: 6
-      }
-    }]
-  },
-  {
-    id: 'starter-struct-2',
-    cardType: 'structure',
-    name: '아이기스의 수호 철옹성',
-    title: 'Aegis Fortress of Light',
-    element: 'holy',
-    rarity: 'legendary',
-    cost: 3,
-    attack: 0,
-    defense: 14,
-    hp: 32,
-    imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
-    prompt: 'magnificent holy fortress castle, glowing golden barrier, heavenly citadel, fantasy stone stronghold',
-    skills: [{
-      name: '철옹성의 가호',
-      description: '[건축물] 전장에 서서 상대의 본체 공격을 막습니다. 매 턴 종료 시 본체 방어막 +8, 본체 체력 +4, 자신의 내구도를 수리합니다.',
-      cost: 3,
-      passiveEffect: {
-        type: 'fortress_wall',
-        endTurnAoeShield: 8,
-        endTurnAoeHeal: 4
-      }
-    }]
-  },
-
-  // === [🌐 범용 카드 / Generic Staple Cards - 무소속 만능 용병 & 필수 주문] ===
-  {
-    id: 'starter-generic-1',
-    cardType: 'unit',
-    name: '방랑의 용병 검사',
-    title: 'Wandering Mercenary',
-    element: 'nature',
-    themeId: null,
-    themeName: null,
-    isGeneric: true,
-    rarity: 'rare',
-    cost: 2,
-    attack: 12,
-    defense: 6,
-    hp: 20,
-    imageUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop&q=80',
-    prompt: '1boy, wandering lone mercenary swordsman, leather cloak, broadsword, rugged handsome, fantasy anime style',
-    skills: [{
-      name: '신속한 2연속 베기',
-      description: '[범용 용병] 2연속 베기로 매회 12씩 총 24 피해. 25% 확률로 치명타 1.8배.',
-      cost: 2,
-      damage: 12,
-      multiHit: 2,
-      critChance: 0.25
+      targetSide: 'self', targetScope: 'single', targetCount: 1
     }]
   },
   {
     id: 'starter-generic-2',
     cardType: 'spell',
     name: '욕망의 비전 항아리',
-    title: 'Pot of Arcane Greed',
+    title: 'Pot of Greed',
     element: 'water',
-    themeId: null,
-    themeName: null,
-    isGeneric: true,
-    rarity: 'epic',
+    rarity: 'rare',
     cost: 1,
     attack: 0,
     defense: 0,
@@ -268,58 +340,108 @@ export const DEFAULT_STARTER_CARDS = [
     imageUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
     prompt: 'ancient glowing magical green vase pot, mysterious smirk, glowing runes, arcane energy sparks',
     skills: [{
-      name: '탐욕의 마력 흡수',
-      description: '[범용 주문] 즉시 카드 2장을 드로우하고 마나 1을 추가로 공급받습니다.',
+      name: '탐욕의 대가',
+      description: '카드 2장 드로우.',
       cost: 1,
       drawCards: 2,
-      manaGain: 1
+      targetSide: 'self', targetScope: 'single', targetCount: 1
     }]
   },
   {
     id: 'starter-generic-3',
     cardType: 'spell',
     name: '결계 분쇄의 일격',
-    title: 'Dispel Barrier Strike',
+    title: 'Barrier Breaker',
     element: 'lightning',
-    themeId: null,
-    themeName: null,
-    isGeneric: true,
     rarity: 'rare',
-    cost: 2,
-    attack: 16,
+    cost: 3,
+    attack: 0,
     defense: 0,
     hp: 0,
     imageUrl: 'https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop&q=80',
     prompt: 'thunder spear piercing crystal magic shield barrier, electric shockwave, shattered barrier fragments',
     skills: [{
-      name: '절대 실드 관통타',
-      description: '[범용 주문] 적의 모든 방어막을 100% 무시하고 체력에 16 직접 번개 피해를 꽂아넣습니다.',
+      name: '결계 분쇄',
+      // 부식은 **방어력 약화**다 — 빙결(공격력)의 짝 (DECISIONS #105)
+      description: '방어막 관통 · 적 1체에게 부식 6 (2턴).',
+      cost: 3,
+      pierceShield: true,
+      statusEffect: { type: 'corrosion', duration: 2, value: 6 },
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
+    }]
+  },
+
+  // === [건축물 / Structure] ===
+  {
+    id: 'starter-struct-1',
+    cardType: 'structure',
+    name: '신비의 마나 수정탑',
+    title: 'Arcane Mana Spire',
+    element: 'water',
+    races: ['construct'],
+    rarity: 'rare',
+    cost: 2,
+    attack: 0,
+    defense: 4,
+    hp: 20,
+    imageUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
+    prompt: 'crystal magical tower, floating glowing blue crystals, mana fountain, fantasy architecture, ancient runes',
+    skills: [{
+      name: '마나 순환',
+      description: '매 턴 마나 +1.',
       cost: 2,
-      damage: 16,
-      pierceShield: true
+      passiveEffect: { manaPerTurn: 1 },
+      // 건축물은 대상 개념이 없지만 sanitize가 기본값을 채운다 — 적어 두지 않으면 기획값과 저장값이 갈린다
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
     }]
   },
   {
-    id: 'starter-generic-4',
-    cardType: 'unit',
-    name: '고대의 바위 골렘',
-    title: 'Ancient Stone Golem',
-    element: 'nature',
-    themeId: null,
-    themeName: null,
-    isGeneric: true,
-    rarity: 'rare',
+    id: 'starter-struct-2',
+    cardType: 'structure',
+    name: '아이기스의 수호 철옹성',
+    title: 'Aegis Citadel',
+    element: 'holy',
+    races: ['construct'],
+    rarity: 'legendary',
     cost: 2,
-    attack: 8,
+    attack: 0,
     defense: 10,
-    hp: 26,
+    hp: 34,
     imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
-    prompt: 'giant ancient stone moss golem, glowing green core crystal, massive rock fists, protective guardian stance',
+    prompt: 'magnificent holy fortress castle, glowing golden barrier, heavenly citadel, fantasy stone stronghold',
     skills: [{
-      name: '단단한 바위 방벽',
-      description: '[범용 벽] 전장을 지켜 상대의 본체 공격을 막으며, 소환 시 본체 방어막 +8을 획득합니다.',
+      name: '아이기스의 가호',
+      description: '턴 종료 시 본체 방어막 +6 · 이 카드가 전장에 있는 동안 모든 아군의 방어력 +2.',
       cost: 2,
-      shield: 8
+      passiveEffect: { endTurnShield: 6, aura: { scope: 'all', defenseBonus: 2 } },
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
+    }]
+  },
+
+  // === [함정 / Trap] ===
+  {
+    // 기본 카드에 함정이 **한 장도 없었다** — 신규 플레이어가 함정을 볼 일이 없었다.
+    //   함정은 종족이 없어 사이클 역할이 `both`다 = 기생을 걸 수 있다 (DECISIONS #107).
+    id: 'starter-trap-1',
+    cardType: 'trap',
+    name: '포자 살포의 덫',
+    title: 'Spore Snare',
+    element: 'nature',
+    rarity: 'rare',
+    cost: 1,
+    attack: 0,
+    defense: 0,
+    hp: 0,
+    imageUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
+    prompt: 'glowing fungal spore trap on forest floor, bursting mushroom cloud, bioluminescent green haze, fantasy',
+    skills: [{
+      name: '포자 살포',
+      // 기생 → 성장 → 부화. 기물(기계) 소환수에는 걸리지 않는다 (DECISIONS #104·#107)
+      description: '상대가 소환수를 낼 때: 적 1체에게 기생 3 (2턴).',
+      cost: 1,
+      trapTrigger: 'foePlaysUnit',
+      statusEffect: { type: 'parasite', duration: 2, value: 3 },
+      targetSide: 'foe', targetScope: 'single', targetCount: 1
     }]
   }
 ];

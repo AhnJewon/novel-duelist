@@ -143,7 +143,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (497항목):
+전투 로직은 **하네스가 있습니다** (509항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -325,7 +325,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (497항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (509항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -645,3 +645,21 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 124. **호출부 규약에 기대지 말고 함수가 스스로 방어하게 하세요.** `rollCardRace`의 `customKeys`에
     기본 종족이 섞여 들어오자 타입별 가중치가 무너졌습니다(주문의 "종족 없음" 85% → 68%).
     이제 함수가 `custom` 여부를 직접 확인합니다. → [DECISIONS #109](docs/DECISIONS.md)
+
+125. **기본 카드는 `sanitizeAndClampCardData`의 출력이어야 합니다.** 손으로 수치를 맞추면 어긋나고,
+    어긋나면 부팅 때 `rebalanceExistingCards`가 **코스트를 올려** 맞춥니다 — 3마나로 적어 둔 카드가
+    손에서는 6마나였습니다. 카드를 설계한 뒤 sanitize를 통과시켜 **그 출력을 적으세요.**
+    하네스 '기본 카드' 스위트가 지킵니다. → [DECISIONS #110](docs/DECISIONS.md)
+
+126. **등급을 낮추는 것이 코스트를 올리는 것보다 먼저입니다.** 등급별 스탯 하한이 코스트를
+    밀어올립니다(legendary 소환수는 하한 스탯만으로 예산의 68%를 씁니다). "legendary 3마나에 화려한
+    효과"는 규칙상 불가능합니다. 시작 덱에 legendary를 쌓지 마세요.
+    → [DECISIONS #110](docs/DECISIONS.md)
+
+127. **커브를 고쳤으면 1턴에 낼 것이 있는지 확인하세요.** 1턴 마나는 1입니다. 새 커브로 오픈 핸드가
+    4/4/2/5마나가 나와 첫 턴이 통째로 버려진 적이 있습니다. 1마나 카드를 충분히 두세요.
+    → [DECISIONS #110](docs/DECISIONS.md)
+
+128. **기본 카드 정의를 고치면 `STARTER_RULES_VERSION`을 올리고 `STARTER_V1_TEXT`도 갱신하세요.**
+    마이그레이션은 유저의 일러스트를 항상 보존하고, 이름은 **그 판의 기본 문구와 다를 때만** 보존합니다.
+    문구표를 갱신하지 않으면 유저가 붙인 이름을 조용히 지웁니다. → [DECISIONS #110](docs/DECISIONS.md)

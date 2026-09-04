@@ -3,6 +3,30 @@
 import { DEFAULT_STARTER_CARDS } from './data.js';
 import { ensureCopiesField, loadDust, MAX_CARD_COPIES } from './card-copies.js';
 
+/**
+ * 기본 카드 규칙 판. 올리면 저장된 기본 카드가 새 정의로 한 번 갈린다 (DECISIONS #110).
+ * ⚠️ 올릴 때는 STARTER_V1_TEXT도 그 판의 문구로 갱신하세요. 안 하면 유저가 붙인 이름을 못 지킵니다 —
+ *    v1 문구와 다르면 "유저가 고쳤다"로 보고 남기는 방식이기 때문이다.
+ */
+export const STARTER_RULES_VERSION = 2;
+
+/** v1(예산 개편 전) 기본 문구. 유저가 이름을 고쳤는지 판별하는 **유일한** 근거다. */
+const STARTER_V1_TEXT = {
+  'starter-1':         { name: '홍련의 검성 아스카',       title: 'Crimson Blademaster' },
+  'starter-2':         { name: '빙결의 대마도사 루시아',   title: 'Archmage of Frost' },
+  'starter-3':         { name: '뇌제 발키리 브륀힐트',     title: 'Valkyrie of Thunder' },
+  'starter-4':         { name: '성역의 수호사제 세라피나', title: 'Sanctuary Priestess' },
+  'starter-5':         { name: '심연의 암살자 레이븐',     title: 'Abyssal Assassin' },
+  'starter-spell-1':   { name: '종말의 메테오 스트라이크', title: 'Apocalypse Meteor' },
+  'starter-spell-2':   { name: '시공의 왜곡: 타임 리프',   title: 'Time Leap' },
+  'starter-struct-1':  { name: '신비의 마나 수정탑',       title: 'Arcane Mana Spire' },
+  'starter-struct-2':  { name: '아이기스의 수호 철옹성',   title: 'Aegis Citadel' },
+  'starter-generic-1': { name: '방랑의 용병 검사',         title: 'Wandering Mercenary' },
+  'starter-generic-2': { name: '욕망의 비전 항아리',       title: 'Pot of Greed' },
+  'starter-generic-3': { name: '결계 분쇄의 일격',         title: 'Barrier Breaker' },
+  'starter-generic-4': { name: '고대의 바위 골렘',         title: 'Ancient Stone Golem' }
+};
+
 // 덱 규칙. 중복을 허용하되 같은 카드는 MAX_COPIES까지만 (유희왕식 3장 제한)
 export const MAX_DECK_SIZE = 20;
 export const MIN_DECK_SIZE = 4;
@@ -169,6 +193,38 @@ export async function loadInitialData() {
           cardsUpdated = true;
         }
       }
+    });
+
+    // ⚖️ 기본 카드 규칙 갱신 (DECISIONS #110)
+    //
+    // 예전 기본 카드는 예산을 넘겼고(13장 중 10장), 부팅 때 `rebalanceExistingCards`가
+    // **코스트를 올려서** 맞췄다. 3마나로 적힌 카드가 손에서는 6마나였다. 게다가 종족·사이클
+    // 역할·함정·바닐라·신규 상태이상이 하나도 없었다.
+    //
+    // 그래서 저장된 기본 카드를 새 정의로 갈아준다. 단 **유저의 것은 남긴다**:
+    //   · 일러스트(imageUrl·crop·prompt)는 유저가 다시 뽑았을 수 있다 → 보존
+    //   · 이름·영문 제목·플레이버는 크롭 모달에서 고칠 수 있다(#100 ⑦) → **v1 기본값과 다르면** 보존
+    // v1 문구 표를 들고 있는 이유가 그것이다. 이게 없으면 유저가 붙인 이름을 조용히 지운다.
+    //
+    // `_starterRules` 표식으로 한 번만 돈다 — 유저가 나중에 수치를 손대면 다시 덮지 않는다.
+    loadedCards.forEach(card => {
+      const def = DEFAULT_STARTER_CARDS.find(s => s.id === card.id);
+      if (!def || card._starterRules >= STARTER_RULES_VERSION) return;
+      const v1 = STARTER_V1_TEXT[card.id];
+      const keptName = (v1 && card.name && card.name !== v1.name) ? card.name : def.name;
+      const keptTitle = (v1 && card.title && card.title !== v1.title) ? card.title : def.title;
+      const art = { imageUrl: card.imageUrl, crop: card.crop, prompt: card.prompt };
+
+      const fresh = JSON.parse(JSON.stringify(def));
+      Object.keys(card).forEach(k => { if (!(k in fresh)) delete card[k]; });
+      Object.assign(card, fresh);
+      card.name = keptName;
+      card.title = keptTitle;
+      if (art.imageUrl) card.imageUrl = art.imageUrl;
+      if (art.crop) card.crop = art.crop;
+      if (art.prompt) card.prompt = art.prompt;
+      card._starterRules = STARTER_RULES_VERSION;
+      cardsUpdated = true;
     });
 
     // 🃏 매수 필드 보정 — 스타터 카드는 3장씩 지급한다.

@@ -34,6 +34,8 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
 //    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
 import * as SE from '/js/status-effects.js';
 import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106)
+import * as CFG from '/js/config.js';                        // 예산·정산 (기본 카드 검사)
+import { DEFAULT_STARTER_CARDS as STARTERS } from '/js/data.js';
 import * as DR from '/js/card-design-roll.js';               // 🎲 설계 추첨 (효과 성향·함정 조건·종족)
 import * as RS from '/js/race-service.js';                // 🧬 종족 등록 게이트 (DECISIONS #108)
 import * as CR from '/js/cycle-roles.js';                  // 🧬 사이클 역할 (DECISIONS #107) — 새 API는 네임스페이스로 (규칙 114)
@@ -1900,6 +1902,101 @@ async function suiteBossBudget() {
 // 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
 // ============================================================
 // ============================================================
+// 🃏 기본 카드 — 규칙과 어긋나면 저장 시점에 조용히 달라진다  → DECISIONS #110
+// ============================================================
+function suiteStarterCards() {
+  const S = '기본 카드';
+  const list = STARTERS;
+  check(S, '기본 카드가 존재한다', Array.isArray(list) && list.length > 0, `${list && list.length}`);
+  if (!Array.isArray(list) || list.length === 0) return;
+
+  // ① 예산 안 — 넘으면 rebalanceExistingCards가 부팅 때 **코스트를 올려** 맞춘다.
+  //    그게 "3마나로 적어 둔 카드가 손에서는 6마나"였던 원인이다.
+  const over = list.filter(c => {
+    const s = (c.skills && c.skills[0]) || {};
+    return CFG.evaluateCardPower(c, s).overBudget;
+  });
+  check(S, '전부 예산 안 (넘으면 부팅 때 코스트가 올라간다)',
+    over.length === 0, over.map(c => c.name).join(', '));
+
+  // ② sanitize가 **적어 둔 값을 바꾸지 않는다** — 기획값 = 저장값이어야 한다.
+  //    ⚠️ 기본값 채우기(hpTarget·isAoeSpell)와 메타(powerUsed·skill 거울)는 정상이므로 세지 않는다.
+  //       전체 JSON 비교로 하면 그 정상 동작까지 빨갛게 되어 검사가 쓸모없어진다 (한 번 그렇게 썼다).
+  const VALUED = ['cost', 'attack', 'defense', 'hp'];
+  const VALUED_SKILL = ['damage', 'multiHit', 'shield', 'heal', 'drawCards', 'manaGain', 'destroy',
+    'searchDeck', 'summonToken', 'critChance', 'lifestealPercent', 'executeThreshold',
+    'invulnerableTurns', 'damageReduction', 'attackDown', 'pierceShield', 'silence',
+    'doubleCastNext', 'isVanilla', 'trapTrigger', 'targetSide', 'targetScope', 'targetCount', 'damageTarget'];
+  const changed = [];
+  for (const c of list) {
+    const a = CFG.sanitizeAndClampCardData(JSON.parse(JSON.stringify(c)), c.rarity);
+    const s0 = (c.skills && c.skills[0]) || {};
+    const s1 = (a.skills && a.skills[0]) || {};
+    const bad = [];
+    for (const k of VALUED) if (c[k] !== a[k]) bad.push(`${k} ${c[k]}→${a[k]}`);
+    for (const k of VALUED_SKILL) {
+      if (s0[k] === undefined && s1[k] === undefined) continue;
+      if (JSON.stringify(s0[k]) !== JSON.stringify(s1[k])) bad.push(`${k} ${JSON.stringify(s0[k])}→${JSON.stringify(s1[k])}`);
+    }
+    if (JSON.stringify(s0.statusEffect || null) !== JSON.stringify(s1.statusEffect || null)) {
+      bad.push(`status ${JSON.stringify(s0.statusEffect)}→${JSON.stringify(s1.statusEffect)}`);
+    }
+    if (bad.length) changed.push(`${c.name}(${bad.join(' · ')})`);
+  }
+  check(S, 'sanitize가 적어 둔 값을 바꾸지 않는다 (기획값 = 저장값)',
+    changed.length === 0, changed.join(' | '));
+
+  // ③ 신규 플레이어가 **모든 카드 타입**을 본다. 예전엔 함정이 한 장도 없었다.
+  const types = new Set(list.map(c => c.cardType || 'unit'));
+  check(S, '네 타입이 모두 있다 (예전엔 함정 0장)',
+    ['unit', 'spell', 'structure', 'trap'].every(t => types.has(t)),
+    [...types].join(','));
+
+  // ④ 바닐라도 한 장 — 소환수 전용이다 (규칙 37)
+  const vanilla = list.filter(c => (c.skills && c.skills[0] && c.skills[0].isVanilla));
+  check(S, '바닐라가 있고 소환수다 (예전엔 0장)',
+    vanilla.length >= 1 && vanilla.every(c => (c.cardType || 'unit') === 'unit'),
+    vanilla.map(c => `${c.name}(${c.cardType})`).join(', '));
+
+  // ⑤ 종족이 붙어 있고, 종족 덱이 성립할 만큼 뭉쳐 있다 (#106)
+  const withRace = list.filter(c => RC.readRaces(c).length > 0);
+  const counts = {};
+  for (const c of withRace) for (const r of RC.readRaces(c)) counts[r] = (counts[r] || 0) + 1;
+  const biggest = Math.max(0, ...Object.values(counts));
+  check(S, '종족이 붙어 있다 (예전엔 0장)', withRace.length >= 5, `${withRace.length}/${list.length}`);
+  check(S, '한 종족이 2장 이상 뭉쳐 있다 (종족 덱의 씨앗)', biggest >= 2, JSON.stringify(counts));
+
+  // ⑥ 기물은 사이클에 걸리지 않는다 — #107이 실제 카드에 반영됐는가
+  const constructs = list.filter(c => RC.readRaces(c).includes('construct'));
+  check(S, '기물 카드가 있고 사이클 숙주가 되지 않는다',
+    constructs.length >= 1 && constructs.every(c => !CR.canHostCycle(c)),
+    constructs.map(c => `${c.name}:${CR.readCycleRole(c)}`).join(', '));
+
+  // ⑦ #105에서 새로 생긴 상태이상이 실제로 쓰인다 (문서만 있고 카드가 없으면 유저는 볼 일이 없다)
+  const used = new Set(list.map(c => {
+    const s = (c.skills && c.skills[0]) || {};
+    return s.statusEffect && s.statusEffect.type;
+  }).filter(Boolean));
+  check(S, '빙결·부식·감전이 기본 카드에 쓰인다 (예전엔 화상·기절뿐)',
+    ['freeze', 'corrosion', 'shock'].every(t => used.has(t)), [...used].join(','));
+  check(S, '사이클(기생)도 쓰인다', used.has('parasite'), [...used].join(','));
+
+  // ⑧ 마나 커브 — 저코스트가 있어야 첫 턴에 낼 것이 있다
+  const costs = list.map(c => c.cost);
+  check(S, '1~2마나 카드가 3장 이상 있다 (초반에 낼 것)',
+    costs.filter(c => c <= 2).length >= 3, JSON.stringify(costs.slice().sort((a, b) => a - b)));
+
+  // ⑨ 상태이상 위력이 0이 아니다 — 0이면 아무 일도 안 하는 카드다 (#105)
+  const zero = list.filter(c => {
+    const st = (c.skills && c.skills[0] && c.skills[0].statusEffect) || null;
+    if (!st || !st.type || st.type === 'none') return false;
+    const spec = SE.STATUS_EFFECTS[st.type];
+    return spec && spec.defaultValue > 0 && !(st.value > 0);
+  });
+  check(S, '위력이 곧 효과인 상태이상에 0이 없다', zero.length === 0, zero.map(c => c.name).join(', '));
+}
+
+// ============================================================
 // 🧬 종족 생성 게이트 — LLM이 만든 종족이 무한히 늘지 않게  → DECISIONS #108
 // ============================================================
 async function suiteRaceGate() {
@@ -3121,7 +3218,7 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['종족 게이트', suiteRaceGate], ['사이클 역할', suiteCycleRoles], ['사이클', suiteStatusCycles],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['종족 게이트', suiteRaceGate], ['기본 카드', suiteStarterCards], ['사이클 역할', suiteCycleRoles], ['사이클', suiteStatusCycles],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
