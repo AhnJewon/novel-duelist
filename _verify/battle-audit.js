@@ -33,7 +33,8 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
 // ⚠️ 새 API는 **네임스페이스로** 받는다. 이름 import로 받으면 구버전에서 모듈 로드 자체가 죽어
 //    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
 import * as SE from '/js/status-effects.js';
-import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106) — 네임스페이스로 (규칙 114)
+import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106)
+import * as CR from '/js/cycle-roles.js';                  // 🧬 사이클 역할 (DECISIONS #107) — 새 API는 네임스페이스로 (규칙 114)
 import { buildVisualPromptFromCard } from '/js/dan-tag-gen.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
 import { EXECUTE_MULT } from '/js/battle-rules.js';
@@ -1897,6 +1898,129 @@ async function suiteBossBudget() {
 // 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
 // ============================================================
 // ============================================================
+// 🧬 사이클 역할 — 누가 걸 수 있고 누가 걸릴 수 있는가  → DECISIONS #107
+// ============================================================
+function suiteCycleRoles() {
+  const S = '사이클 역할';
+  const role = c => (typeof CR.readCycleRole === 'function' ? CR.readCycleRole(c) : 'both');
+  const canHost = c => (typeof CR.canHostCycle === 'function' ? CR.canHostCycle(c) : true);
+  const canSeed = c => (typeof CR.canSeedCycle === 'function' ? CR.canSeedCycle(c) : true);
+
+  // ① 종족이 기본값을 **제안**한다
+  check(S, '기계(construct)는 기본이 무관 — 걸리지도 걸지도 못한다',
+    role({ races: ['construct'] }) === 'none'
+    && !canHost({ races: ['construct'] }) && !canSeed({ races: ['construct'] }),
+    role({ races: ['construct'] }));
+  check(S, '인간은 숙주 — 걸리기만 한다',
+    role({ races: ['human'] }) === 'host'
+    && canHost({ races: ['human'] }) && !canSeed({ races: ['human'] }));
+  check(S, '이형은 매개 — 걸기만 한다 (유저 예시: 곤충·벌레)',
+    role({ races: ['aberration'] }) === 'vector'
+    && !canHost({ races: ['aberration'] }) && canSeed({ races: ['aberration'] }));
+
+  // ② 카드가 종족을 **이긴다**. 이게 이 축을 종족과 분리한 이유다 — "기생하는 기계"
+  check(S, '카드의 cycleRole이 종족 기본값을 덮는다 (기생 기계)',
+    role({ races: ['construct'], cycleRole: 'vector' }) === 'vector'
+    && canSeed({ races: ['construct'], cycleRole: 'vector' }),
+    role({ races: ['construct'], cycleRole: 'vector' }));
+  check(S, '잘못된 값은 무시하고 종족 기본값으로',
+    role({ races: ['construct'], cycleRole: 'bogus' }) === 'none');
+
+  // ③ 다종족은 **넓은 쪽**으로 합친다 (좁게 합치면 거의 항상 none이 된다)
+  check(S, '다종족은 canGive/canHost를 각각 OR — 숙주 + 매개 = 양쪽',
+    role({ races: ['human', 'aberration'] }) === 'both',
+    role({ races: ['human', 'aberration'] }));
+
+  // ④ 종족이 없으면 제약 없음 — 주문·건축물은 개체가 아니라 외부의 힘이다
+  check(S, '종족 없는 카드는 제약이 없다', role({}) === CR.DEFAULT_CYCLE_ROLE && role({}) === 'both');
+
+  // ⑤ 사이클이 **아닌** 상태이상은 이 축과 무관하다 (화상까지 막으면 안 된다)
+  const machine = minion({ name: '기계', races: ['construct'], statuses: {} });
+  check(S, '사이클이 아니면 누구에게나 걸린다',
+    CR.canReceiveCycleStatus(machine, false) === true && CR.canReceiveCycleStatus(machine, true) === false);
+
+  // ⑥ 실행 시 — 걸 수 없는 앞칸을 넘어 **걸 수 있는 뒤칸**으로 간다
+  resetBoard({
+    bossMinions: [
+      minion({ name: '기계병', races: ['construct'], statuses: {} }),
+      minion({ name: '살덩이', races: ['human'], statuses: {} })
+    ]
+  });
+  BE.__test.helpers().setFoeStatus('parasite', 2, 3);
+  const m0 = state.bossMinions[0], m1 = state.bossMinions[1];
+  check(S, '기생은 기계를 건너뛰고 숙주가 될 수 있는 소환수에 붙는다',
+    !(m0.statuses || {}).parasite && !!(m1.statuses || {}).parasite,
+    `기계=${JSON.stringify(m0.statuses)} 살덩이=${JSON.stringify(m1.statuses)}`);
+
+  // ⑦ 숙주가 하나도 없으면 불발한다 (조용히 아무 데나 붙지 않는다)
+  resetBoard({ bossMinions: [minion({ name: '기계병', races: ['construct'], statuses: {} })] });
+  BE.__test.helpers().setFoeStatus('parasite', 2, 3);
+  check(S, '숙주가 없으면 불발 — 기계에 억지로 붙이지 않는다',
+    !(state.bossMinions[0].statuses || {}).parasite,
+    JSON.stringify(state.bossMinions[0].statuses));
+
+  // ⑧ 화상은 같은 상황에서 **정상적으로** 붙는다 (⑦이 과잉 차단이 아님을 보인다)
+  resetBoard({ bossMinions: [minion({ name: '기계병', races: ['construct'], statuses: {} })] });
+  BE.__test.helpers().setFoeStatus('burn', 2, 5);
+  check(S, '기계도 화상은 입는다 (사이클만 막는다)',
+    !!(state.bossMinions[0].statuses || {}).burn, JSON.stringify(state.bossMinions[0].statuses));
+
+  // ⑨ 지정 대상 경로도 막힌다 — 여기가 두 번째 구멍이었다
+  resetBoard({
+    playerMinions: [],
+    bossMinions: [minion({ name: '기계병', races: ['construct'], statuses: {} })]
+  });
+  applyPlayerSkillEffects(
+    { statusEffect: { type: 'parasite', duration: 2, value: 3 }, targetSide: 'foe', targetScope: 'single' },
+    { card: card({ name: '기생 살포' }), game: state, helpers: BE.__test.helpers() },
+    { sourceLabel: '주문', allowAoe: true, picked: ['foe:0'] }
+  );
+  check(S, '지정 대상 경로에서도 기계는 숙주가 되지 않는다',
+    !(state.bossMinions[0].statuses || {}).parasite,
+    JSON.stringify(state.bossMinions[0].statuses));
+
+  // ⑩ 설계 시 — 못 거는 카드는 사이클 효과를 아예 들고 나오지 못한다
+  const humanSeeder = sanitizeAndClampCardData({
+    name: '인간 병사', cardType: 'unit', rarity: 'rare', cost: 3, attack: 8, defense: 2, hp: 20,
+    races: ['human'],
+    skills: [{ statusEffect: { type: 'parasite', duration: 2, value: 3 } }]
+  }, 'rare');
+  const hSt = (humanSeeder.skills && humanSeeder.skills[0] && humanSeeder.skills[0].statusEffect) || {};
+  check(S, '숙주 전용 카드에서 사이클 효과를 뗀다 (손에서 죽은 카드가 되지 않게)',
+    hSt.type === 'none', JSON.stringify(hSt));
+
+  const vectorSeeder = sanitizeAndClampCardData({
+    name: '벌레 군체', cardType: 'unit', rarity: 'rare', cost: 3, attack: 8, defense: 2, hp: 20,
+    races: ['aberration'],
+    skills: [{ statusEffect: { type: 'parasite', duration: 2, value: 3 } }]
+  }, 'rare');
+  const vSt = (vectorSeeder.skills && vectorSeeder.skills[0] && vectorSeeder.skills[0].statusEffect) || {};
+  check(S, '매개 카드는 사이클 효과를 그대로 가진다', vSt.type === 'parasite', JSON.stringify(vSt));
+
+  // ⑪ 화상은 숙주 전용 카드에서도 남는다 (⑩이 사이클만 겨냥함을 보인다)
+  const humanBurner = sanitizeAndClampCardData({
+    name: '인간 화염병', cardType: 'unit', rarity: 'rare', cost: 3, attack: 8, defense: 2, hp: 20,
+    races: ['human'],
+    skills: [{ statusEffect: { type: 'burn', duration: 2, value: 5 } }]
+  }, 'rare');
+  const bSt = (humanBurner.skills && humanBurner.skills[0] && humanBurner.skills[0].statusEffect) || {};
+  check(S, '사이클이 아닌 상태이상은 숙주 카드에서도 남는다', bSt.type === 'burn', JSON.stringify(bSt));
+
+  // ⑫ 멱등 — 카드 연성은 sanitize를 두 번 돈다 (규칙 76)
+  const twice = sanitizeAndClampCardData(humanSeeder, 'rare');
+  const tSt = (twice.skills && twice.skills[0] && twice.skills[0].statusEffect) || {};
+  check(S, '두 번 돌려도 같다 (멱등)', tSt.type === 'none', JSON.stringify(tSt));
+
+  // ⑬ 부화한 토큰은 매개다 — 태어난 기생체가 다시 숙주가 되면 무한 사이클이 된다
+  resetBoard({ playerMinions: [minion({ name: '숙주', currentHp: 60, maxHp: 60, races: ['human'], statuses: {} })], bossMinions: [] });
+  applyStatus(state.playerMinions[0].statuses, 'gestation', 1, 5);
+  BE.__test.startTurn('player');
+  const born = state.bossMinions[0];
+  check(S, '부화한 토큰은 매개(vector) — 자기는 숙주가 되지 않는다',
+    born && role(born) === 'vector' && !canHost(born), born && role(born));
+}
+
+// ============================================================
 // 🧬 종족 — 속성과 평행하지만 **강제가 아닌** 축  → DECISIONS #106
 // ============================================================
 function suiteRaces() {
@@ -2881,7 +3005,7 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['사이클', suiteStatusCycles],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['사이클 역할', suiteCycleRoles], ['사이클', suiteStatusCycles],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]

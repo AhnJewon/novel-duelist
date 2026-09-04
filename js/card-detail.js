@@ -11,6 +11,7 @@
 // 안쪽에 그리면 잘려 나간다.
 
 import { describeRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { describeCycleRole } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { escapeHtml } from './dom-utils.js';
 import { ELEMENT_CONFIG, RARITY_STYLE } from './config.js';
 import { readDirectAttack } from './card-keywords.js';
@@ -51,7 +52,7 @@ function detailHtml(card) {
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">
           <div class="font-black text-sm text-slate-100 break-words">${escapeHtml(card.name || '')}</div>
-          <div class="text-[10px] text-slate-400">${typeLabel} · ${escapeHtml(elCfg.name)}${describeRaces(card) ? " · " + escapeHtml(describeRaces(card)) : ""}</div>
+          <div class="text-[10px] text-slate-400">${typeLabel} · ${escapeHtml(elCfg.name)}${describeRaces(card) ? " · " + escapeHtml(describeRaces(card)) : ""}${describeCycleRole(card) ? " · " + escapeHtml(describeCycleRole(card)) : ""}</div>
         </div>
         <span class="text-lg shrink-0">${elCfg.icon}</span>
       </div>

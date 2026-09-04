@@ -110,6 +110,7 @@
 | 전투 무작위 / 재현 | `js/rng.js` (`initBattle({seed})`) |
 | 새 상태이상 추가 | `js/status-effects.js` **한 곳** |
 | 종족 추가·이미지 태그·종족 시너지 | `js/races.js` **한 곳** (연계는 `comboScope: 'race'`) |
+| 사이클을 누가 걸고 누가 걸리나 | `js/cycle-roles.js` **한 곳** (종족은 기본값만 제안) |
 | 상태이상 적용 범위 (소환수 전용 여부) | `js/status-effects.js`의 `entityOnly` + `config.js`의 `ENTITY_ONLY_STATUSES` |
 | 스탯 체증·체감 곡선 | `js/config.js`의 `STAT_CURVE` |
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
@@ -141,7 +142,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (461항목):
+전투 로직은 **하네스가 있습니다** (478항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -323,7 +324,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (461항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (478항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -609,3 +610,18 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     Perl이 정규식 안에서 그냥 `|`로 되돌려 **교체(alternation)** 가 됩니다. 실제로 프롬프트 enum을 바꾸려다
     `import { cardTypeRules }`의 `cardType`이 치환됐습니다. 다른 구분자나 Edit 도구를 쓰세요.
     → [DECISIONS #106](docs/DECISIONS.md)
+
+118. **사이클을 걸 수 있는가·걸릴 수 있는가는 `cycle-roles.js`가 정합니다.** 종족은 **기본값만
+    제안**하고 카드의 `cycleRole`이 이깁니다 — 종족으로 하드코딩하면 "기생하는 기계" 같은 예외
+    카드를 영영 만들 수 없습니다. 다종족은 `canGive`/`canHost`를 각각 **OR**로 합칩니다(좁게
+    합치면 거의 항상 `none`이 됩니다). 종족이 없으면 제약도 없습니다.
+    → [DECISIONS #107](docs/DECISIONS.md)
+
+119. **받는 쪽은 실행 시, 거는 쪽은 설계 시에 막으세요.** 걸 수 없는 앞칸은 **건너뛰고** 걸 수 있는
+    뒤칸으로 갑니다(불발보다 낫고 배치가 대응 수단이 됩니다). 반대로 못 거는 카드를 실행 시에
+    막으면 손에 든 순간부터 죽은 카드가 되므로 `sanitize`가 효과를 뗍니다.
+    → [DECISIONS #107](docs/DECISIONS.md)
+
+120. **상태이상 적용 경로는 둘입니다.** 엔진의 `applyStatusRespectingScope`와 `skill-effects.js`의
+    **지정 대상**(`St.explicit`) 분기입니다. 적용 규칙을 추가하면 **둘 다** 고치세요 — 엔진만
+    고쳤다가 지정 경로가 뚫린 적이 있습니다. → [DECISIONS #107](docs/DECISIONS.md)

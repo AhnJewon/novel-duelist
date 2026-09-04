@@ -1,6 +1,7 @@
 // config.js - 게임 상수 및 설정
 import { normalizeTrapTrigger, TRAP_TRIGGERS } from './trap-system.js';
 import { STATUS_EFFECTS } from './status-effects.js';
+import { canSeedCycle, readCycleRole, CYCLE_ROLES, CYCLE_ROLE_KEYS } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
 import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
          HP_TARGETS, readHpTarget, hpTargetCostMultiplier,
@@ -627,6 +628,13 @@ export function enforcePowerBudget(cardData, skill) {
   //    사이클(기생·성장)도 본체에 못 걸리므로 bodyStatus 할증을 받지 않는다 (DECISIONS #104)
   if (out.bodyStatus && out.statusEffect
       && (BLOCKING_STATUSES.has(out.statusEffect.type) || BODY_BLOCKED_STATUSES.has(out.statusEffect.type))) delete out.bodyStatus;
+  // 🧬 사이클(기생·성장)은 **걸 수 있는 카드**만 들고 다닌다 (DECISIONS #107).
+  //    인간이 남의 몸에 알을 심지는 않는다. 실행 시에 막으면 손에 든 순간부터 죽은 카드가 되므로
+  //    **설계 시**에 뗀다 — 그러면 그 자리에 다른 효과가 들어가거나 바닐라가 된다(규칙 35·37).
+  //    ⚠️ 멱등하다: 한 번 떼면 두 번째 호출에서는 걸릴 것이 없다.
+  if (out.statusEffect && BODY_BLOCKED_STATUSES.has(out.statusEffect.type) && !canSeedCycle(cardData)) {
+    out.statusEffect = { type: 'none', duration: 0, value: 0 };
+  }
   // 🔢 위력이 곧 효과인 상태이상(화상·맹독·감전·빙결·부식…)에 value 0이 오면 **아무 일도 안 하는 카드**가 된다.
   //    기절·취약처럼 value를 안 쓰는 것만 0으로 둔다. 기본값은 STATUS_EFFECTS 한 곳에서 온다 — 멱등하다.
   //    🐛 예전엔 빙결이 봉쇄라 value가 장식이었고, LLM이 0을 자주 냈다. 이제 value가 곧 깎이는 공격력이다.

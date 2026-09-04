@@ -11,6 +11,8 @@ import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, getDefen
          collectChainTargets, hasChainStatus, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
 import { SLOT_CAP, HAND_CAP, EXECUTE_MULT } from './battle-rules.js';
+import { isCycleStatus } from './status-cycles.js';                 // 🔄 사이클 판정 (DECISIONS #104)
+import { canReceiveCycleStatus } from './cycle-roles.js';           // 🧬 숙주 자격 (DECISIONS #107)
 
 /**
  * 공격 대상 선택. 실드 관통이면 전열을 무시하고 본체(null)를 노린다.
@@ -529,8 +531,17 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
     // 🐛 예전에는 지정(picked)만 봐서 **"적 전체에 화상"이 첫 한 기만** 태웠다.
     const St = resolveEffectTargets(game, skill, opts.picked, { allowAoe });
 
+    // 🧬 사이클은 **숙주가 될 수 있는** 대상에만 붙는다 (DECISIONS #107).
+    //    ⚠️ 여기가 두 번째 적용 경로다. 엔진의 applyStatusRespectingScope만 고치면
+    //       **지정 대상** 경로가 뚫려 기계에 기생이 붙는다 — 실제로 그럴 뻔했다.
+    const isCycle = isCycleStatus(st.type);
+
     if (St.explicit && St.minions.length > 0) {
       for (const e of St.minions) {
+        if (!canReceiveCycleStatus(e, isCycle)) {
+          addBattleLog(`<span class="text-slate-500">${spec ? spec.icon : '⚡'} [${escapeHtml(e.name)}]은(는) ${spec ? spec.name : st.type}의 숙주가 될 수 없습니다 — 불발.</span>`);
+          continue;
+        }
         if (!e.statuses) e.statuses = {};
         applyStatus(e.statuses, st.type, st.duration || 1, st.value || 0);
         // ⚠️ 카드 텍스트에 엔진 키를 그대로 쓰지 않는다 → CLAUDE.md 금지사항 47

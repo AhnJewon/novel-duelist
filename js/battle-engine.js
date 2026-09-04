@@ -18,6 +18,7 @@ import {
   getAttackPenalty, getDefensePenalty, collectChainTargets, hasChainStatus
 } from './status-effects.js';
 import { isCycleStatus, resolveCycleExpiry } from './status-cycles.js';   // 🔄 기생 → 성장 → 부화 (DECISIONS #104)
+import { pickCycleHost, canHostCycle } from './cycle-roles.js';           // 🧬 누가 숙주가 될 수 있나 (DECISIONS #107)
 import {
   applyPlayerSkillEffects, selectFrontTarget,
   damageEntity, removeDead, describeDamageExtras
@@ -1690,9 +1691,16 @@ function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, v
   if (bodyOk) {
     return applyStatus(statuses, type, turns, value);
   }
-  const target = (minions || []).find(m => m && m.currentHp > 0);
+  // 🧬 사이클은 **숙주가 될 수 있는** 소환수에만 걸린다 (DECISIONS #107).
+  //    기계에 기생충이 자랄 수는 없다. 맨 앞이 못 받으면 받을 수 있는 뒤쪽으로 넘긴다 —
+  //    불발시키는 것보다 낫고, 상대에게 "숙주를 앞에 세우지 않는다"는 대응 수단을 준다.
+  const cycle = isCycleStatus(type);
+  const target = pickCycleHost(minions, cycle);
   if (!target) {
-    addBattleLog(`<span class="text-slate-500">${spec.icon} ${spec.name}은(는) 소환수 전용입니다 — ${sideLabel} 전장이 비어 불발.</span>`);
+    const why = cycle && (minions || []).some(m => m && m.currentHp > 0)
+      ? `${sideLabel} 전장에 숙주가 될 수 있는 소환수가 없어 불발.`
+      : `${sideLabel} 전장이 비어 불발.`;
+    addBattleLog(`<span class="text-slate-500">${spec.icon} ${spec.name}은(는) 소환수 전용입니다 — ${why}</span>`);
     return null;
   }
   if (!target.statuses) target.statuses = {};

@@ -8,6 +8,7 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { isCycleRole, describeCycleRole } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { validateCardPlan, buildRetryDirective, validateRequestedEffects } from './card-validator.js';
 import { applyLlmDescription } from './card-describe.js';
@@ -434,6 +435,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "comboScaling": "flat|perAlly|perTurn|perHand",
   "comboScope": "archetype|element|race|cardType|any",
   "races": ["종족 0~2개. 이 카드가 무엇인가 — 그림에 직접 반영된다. human|beast|undead|demon|construct|fae|aberration|dragon. 사람·괴물이 아닌 카드(주문·건축물 대부분)는 빈 배열."],
+  "cycleRole": "사이클(기생·성장·부화)에서의 역할. 비우면 종족 기본값. none(무관·기계) | host(걸리기만) | vector(걸기만) | both(둘 다). ⚠️ parasite 계열 statusEffect는 vector·both만 가질 수 있다 — 아니면 효과가 떼인다",
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeSynergyDesc": "카드군 테마 상호 연계 효과 설명",
   "rarity": "common|rare|epic|legendary",
@@ -1262,6 +1264,7 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     title: `${rarity.toUpperCase()} ${cardType.toUpperCase()}`,
     element: finalElement,
     races: finalRaces,
+    cycleRole: isCycleRole(data.cycleRole) ? data.cycleRole : undefined,   // 비우면 종족 기본값 (DECISIONS #107)
     themeId: finalTheme ? finalTheme.id : null,
     themeName: finalTheme ? finalTheme.name : null,
     themeKeyword: finalTheme ? finalTheme.keyword : null,

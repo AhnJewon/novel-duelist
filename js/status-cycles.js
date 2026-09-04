@@ -112,7 +112,9 @@ export function resolveCycleExpiry(type, ctx) {
     attack: p.attack || 5, defense: p.defense || 2,
     maxHp: p.hp || 12, currentHp: p.hp || 12,
     // ⚠️ 소환 후유증 — 없으면 나오자마자 때린다
-    canAttack: false, summonedTurn: turnCount, frozen: false, statuses: {},
+    canAttack: false, summonedTurn: turnCount, statuses: {},
+    // 🧬 태어난 것은 기생체다 — 자기도 남에게 알을 심을 수 있고, 자기가 숙주가 되지는 않는다 (DECISIONS #107)
+    cycleRole: p.tokenCycleRole || 'vector',
     isToken: true, skills: [{}]
   };
   slots.push(token);

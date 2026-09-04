@@ -11,6 +11,7 @@ import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPromp
 import { escapeHtml } from './dom-utils.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { isCycleRole, describeCycleRole } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
 import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
@@ -394,6 +395,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let skillTargetScope = 'single';
   let skillTargetCount = 1;
   let llmRaces = null;           // 🧬 LLM이 고른 종족 (races/race 어느 쪽으로 와도 readRaces가 걸러낸다)
+  let llmCycleRole = null;       // 🧬 사이클 역할 (비우면 종족 기본값 — DECISIONS #107)
   let llmPassiveRaw = null;      // 🏛️ LLM이 설계한 건축물 패시브 (없으면 폴백)
   let llmVanilla = false;        // 🃏 LLM이 바닐라로 만들겠다고 했는가
   let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
@@ -560,6 +562,7 @@ Return ONLY JSON:
   "comboScaling": "flat|perAlly|perTurn|perHand",
   "comboScope": "archetype|element|race|cardType|any",
   "races": ["종족 0~2개(그림에 직접 반영). human|beast|undead|demon|construct|fae|aberration|dragon. 주문·건축물 대부분은 빈 배열"],
+  "cycleRole": "비우면 종족 기본값. none|host|vector|both. parasite 계열 statusEffect는 vector·both만 가질 수 있다",
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeComboAction": "search|chainDamage|manaCharge|shieldHeal|freeze|doubleCast|draw|specialSummon|archetypeRally|archetypeSalvage|archetypeGuard|shieldBreak|handDisrupt|sacrificeStrike",
   "themeComboDesc": "TCG 상호 연계 효과 설명",
@@ -664,6 +667,7 @@ Return ONLY JSON:
       if (cardJson.skillDesc) skillDesc = cardJson.skillDesc;
       // 🃏 바닐라 — 효과 대신 플레이버 텍스트를 담는 카드
       if (cardJson.races || cardJson.race) llmRaces = cardJson.races || cardJson.race;
+      if (isCycleRole(cardJson.cycleRole)) llmCycleRole = cardJson.cycleRole;
       if (cardJson.isVanilla) llmVanilla = true;
       if (cardJson.flavorText) llmFlavorText = String(cardJson.flavorText);
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;
@@ -897,6 +901,7 @@ Return ONLY JSON:
     title: `${rarity.toUpperCase()} ${cardType.toUpperCase()}`,
     element: element,
     races: cardRaces,
+    cycleRole: llmCycleRole || undefined,
     themeId: themeObj ? themeObj.id : null,
     themeName: themeObj ? themeObj.name : null,
     themeKeyword: themeObj ? themeObj.keyword : null,

@@ -24,16 +24,20 @@
  *
  * 8종을 고른 기준: 카드 게임에서 서로 **다른 그림**이 나오는 최소 집합.
  * 늘리기 전에 "이 종족만의 그림이 있는가"를 물어보세요 — 없으면 카드군으로 충분합니다.
+ *
+ * `cycleRole`은 사이클(기생·성장·부화)의 **기본값 제안**일 뿐이다 (DECISIONS #107).
+ * 최종 판단은 카드의 `cycleRole`이 한다 — 그래야 "기생하는 기계" 같은 예외를 만들 수 있다.
+ * 여기서 종족으로 하드코딩하면 그 카드가 영영 불가능해진다.
  */
 export const RACE_CONFIG = {
-  human:      { name: '인간',   icon: '🧑', tags: ['1girl', 'human'] },
-  beast:      { name: '수인',   icon: '🐺', tags: ['animal ears', 'tail', 'furry'] },
-  undead:     { name: '망자',   icon: '💀', tags: ['undead', 'pale skin', 'glowing eyes'] },
-  demon:      { name: '마족',   icon: '😈', tags: ['demon horns', 'demon tail', 'pointy ears'] },
-  construct:  { name: '기물',   icon: '⚙️', tags: ['robot', 'mechanical parts', 'joints'] },
-  fae:        { name: '요정',   icon: '🧚', tags: ['fairy', 'fairy wings', 'pointy ears'] },
-  aberration: { name: '이형',   icon: '🪼', tags: ['monster', 'extra eyes', 'amorphous'] },
-  dragon:     { name: '용족',   icon: '🐉', tags: ['dragon horns', 'dragon tail', 'scales'] }
+  human:      { name: '인간',   icon: '🧑', tags: ['1girl', 'human'],                              cycleRole: 'host' },
+  beast:      { name: '수인',   icon: '🐺', tags: ['animal ears', 'tail', 'furry'],                cycleRole: 'host' },
+  undead:     { name: '망자',   icon: '💀', tags: ['undead', 'pale skin', 'glowing eyes'],         cycleRole: 'vector' },
+  demon:      { name: '마족',   icon: '😈', tags: ['demon horns', 'demon tail', 'pointy ears'],    cycleRole: 'both' },
+  construct:  { name: '기물',   icon: '⚙️', tags: ['robot', 'mechanical parts', 'joints'],         cycleRole: 'none' },
+  fae:        { name: '요정',   icon: '🧚', tags: ['fairy', 'fairy wings', 'pointy ears'],         cycleRole: 'both' },
+  aberration: { name: '이형',   icon: '🪼', tags: ['monster', 'extra eyes', 'amorphous'],          cycleRole: 'vector' },
+  dragon:     { name: '용족',   icon: '🐉', tags: ['dragon horns', 'dragon tail', 'scales'],       cycleRole: 'host' }
 };
 
 /** 한 카드가 가질 수 있는 종족 수 상한. 2를 넘기면 그림이 뭉개진다 (태그가 서로 싸운다). */
