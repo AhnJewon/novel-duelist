@@ -8,7 +8,7 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
-import { validateCardPlan, buildRetryDirective } from './card-validator.js';
+import { validateCardPlan, buildRetryDirective, validateRequestedEffects } from './card-validator.js';
 import { applyLlmDescription } from './card-describe.js';
 import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
@@ -530,7 +530,8 @@ ${customDirective}`;
     cardData = normalizeIncomingCardData(cardData);
 
     // 🔁 규칙 위반이면 **한 번만** 되묻는다.
-    const problems = validateCardPlan(cardData, targetType);
+    // 📜 유저가 적은 효과 설명은 지시가 아니라 **요구**다 — 언급한 효과가 필드에 없으면 규칙 위반과 같이 되묻는다 (DECISIONS #100)
+    const problems = validateCardPlan(cardData, targetType).concat(validateRequestedEffects(custom.effectDesc, cardData));
     if (problems.length > 0) {
       console.info('[Forge] 규칙 위반 — LLM에게 재요청합니다:\n' + problems.map(p => ' • ' + p).join('\n'));
       if (loadingEl) {
@@ -548,7 +549,7 @@ ${customDirective}`;
           format: 'json'
         });
         const normRetry = normalizeIncomingCardData(retry);
-        const stillBad = validateCardPlan(normRetry, targetType);
+        const stillBad = validateCardPlan(normRetry, targetType).concat(validateRequestedEffects(custom.effectDesc, normRetry));
         if (stillBad.length < problems.length) cardData = normRetry;
         if (stillBad.length > 0) {
           console.info(`[Forge] 재요청 후에도 ${stillBad.length}건 남음 — 결정론적 보수로 처리합니다.`);
@@ -789,7 +790,9 @@ export async function applyGeneratedCardData(rawData) {
   const data = sanitizeAndClampCardData(applyCustomOverrides(normalized, readCustomOverrides()));
   // 📐 정산을 마친 수치를 기억한다 — 저장이 다시 굴리지 않고 이 값을 쓴다 (DECISIONS #93)
   currentPlannedStats = pickPlannedStats(data);
-  if (data.name) document.getElementById('forge-name').value = data.name;
+  // 🔒 유저가 직접 친 이름(data-by-user)은 덮어쓰지 않는다. AI가 채운 이름은 표시를 지워 다음 기획이 자유롭게 바꾼다.
+  const nameEl = document.getElementById('forge-name');
+  if (nameEl && data.name && nameEl.dataset.byUser !== '1') { nameEl.value = data.name; nameEl.dataset.byUser = ''; }
   if (data.title) {
     const titleEl = document.getElementById('forge-title');
     if (titleEl) titleEl.value = data.title;
@@ -1137,15 +1140,17 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     skillObj.description = describeStructurePassive(skillObj.passiveEffect);
   }
 
+  // 🔒 유저가 직접 친 이름은 아래 교정·키워드 삽입을 모두 건너뛴다 — "내가 쓴 이름을 무시한다"의 마지막 지점 (DECISIONS #100)
+  const nameLocked = !!custom.name;
   // 🏷️ 타입에 안 맞는 이름 교정 (건축물에 소환수 이름이 붙는 문제)
   let typedName = name;
-  if (!nameMatchesType(typedName, cardType)) {
+  if (!nameLocked && !nameMatchesType(typedName, cardType)) {
     const fixed = fixCardName(typedName, cardType);
     console.log(`[작명] ${cardType} 이름 교정: "${typedName}" → "${fixed}"`);
     typedName = fixed;
   }
-  // 🏷️ 카드군 소속 카드는 이름에 키워드를 포함해야 덱 서치 콤보가 잡아낸다
-  const finalName = enforceKeywordInName(typedName, finalTheme, cardType);
+  // 🏷️ 카드군 소속 카드는 이름에 키워드를 포함해야 덱 서치 콤보가 잡아낸다 (유저 이름은 예외)
+  const finalName = nameLocked ? typedName : enforceKeywordInName(typedName, finalTheme, cardType);
 
   const rawCard = {
     // 💎 코스트는 미리 정해 LLM에 넘긴 값이다.

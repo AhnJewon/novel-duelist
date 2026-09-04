@@ -121,6 +121,44 @@ function findNumberMismatch(desc, skill) {
   return null;
 }
 
+/**
+ * 📜 유저가 "원하는 효과 설명"에 적은 효과가 실제 필드에 들어갔는지 대조한다.
+ * 한국어 낱말 → 효과 필드. 언급했는데 비어 있으면 문제로 돌려 재요청을 태운다 (DECISIONS #100).
+ * ⚠️ 설명문을 "수리"하는 게 아니다(규칙 81) — 유저의 요구를 LLM이 빠뜨렸는지 **확인**만 한다.
+ */
+const REQUESTED_EFFECT_WORDS = [
+  { re: /피해|데미지|타격|공격해/, key: 'damage', has: s => s.damage > 0, field: 'damage' },
+  { re: /방어막|실드|보호막/, key: 'shield', has: s => s.shield > 0, field: 'shield' },
+  { re: /회복|치유|힐/, key: 'heal', has: s => s.heal > 0, field: 'heal' },
+  { re: /드로우|뽑/, key: 'drawCards', has: s => s.drawCards > 0, field: 'drawCards' },
+  { re: /마나/, key: 'manaGain', has: s => s.manaGain > 0, field: 'manaGain' },
+  { re: /연타|연속\s*(?:타격|공격)|번\s*공격/, key: 'multiHit', has: s => (s.multiHit || 1) > 1, field: 'multiHit' },
+  { re: /서치|찾아/, key: 'searchDeck', has: s => s.searchDeck > 0, field: 'searchDeck' },
+  { re: /파괴|제거/, key: 'destroy', has: s => s.destroy > 0, field: 'destroy' },
+  { re: /토큰|특수\s*소환/, key: 'summonToken', has: s => s.summonToken > 0, field: 'summonToken' },
+  { re: /관통/, key: 'pierceShield', has: s => !!s.pierceShield, field: 'pierceShield: true' },
+  { re: /무적/, key: 'invulnerableTurns', has: s => s.invulnerableTurns > 0, field: 'invulnerableTurns' },
+  { re: /흡혈/, key: 'lifestealPercent', has: s => s.lifestealPercent > 0, field: 'lifestealPercent' },
+  { re: /화상/, key: 'burn', has: s => s.statusEffect && s.statusEffect.type === 'burn', field: 'statusEffect.type = "burn"' },
+  { re: /빙결|동결|얼려/, key: 'freeze', has: s => s.statusEffect && s.statusEffect.type === 'freeze', field: 'statusEffect.type = "freeze"' },
+  { re: /기절|스턴/, key: 'stun', has: s => s.statusEffect && s.statusEffect.type === 'stun', field: 'statusEffect.type = "stun"' },
+  { re: /맹독|중독|독을/, key: 'poison', has: s => s.statusEffect && s.statusEffect.type === 'poison', field: 'statusEffect.type = "poison"' },
+  { re: /감전/, key: 'shock', has: s => s.statusEffect && s.statusEffect.type === 'shock', field: 'statusEffect.type = "shock"' },
+  { re: /취약/, key: 'vulnerable', has: s => s.statusEffect && s.statusEffect.type === 'vulnerable', field: 'statusEffect.type = "vulnerable"' }
+];
+
+export function validateRequestedEffects(effectDesc, data) {
+  const req = String(effectDesc || '').trim();
+  if (!req || !data) return [];
+  const skill = data.skill || (Array.isArray(data.skills) && data.skills[0]) || {};
+  const missing = REQUESTED_EFFECT_WORDS.filter(w => w.re.test(req) && !w.has(skill));
+  if (missing.length === 0) return [];
+  return [
+    `유저가 요구한 효과가 빠졌습니다: ${missing.map(m => `"${m.key}" → ${m.field}`).join(', ')}. ` +
+    `요구: "${req.slice(0, 80)}". 설명문에만 적지 말고 해당 필드에 수치를 넣으세요.`
+  ];
+}
+
 /** 재요청 프롬프트로 붙일 지시문 */
 export function buildRetryDirective(problems) {
   return `\n\n⚠️ 방금 만든 카드에 문제가 있습니다. **아래를 고쳐서 다시 만드세요.**\n` +

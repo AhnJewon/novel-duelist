@@ -583,7 +583,9 @@
               <label class="text-xs font-bold text-slate-300 flex items-center gap-1">
                 <i data-lucide="tag" class="w-3.5 h-3.5 text-amber-400"></i> 카드 이름
               </label>
-              <input type="text" id="forge-name" value="홍염의 마도기사 세리아" placeholder="예: 성역의 성녀, 번개의 검성" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none">
+              <!-- 🔒 유저가 직접 친 이름은 data-by-user="1"로 표시되어 기획·저장에서 그대로 유지된다 (DECISIONS #100).
+                   HTML 기본값·AI가 채운 이름은 표시가 없으므로 다음 기획이 자유롭게 바꾼다. -->
+              <input type="text" id="forge-name" value="홍염의 마도기사 세리아" placeholder="예: 성역의 성녀, 번개의 검성" oninput="this.dataset.byUser = this.value.trim() ? '1' : ''" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none">
             </div>
             <div class="space-y-1.5">
               <label class="text-xs font-bold text-slate-300 flex items-center gap-1">

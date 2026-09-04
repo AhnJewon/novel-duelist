@@ -27,6 +27,9 @@ export function readCustomOverrides() {
     //       화면 선택이 LLM 값으로 덮어써졌다.
     cardType: (document.querySelector('input[name="forge-card-type-radio"]:checked') || {}).value || v('forge-card-type'),
     element: v('forge-element'),
+    // 🔒 카드 이름 — #forge-name은 입력이면서 AI 결과가 쓰이는 칸이라, **유저가 직접 친 경우**(data-by-user)만 강제한다.
+    //    🐛 예전엔 유저가 이름을 써 두고 기획을 눌러도 LLM 이름이 덮어썼고, 저장 때 작명 규칙이 또 고쳤다 (DECISIONS #100).
+    name: (() => { const el = document.getElementById('forge-name'); return (el && el.dataset.byUser === '1' && el.value.trim()) ? el.value.trim() : null; })(),
     themeId: selectedThemeId(),
     themeName: v('custom-theme-name'),
     themeKeyword: v('custom-theme-keyword'),
@@ -51,6 +54,7 @@ export function readCustomOverrides() {
 /** 커스텀 값을 LLM 프롬프트 지시문으로 변환 */
 export function customOverridesToPrompt(o) {
   const lines = [];
+  if (o.name) lines.push(`- 카드 이름("name")은 반드시 "${o.name}" 그대로 쓸 것 — 한 글자도 바꾸지 말 것. 서사·스킬은 이 이름에 맞춰 짓는다.`);
   if (o.element) lines.push(`- 속성(element)은 반드시 "${o.element}"로 할 것`);
   if (o.themeId) {
     // 기존 카드군을 골랐다 — id를 그대로 쓰게 해야 새 카드군이 생기지 않는다
@@ -78,7 +82,7 @@ export function customOverridesToPrompt(o) {
   if (o.comboScaling) lines.push(`- 연계 증가방식(comboScaling)은 "${o.comboScaling}"로 할 것`);
   if (o.trapTrigger) lines.push(`- 함정 발동조건(trapTrigger)은 "${o.trapTrigger}"로 할 것`);
   if (o.trapCondition) lines.push(`- 함정 조건값(condition)은 "${o.trapCondition}"으로 할 것`);
-  if (o.effectDesc) lines.push(`- 카드 효과는 이 설명을 최대한 반영할 것: "${o.effectDesc}"`);
+  if (o.effectDesc) lines.push(`- 카드 효과는 이 요구를 **반드시 구현**할 것 (설명문이 아니라 skill의 효과 필드에 수치로): "${o.effectDesc}". 여러 효과를 적었으면 전부 넣는다 — 예산은 시스템이 마나로 정산한다.`);
 
   if (lines.length === 0) return '';
   return `\n🎛️ 사용자 지정 (반드시 지킬 것):\n${lines.join('\n')}\n`;
@@ -96,6 +100,7 @@ export function applyCustomOverrides(data, o) {
   //    한 번 더 볼 수 있다 — 그건 카드군의 규칙이지 LLM의 취향이 아니다.
   if (o.cardType) out.cardType = o.cardType;
   if (o.element) out.element = o.element;
+  if (o.name) { out.name = o.name; out.nameLocked = true; }   // 저장 경로의 작명 교정·키워드 삽입도 건너뛴다
   // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"
   //    지시에만 기대면 4B 모델이 흘려서 소속이 조용히 새 카드군으로 샌다.
   //    코드에서 못을 박아야 키워드를 바꿔도 소속이 안 바뀐다.
