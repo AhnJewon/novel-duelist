@@ -47,7 +47,9 @@ export function readCustomOverrides() {
     comboScaling: v('custom-combo-scaling'),
     trapTrigger: v('custom-trap-trigger'),
     trapCondition: v('custom-trap-condition'),
-    effectDesc: v('custom-effect-desc')
+    effectDesc: v('custom-effect-desc'),
+    // ⚖️ 예산 초과 허용 — 요구한 효과를 깎지 않고, 마나 상한을 넘는 초과분은 가루로 결제 (DECISIONS #100)
+    allowOverBudget: !!(document.getElementById('custom-allow-over') && document.getElementById('custom-allow-over').checked)
   };
 }
 
@@ -83,6 +85,7 @@ export function customOverridesToPrompt(o) {
   if (o.trapTrigger) lines.push(`- 함정 발동조건(trapTrigger)은 "${o.trapTrigger}"로 할 것`);
   if (o.trapCondition) lines.push(`- 함정 조건값(condition)은 "${o.trapCondition}"으로 할 것`);
   if (o.effectDesc) lines.push(`- 카드 효과는 이 요구를 **반드시 구현**할 것 (설명문이 아니라 skill의 효과 필드에 수치로): "${o.effectDesc}". 여러 효과를 적었으면 전부 넣는다 — 예산은 시스템이 마나로 정산한다.`);
+  if (o.allowOverBudget) lines.push(`- 예산 초과가 허용된 카드다: 효과 개수·크기를 "1~2개로 절제"하지 말고 요구를 그대로 담을 것. 마나·가루 정산은 시스템이 한다.`);
 
   if (lines.length === 0) return '';
   return `\n🎛️ 사용자 지정 (반드시 지킬 것):\n${lines.join('\n')}\n`;
@@ -101,6 +104,7 @@ export function applyCustomOverrides(data, o) {
   if (o.cardType) out.cardType = o.cardType;
   if (o.element) out.element = o.element;
   if (o.name) { out.name = o.name; out.nameLocked = true; }   // 저장 경로의 작명 교정·키워드 삽입도 건너뛴다
+  if (o.allowOverBudget) out.allowOverBudget = true;          // enforcePowerBudget이 깎지 않고 powerDebt로 돌려준다
   // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"
   //    지시에만 기대면 4B 모델이 흘려서 소속이 조용히 새 카드군으로 샌다.
   //    코드에서 못을 박아야 키워드를 바꿔도 소속이 안 바뀐다.

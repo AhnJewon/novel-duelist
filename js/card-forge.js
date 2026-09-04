@@ -13,6 +13,7 @@ import { applyLlmDescription } from './card-describe.js';
 import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
+import { getDust, spendDust, dustForExcessPower } from './card-copies.js';
 
 let currentLLMSkillData = null;
 let currentForgeCardType = 'unit';
@@ -26,6 +27,39 @@ let currentCardTheme = null;
 //    코드가 셀렉트를 되쓰지 않는다. 예전에는 되썼기 때문에 "AI 결정"이 한 번
 //    기획하면 조용히 고정값으로 변했다 → DECISIONS #92
 let currentForgeRarity = null;
+// ⚖️ 예산 초과 허용 시 남는 파워 초과분(단위)과, 옵션 변경 시 다시 정산할 마지막 기획 원본 (DECISIONS #100)
+let currentPowerDebt = 0;
+let lastPlanRaw = null;
+
+/** 💎 생성 버튼 옆 가루 소모 안내 — 초과분이 있을 때만 보인다 */
+function renderForgeDustCost() {
+  const box = document.getElementById('forge-dust-cost');
+  if (!box) return;
+  const need = dustForExcessPower(currentPowerDebt);
+  if (need <= 0) { box.classList.add('hidden'); return; }
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+  set('forge-dust-excess', currentPowerDebt.toFixed(1));
+  set('forge-dust-need', need.toLocaleString('ko-KR'));
+  set('forge-dust-have', getDust().toLocaleString('ko-KR'));
+  box.classList.remove('hidden');
+  box.classList.toggle('border-red-500/70', need > getDust());
+}
+
+/** 옵션(예산 초과 허용 등)을 바꿨을 때 마지막 기획을 다시 정산한다 — LLM 재호출 없음 */
+export async function reapplyForgePlan() {
+  if (!lastPlanRaw) { updateForgePromptPreview(); return; }
+  await applyGeneratedCardData(lastPlanRaw);
+}
+
+/** 생성 직전 가루 잔액 확인 — 부족하면 이미지를 만들기 전에 막는다 (Anlas·시간을 쓰기 전에) */
+function ensureDustForPlan() {
+  const need = dustForExcessPower(currentPowerDebt);
+  if (need > getDust()) {
+    alert(`💎 가루가 부족합니다. 이 카드의 예산 초과분에 가루 ${need}이(가) 필요하지만 ${getDust()}만 있습니다.\n효과를 줄이거나, "예산 초과 허용"을 끄면 시스템이 예산에 맞게 정산합니다.`);
+    return false;
+  }
+  return true;
+}
 // 🎲 속성도 같은 구조다: #forge-element(유저 의도, 빈 값 = AI 결정) → currentForgeElement(확정) → 미리보기·저장
 let currentForgeElement = null;
 const FORGE_ELEMENTS = ['fire', 'water', 'lightning', 'holy', 'dark', 'nature'];
@@ -787,9 +821,13 @@ export function normalizeIncomingCardData(raw) {
 export async function applyGeneratedCardData(rawData) {
   // 🎛️ 사전 정규화 후 사용자 지정 값을 덮어쓰고 밸런스 검증(등급·마나 예산)을 태운다.
   const normalized = normalizeIncomingCardData(rawData);
+  lastPlanRaw = normalized;   // ⚖️ 옵션(예산 초과 허용 등)을 바꾸면 LLM을 다시 부르지 않고 이 기획에 다시 적용한다
   const data = sanitizeAndClampCardData(applyCustomOverrides(normalized, readCustomOverrides()));
   // 📐 정산을 마친 수치를 기억한다 — 저장이 다시 굴리지 않고 이 값을 쓴다 (DECISIONS #93)
   currentPlannedStats = pickPlannedStats(data);
+  // 💎 예산 초과분(파워 단위) — 가루 소모량 표시·결제의 근거 (DECISIONS #100)
+  currentPowerDebt = data.powerDebt || 0;
+  renderForgeDustCost();
   // 🔒 유저가 직접 친 이름(data-by-user)은 덮어쓰지 않는다. AI가 채운 이름은 표시를 지워 다음 기획이 자유롭게 바꾼다.
   const nameEl = document.getElementById('forge-name');
   if (nameEl && data.name && nameEl.dataset.byUser !== '1') { nameEl.value = data.name; nameEl.dataset.byUser = ''; }
@@ -989,6 +1027,7 @@ export async function generateAICard() {
     return;
   }
 
+  if (!ensureDustForPlan()) return;
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
   const element = forgeElement();
   const rarity = forgeRarity();
@@ -1034,6 +1073,7 @@ export async function generateAICard() {
 }
 
 export async function generateMockCard() {
+  if (!ensureDustForPlan()) return;
   const name = document.getElementById('forge-name').value.trim() || '환상의 정령사';
   const element = forgeElement();
   const rarity = forgeRarity();
@@ -1153,6 +1193,8 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const finalName = nameLocked ? typedName : enforceKeywordInName(typedName, finalTheme, cardType);
 
   const rawCard = {
+    // ⚖️ 예산 초과 허용 카드는 저장 시 재정산·다음 부팅의 재검사에서도 깎이지 않아야 한다 — 플래그를 카드에 남긴다
+    allowOverBudget: !!custom.allowOverBudget,
     // 💎 코스트는 미리 정해 LLM에 넘긴 값이다.
     //    예산이 이걸 올리거나 내리지 않고 **내용을 깎아서** 맞춘다.
     costLocked: true,
@@ -1180,6 +1222,19 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   const newCard = sanitizeAndClampCardData(rawCard);
   if (newCard.skill) {
     newCard.skills = [newCard.skill];
+  }
+  // 💎 예산 초과분 결제 — 잔액은 생성 전에 확인했지만(ensureDustForPlan) 최종 정산값으로 한 번 더 본다
+  const dustNeed = dustForExcessPower(newCard.powerDebt || 0);
+  if (dustNeed > 0) {
+    const paid = await spendDust(dustNeed);
+    if (!paid.ok) {
+      alert(`💎 가루가 부족해 카드를 저장하지 못했습니다 (필요 ${dustNeed} / 보유 ${getDust()}).`);
+      return;
+    }
+    newCard.dustPaid = dustNeed;
+    console.log(`[Dust] -${dustNeed} (예산 초과 ${newCard.powerDebt}) — 보유 ${paid.remaining}`);
+    const dustEl = document.getElementById('dust-amount');
+    if (dustEl) dustEl.innerText = getDust().toLocaleString('ko-KR');
   }
 
   // ✍️ 2단계 — **확정된 수치**로 설명문을 다시 쓴다.

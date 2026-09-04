@@ -721,6 +721,14 @@ export function enforcePowerBudget(cardData, skill) {
     }
   }
 
+  // ⚖️ 예산 초과 허용 (연성소 옵션, DECISIONS #100): 유저가 요구한 효과·스탯은 **하나도 깎지 않는다.**
+  //    밸런스는 마나로만 맞춘다(위에서 상한까지 올렸다). 그래도 남는 초과분은 powerDebt로 돌려주고,
+  //    연성소가 그만큼 가루를 받는다(dustForExcessPower). 등급 전용 효과 제거(1단계)는 그대로 적용된다.
+  if (cardData.allowOverBudget) {
+    const debt = Math.max(0, usedPower() - affordablePower(rarity, cost, cardType));
+    return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised, costLowered, trimmedValues: [], powerDebt: Math.round(debt * 100) / 100 };
+  }
+
   // 2-b. 🎯 그래도 넘치면 **대상 범위를 좁힌다.**
   //      효과를 통째로 지우는 것보다 훨씬 덜 파괴적이다.
   //      전체 → 3체 → 2체 → 단일 순으로 한 단계씩 낮춘다.
@@ -879,7 +887,7 @@ export function enforcePowerBudget(cardData, skill) {
     costRaised++;
   }
 
-  return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised, costLowered, trimmedValues };
+  return { skill: out, cost, attack: atk, hp, defense: def, removed, costRaised, costLowered, trimmedValues, powerDebt: 0 };
 }
 
 // 🛡️ 카드 데이터 정수화 및 등급별 엄격한 밸런스 클램핑 처리기 (% 표기 완전 제거)
@@ -1750,7 +1758,9 @@ export function sanitizeAndClampCardData(cardData) {
     //       호출부마다 `card.skills = [card.skill]`을 챙기게 두면 언젠가 빠뜨린다.
     skills: [finalSkill],
     powerUsed: power.used,
-    powerAffordable: power.affordable
+    powerAffordable: power.affordable,
+    // ⚖️ 예산 초과 허용 카드의 남은 초과분(파워 단위). 연성소가 가루로 환산한다 (DECISIONS #100). 보통 0.
+    powerDebt: budgeted.powerDebt || 0
   };
 }
 

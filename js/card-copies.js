@@ -28,6 +28,19 @@ export const DUST_VALUE = {
 
 export const STORAGE_KEY_DUST = 'novel_duelist_dust';
 
+/**
+ * ⚖️ 연성소 "예산 초과 허용": 마나를 상한까지 올려도 남는 파워 초과분 1단위당 가루 값 (DECISIONS #100).
+ * 기준: 레어 카드 한 장의 예산이 8단위쯤이고 중복 환산이 15가루니 1단위 ≈ 2가루가 원가. 초과는 프리미엄이라 두 배.
+ * 예) 효과 하나(피해 12 ≈ 1.5단위)를 더 얹으면 가루 6. 튜닝은 이 숫자 하나만.
+ */
+export const DUST_PER_EXCESS_POWER = 4;
+
+/** 초과 파워 → 가루 (올림). 0이면 0. */
+export function dustForExcessPower(excess) {
+  const p = Number(excess) || 0;
+  return p > 0 ? Math.ceil(p * DUST_PER_EXCESS_POWER) : 0;
+}
+
 /** 카드의 현재 보유 매수 (필드가 없는 구버전 카드는 1장으로 본다) */
 export function getCopies(card) {
   if (!card) return 0;

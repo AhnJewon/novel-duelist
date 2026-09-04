@@ -719,9 +719,14 @@
 
                 <div class="col-span-2">
                   <label class="block text-[10.5px] font-bold text-slate-400 mb-1">📜 원하는 효과 설명</label>
-                  <input type="text" id="custom-effect-desc" placeholder="예: 덱에서 홍련 카드를 서치하고 화상을 부여"
-                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none">
-                  <p class="text-[9.5px] text-slate-500 mt-1">지정한 값은 밸런스 검증(등급·마나 예산)을 거쳐 조정될 수 있습니다.</p>
+                  <textarea id="custom-effect-desc" rows="2" placeholder="예: 적 1체에 12 피해, 내 방어막 8, 덱에서 홍련 카드 1장 서치 — 여러 효과를 적어도 됩니다"
+                         class="w-full bg-[#191d33] border border-brand-border rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none leading-relaxed"></textarea>
+                  <p class="text-[9.5px] text-slate-500 mt-1">적은 효과는 <b>반드시</b> 들어갑니다(빠지면 LLM에게 되묻습니다). 수치는 등급·마나 예산으로 정산됩니다.</p>
+                  <label class="mt-2 flex items-start gap-2 text-[10.5px] text-amber-200 cursor-pointer select-none">
+                    <input type="checkbox" id="custom-allow-over" onchange="_reapplyForgePlan()" class="mt-0.5 accent-amber-500">
+                    <span><b>⚖️ 예산 초과 허용</b> — 요구한 효과·수치를 깎지 않습니다. 마나를 상한까지 올려도 남는 초과분은
+                      <b>💎 가루</b>로 결제합니다 (생성 버튼 옆에 소모량 표시).</span>
+                  </label>
                 </div>
 
               </div>
@@ -821,6 +826,11 @@
             <textarea id="forge-prompt" rows="3" class="w-full bg-[#191d33] border border-brand-border focus:border-amber-400 rounded-xl p-3 text-xs text-white outline-none leading-relaxed" placeholder="프롬프트를 입력하세요... (DanTagGen 버튼을 누르면 단부루 최고 퀄리티 태그로 자동 확장됩니다)"></textarea>
           </div>
 
+          <!-- 💎 예산 초과분 가루 소모 안내 (예산 초과 허용 + 초과분이 있을 때만 보인다) -->
+          <div id="forge-dust-cost" class="hidden w-full px-3 py-2 rounded-xl bg-amber-950/50 border border-amber-500/50 text-[11px] text-amber-200 font-bold flex items-center justify-between gap-2">
+            <span>💎 예산 초과분 <span id="forge-dust-excess">0</span> → 가루 <span id="forge-dust-need" class="text-amber-300 text-sm">0</span> 소모</span>
+            <span class="text-slate-400 font-normal">보유 <span id="forge-dust-have">0</span></span>
+          </div>
           <!-- 생성 버튼 그룹 -->
           <div class="pt-2 flex flex-wrap items-center gap-3">
             <button id="btn-forge-generate" onclick="generateAICard()" class="flex-1 min-w-[220px] py-3.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black text-sm shadow-xl shadow-purple-600/30 active:scale-95 transition flex items-center justify-center gap-2">

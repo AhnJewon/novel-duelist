@@ -44,6 +44,7 @@ Object.assign(window, {
 // Setup cyclic references
 window._renderGrimoire = renderGrimoire;
 window._updateForgePromptPreview = updateForgePromptPreview;
+window._reapplyForgePlan = () => import('./card-forge.js').then(m => m.reapplyForgePlan());   // ⚖️ 예산 초과 허용 토글 → LLM 재호출 없이 재정산 (DECISIONS #100)
 window._renderBattleUI = renderBattleUI;
 window._renderPvpPanel = renderPvpPanel;
 window._renderProfilePanel = renderProfilePanel;
