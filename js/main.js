@@ -18,6 +18,7 @@ import { loadArchetypes, registerNewArchetype, findMatchingArchetype, mergeDupli
 import { showKeywordInfo, closeKeywordInfoModal } from './keyword-service.js';
 import { getDust, getCopies, MAX_CARD_COPIES } from './card-copies.js';
 import { loadLocalFlavor } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (js/flavor.local.js가 있을 때만)
+import { loadCustomRaces } from './race-service.js';   // 🧬 LLM이 만든 종족 복원 (반드시 loadLocalFlavor 앞)
 import { populateForgeSelects } from './card-forge.js';   // 🧬 종족·역할 셀렉트 (팩 이름 반영 — 반드시 loadLocalFlavor 뒤)
 import { ensureArchetypeEmbeddings, checkEmbeddingAvailable, findSimilarArchetypes } from './embedding-service.js';
 
@@ -65,6 +66,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadBosses();
   // 🎭 로컬 플레이버 팩 — 보스 목록까지 **불러온 뒤**, 화면을 그리기 **전에** 이름 테이블을 갈아끼운다.
   //    🐛 loadBosses보다 먼저 부르면 보스 이름만 원본으로 되돌아온다(저장된 목록이 나중에 덮어쓴다) — DECISIONS #103
+  await loadCustomRaces();   // 🧬 저장된 종족을 표에 되살린다 — 팩이 이름을 덮을 기회를 뒤에 준다
   await loadLocalFlavor();
   populateForgeSelects();   // 🧬 팩이 이름을 바꾼 뒤에 채운다
   initBattle();

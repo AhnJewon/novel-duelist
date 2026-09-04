@@ -34,6 +34,7 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
 //    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
 import * as SE from '/js/status-effects.js';
 import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106)
+import * as RS from '/js/race-service.js';                // 🧬 종족 등록 게이트 (DECISIONS #108)
 import * as CR from '/js/cycle-roles.js';                  // 🧬 사이클 역할 (DECISIONS #107) — 새 API는 네임스페이스로 (규칙 114)
 import { buildVisualPromptFromCard } from '/js/dan-tag-gen.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
@@ -1898,6 +1899,89 @@ async function suiteBossBudget() {
 // 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
 // ============================================================
 // ============================================================
+// 🧬 종족 생성 게이트 — LLM이 만든 종족이 무한히 늘지 않게  → DECISIONS #108
+// ============================================================
+async function suiteRaceGate() {
+  const S = '종족 게이트';
+  if (typeof RS.registerNewRace !== 'function') {
+    check(S, 'race-service가 등록 API를 노출한다', false, 'registerNewRace 없음');
+    return;
+  }
+  // ⚠️ 이 스위트는 RACE_CONFIG를 **실제로 바꾼다**. finally로 반드시 되돌린다 (검사 격리 — 규칙 63).
+  const NO_PERSIST = { persist: false };   // 검증이 유저 저장소를 건드리면 안 된다
+  const snapshot = JSON.parse(JSON.stringify(RC.RACE_CONFIG));
+  try {
+    // ① 이름 정규화 — 꼬리("족/종족/류")를 떼고 본다. 이걸 안 하면 같은 개념이 매번 새 종족이 된다.
+    check(S, '이름 정규화가 꼬리를 뗀다',
+      RS.normalizeRaceName('수인족') === RS.normalizeRaceName('수인 종족')
+      && RS.normalizeRaceName('수인족') === RS.normalizeRaceName('수인류'),
+      RS.normalizeRaceName('수인 종족'));
+
+    // ② 태그 자카드 — 빈 목록끼리는 0이다 (근거 없이 합치지 않는다)
+    check(S, '태그 겹침 계산', RS.tagSimilarity(['a', 'b'], ['a', 'b']) === 1
+      && RS.tagSimilarity(['a', 'b'], ['b', 'c']) === 1 / 3
+      && RS.tagSimilarity([], ['a']) === 0);
+
+    // ③ 정말 다른 그림이면 새 종족이 생긴다
+    const n0 = Object.keys(RC.RACE_CONFIG).length;
+    const made = await RS.registerNewRace({
+      key: 'audit_insect', name: '검증충족', icon: '🐛',
+      tags: ['insect girl', 'antennae', 'compound eyes', 'carapace'], cycleRole: 'vector'
+    }, NO_PERSIST);
+    check(S, '다른 그림이면 새 종족이 등록된다',
+      made && made.created === true && Object.keys(RC.RACE_CONFIG).length === n0 + 1,
+      JSON.stringify(made));
+    check(S, '새 종족도 사이클 역할을 가진다 (기본값이 아니라 제안대로)',
+      CR.readCycleRole({ races: ['audit_insect'] }) === 'vector');
+    check(S, '새 종족의 태그가 이미지 시드에 실린다',
+      RC.raceImageTags({ races: ['audit_insect'] }).includes('antennae'));
+
+    // ④ 이름만 다른 같은 개념은 **흡수**된다 — 이게 시너지를 지키는 장치다
+    const n1 = Object.keys(RC.RACE_CONFIG).length;
+    const dup = await RS.registerNewRace({ name: '검증충 종족', icon: '🐜', tags: ['bug', 'antennae'] }, NO_PERSIST);
+    check(S, '이름이 같으면 흡수하고 새로 만들지 않는다',
+      dup && dup.created === false && dup.key === 'audit_insect'
+      && Object.keys(RC.RACE_CONFIG).length === n1,
+      JSON.stringify(dup));
+    // 정규화 후 같은 이름은 별칭으로 남기지 않는다 — "검증충 종족"은 "검증충족"과 같은 글자다
+    check(S, '정규화하면 같은 이름은 별칭을 늘리지 않는다',
+      (RC.RACE_CONFIG.audit_insect.aliases || []).length === 0,
+      JSON.stringify(RC.RACE_CONFIG.audit_insect.aliases));
+
+    // ⑤ 태그가 충분히 겹치면 이름이 달라도 같은 그림 = 같은 종족
+    const n2 = Object.keys(RC.RACE_CONFIG).length;
+    const furry = await RS.registerNewRace({ name: '검증늑대인간', icon: '🐕', tags: ['animal ears', 'tail', 'furry'] }, NO_PERSIST);
+    check(S, '태그가 겹치면 기존 종족으로 흡수한다 (수인)',
+      furry && furry.created === false && furry.key === 'beast'
+      && Object.keys(RC.RACE_CONFIG).length === n2,
+      JSON.stringify(furry));
+    // 이름이 정말 다를 때만 별칭이 쌓인다 — 다음 판정이 더 정확해지고 "왜 합쳐졌나"가 남는다
+    check(S, '흡수된 다른 이름은 별칭으로 남는다',
+      (RC.RACE_CONFIG.beast.aliases || []).includes('검증늑대인간'),
+      JSON.stringify(RC.RACE_CONFIG.beast.aliases));
+
+    // ⑥ 태그가 없으면 등록하지 않는다 — 종족의 정의가 곧 그림이다
+    const n3 = Object.keys(RC.RACE_CONFIG).length;
+    const empty = await RS.registerNewRace({ name: '검증무근거족', icon: '❓', tags: [] }, NO_PERSIST);
+    check(S, '이미지 태그가 없으면 종족을 만들지 않는다',
+      empty === null && Object.keys(RC.RACE_CONFIG).length === n3, JSON.stringify(empty));
+
+    // ⑦ 총량 상한 — 넘으면 무조건 가장 가까운 곳으로 흡수한다 (시너지 보호의 마지막 방어선)
+    check(S, `종족 상한이 정의돼 있다 (${RS.RACE_CAP}종)`,
+      Number.isFinite(RS.RACE_CAP) && RS.RACE_CAP > 8 && RS.RACE_CAP <= 40, `${RS.RACE_CAP}`);
+
+    // ⑧ 새 종족도 연계 범위에서 정상 동작한다 (등록이 끝이 아니라 실제로 쓰여야 한다)
+    const t = { id: 'tX', name: '충군', races: ['audit_insect'], comboScope: 'race' };
+    check(S, '새 종족으로도 종족 덱이 성립한다',
+      matchesScope(card({ themeId: 'other', races: ['audit_insect'] }), t)
+      && !matchesScope(card({ themeId: 'other', races: ['human'] }), t));
+  } finally {
+    for (const k of Object.keys(RC.RACE_CONFIG)) delete RC.RACE_CONFIG[k];
+    Object.assign(RC.RACE_CONFIG, snapshot);
+  }
+}
+
+// ============================================================
 // 🧬 사이클 역할 — 누가 걸 수 있고 누가 걸릴 수 있는가  → DECISIONS #107
 // ============================================================
 function suiteCycleRoles() {
@@ -3005,7 +3089,7 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['사이클 역할', suiteCycleRoles], ['사이클', suiteStatusCycles],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['종족 게이트', suiteRaceGate], ['사이클 역할', suiteCycleRoles], ['사이클', suiteStatusCycles],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]

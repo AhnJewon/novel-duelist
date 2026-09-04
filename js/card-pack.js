@@ -17,7 +17,9 @@ import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
 import { applyLlmDescription } from './card-describe.js';
 import { cardTypeRules } from './card-type-rules.js';
-import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect } from './card-design-roll.js';
+import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect,
+         rollNewRaceSlot, raceDirective } from './card-design-roll.js';
+import { registerNewRace, racesForPrompt } from './race-service.js';   // 🧬 새 종족 등록·게이트 (DECISIONS #108)
 import { flavorConceptDirective, flavorStatusTypes } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 
 export const PACK_THEMES = {
@@ -288,7 +290,8 @@ export async function openBoosterPack(fastMode = false) {
         newArchetype: i === newArchetypeSlot,
         // 🎭 효과 성향·🪤 함정 조건은 코드가 슬롯마다 굴린다 — 4B 모델에 맡기면 늘 "적 피해"·"소환수를 낼 때"다 (DECISIONS #102)
         effectRole: rollEffectRole(cardType),
-        trapPlan: cardType === 'trap' ? rollTrapTrigger({ element, themeName: theme.name }) : null
+        trapPlan: cardType === 'trap' ? rollTrapTrigger({ element, themeName: theme.name }) : null,
+        packNewRaceSlot: rollNewRaceSlot()   // 🧬 새 종족 슬롯도 코드가 굴린다 (DECISIONS #108)
       });
 
     if (progressText) progressText.innerText = `[${i + 1}/5] ✨ [${cardData.rarity.toUpperCase()}] ${cardData.name} 완성!`;
@@ -360,7 +363,7 @@ function fallbackEffectFor(role, rarity, spellDmg) {
 }
 
 async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, cardIndex, packThemeName = 'Fantasy Pack',
-  { newArchetype = false, effectRole = null, trapPlan = null } = {}) {
+  { newArchetype = false, effectRole = null, trapPlan = null, packNewRaceSlot = false } = {}) {
 
   // 🔁 확률적으로 이미 가진 카드를 중복으로 뽑는다 — AI 호출을 건너뛰어 카드깡이 빨라진다
   const packMode = getSelectedPackMode();
@@ -562,6 +565,7 @@ Return ONLY JSON:
   "comboScaling": "flat|perAlly|perTurn|perHand",
   "comboScope": "archetype|element|race|cardType|any",
   "races": ["종족 0~2개(그림에 직접 반영). human|beast|undead|demon|construct|fae|aberration|dragon. 주문·건축물 대부분은 빈 배열"],
+  "newRace": "새 종족 슬롯일 때만. { key, name, icon, tags[], cycleRole }. 아니면 생략",
   "cycleRole": "비우면 종족 기본값. none|host|vector|both. parasite 계열 statusEffect는 vector·both만 가질 수 있다",
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeComboAction": "search|chainDamage|manaCharge|shieldHeal|freeze|doubleCast|draw|specialSummon|archetypeRally|archetypeSalvage|archetypeGuard|shieldBreak|handDisrupt|sacrificeStrike",
@@ -640,7 +644,7 @@ Return ONLY JSON:
 
 🎯 대상 규칙: 범위가 넓을수록 카드가 강해지고 마나도 비싸진다.
    single(1배) < 2체(1.5배) < 3체(2배) < 전체(2.2배), random은 0.8배.
-   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}${flavorConceptDirective()}`;
+   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}${raceDirective(racesForPrompt(), packNewRaceSlot)}${flavorConceptDirective()}`;
 
       const packReasoningSelect = document.getElementById('pack-reasoning-select');
       const packReasoningMode = packReasoningSelect ? packReasoningSelect.value : (state.settings.reasoningMode || 'fast');
@@ -668,6 +672,11 @@ Return ONLY JSON:
       // 🃏 바닐라 — 효과 대신 플레이버 텍스트를 담는 카드
       if (cardJson.races || cardJson.race) llmRaces = cardJson.races || cardJson.race;
       if (isCycleRole(cardJson.cycleRole)) llmCycleRole = cardJson.cycleRole;
+      // 🧬 새 종족 제안 — 게이트가 흡수하면 기존 키를 돌려준다 (DECISIONS #108)
+      if (cardJson.newRace && cardJson.newRace.name) {
+        const reg = await registerNewRace(cardJson.newRace);
+        if (reg) llmRaces = [reg.key];
+      }
       if (cardJson.isVanilla) llmVanilla = true;
       if (cardJson.flavorText) llmFlavorText = String(cardJson.flavorText);
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;

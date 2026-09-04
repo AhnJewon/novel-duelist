@@ -13,6 +13,7 @@ export const state = {
   cardsCollection: [], // 전체 보유 카드 보관함
   activeDeckCardIds: [], // 현재 전투 출전 덱에 편성된 카드 ID 목록
   archetypesList: [], // 누적 카드군(Theme Archetype) DB
+  customRaces: {},    // 🧬 LLM이 만든 종족 (기본 8종은 races.js가 소유 — DECISIONS #108)
   settings: {
     apiKey: '',
     model: 'nai-diffusion-4-5-full',

@@ -111,6 +111,7 @@
 | 새 상태이상 추가 | `js/status-effects.js` **한 곳** |
 | 종족 추가·이미지 태그·종족 시너지 | `js/races.js` **한 곳** (연계는 `comboScope: 'race'`) |
 | 사이클을 누가 걸고 누가 걸리나 | `js/cycle-roles.js` **한 곳** (종족은 기본값만 제안) |
+| LLM이 만든 종족 등록·병합·상한 | `js/race-service.js` **한 곳** (콘솔: `resetCustomRaces()`) |
 | 상태이상 적용 범위 (소환수 전용 여부) | `js/status-effects.js`의 `entityOnly` + `config.js`의 `ENTITY_ONLY_STATUSES` |
 | 스탯 체증·체감 곡선 | `js/config.js`의 `STAT_CURVE` |
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
@@ -142,7 +143,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (478항목):
+전투 로직은 **하네스가 있습니다** (490항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -324,7 +325,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (478항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (490항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -625,3 +626,13 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 120. **상태이상 적용 경로는 둘입니다.** 엔진의 `applyStatusRespectingScope`와 `skill-effects.js`의
     **지정 대상**(`St.explicit`) 분기입니다. 적용 규칙을 추가하면 **둘 다** 고치세요 — 엔진만
     고쳤다가 지정 경로가 뚫린 적이 있습니다. → [DECISIONS #107](docs/DECISIONS.md)
+
+121. **LLM이 만든 종족은 `registerNewRace()`를 통해서만 들어옵니다.** 이름 정규화(꼬리 "족/종족/류"를
+    뗀다) + 태그 자카드 + 총량 상한(`RACE_CAP`)이 걸려 있습니다. 게이트를 우회해 `RACE_CONFIG`에
+    직접 넣지 마세요 — 종족이 무한히 늘면 `comboScope: 'race'` 시너지가 통째로 죽습니다.
+    → [DECISIONS #108](docs/DECISIONS.md)
+
+122. **하네스가 영속 계층을 건드리면 안 됩니다.** 메모리 복원(`finally`)만으로는 부족합니다 —
+    `registerNewRace`가 항상 저장하는 바람에 검증을 한 번 돌린 것만으로 테스트 종족이 유저
+    데이터에 남았고, 다음 실행이 빨갛게 됐습니다. 쓰기가 있는 API에는 `{ persist: false }` 같은
+    문을 두고 하네스가 그걸 쓰게 하세요. → [DECISIONS #108](docs/DECISIONS.md)
