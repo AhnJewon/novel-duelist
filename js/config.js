@@ -283,8 +283,9 @@ export function scaledEffectCost(key, baseCost, skill) {
 /**
  * 행동 봉쇄 상태이상 목록 — 본체에는 **어느 진영도** 걸리지 않는다 (DECISIONS #94).
  * ⚠️ status-effects.js의 `blocksTurn`과 반드시 같아야 한다 (ENTITY_ONLY_STATUSES와 같은 사정).
+ * 🐛 빙결은 여기서 빠졌다 — 기절과 코드가 완전히 같은 중복이었다. 이제 **공격력 약화**다 (DECISIONS #105).
  */
-export const BLOCKING_STATUSES = new Set(['stun', 'freeze']);
+export const BLOCKING_STATUSES = new Set(['stun']);
 
 /**
  * 소환수 전용 상태이상 목록.
@@ -292,7 +293,7 @@ export const BLOCKING_STATUSES = new Set(['stun', 'freeze']);
  *    config.js가 status-effects.js를 import하면 순환이 생기므로 여기에 복제했다.
  *    한쪽만 고치면 예산과 실제 동작이 어긋난다.
  */
-export const ENTITY_ONLY_STATUSES = new Set(['stun', 'freeze', 'burn', 'poison', 'parasite', 'gestation']);
+export const ENTITY_ONLY_STATUSES = new Set(['stun', 'freeze', 'corrosion', 'burn', 'poison', 'parasite', 'gestation']);
 
 /**
  * bodyStatus 옵트인으로도 **본체에 걸 수 없는** 지속 피해 계열 — 사이클(기생·성장).
@@ -626,6 +627,15 @@ export function enforcePowerBudget(cardData, skill) {
   //    사이클(기생·성장)도 본체에 못 걸리므로 bodyStatus 할증을 받지 않는다 (DECISIONS #104)
   if (out.bodyStatus && out.statusEffect
       && (BLOCKING_STATUSES.has(out.statusEffect.type) || BODY_BLOCKED_STATUSES.has(out.statusEffect.type))) delete out.bodyStatus;
+  // 🔢 위력이 곧 효과인 상태이상(화상·맹독·감전·빙결·부식…)에 value 0이 오면 **아무 일도 안 하는 카드**가 된다.
+  //    기절·취약처럼 value를 안 쓰는 것만 0으로 둔다. 기본값은 STATUS_EFFECTS 한 곳에서 온다 — 멱등하다.
+  //    🐛 예전엔 빙결이 봉쇄라 value가 장식이었고, LLM이 0을 자주 냈다. 이제 value가 곧 깎이는 공격력이다.
+  if (out.statusEffect && out.statusEffect.type && out.statusEffect.type !== 'none') {
+    const stSpec = STATUS_EFFECTS[out.statusEffect.type];
+    if (stSpec && stSpec.defaultValue > 0 && !(out.statusEffect.value > 0)) {
+      out.statusEffect.value = stSpec.defaultValue;
+    }
+  }
   if (skill.passiveEffect) {
     out.passiveEffect = { ...skill.passiveEffect };
     if (skill.passiveEffect.aura) out.passiveEffect.aura = { ...skill.passiveEffect.aura };
@@ -1364,7 +1374,7 @@ const EFFECT_DESC_PATTERNS = {
   silence:           /무효화|봉인|침묵/,
   // '지속'은 뺐다 — "지속 피해"(상태이상)에도 걸려 오탐이 났다
   passiveEffect:     /매\s*턴|턴\s*종료\s*시|턴\s*시작\s*시|패시브/,
-  statusEffect:      /화상|맹독|빙결|기절|출혈|중독|동상/,
+  statusEffect:      /화상|맹독|빙결|부식|감전|기절|출혈|중독|동상/,
   // 🆕 DECISIONS #85 — 예전에는 설명문에만 있던 동작들. 이제 실제로 구현됐다.
   // ⚠️ "방어막/실드를 제거"는 destroy(소환수 파괴)가 아니다 — 앞에 그 낱말이
   //    오면 제외한다. (실측: "적 실드를 제거한다"가 destroy로 오탐났다)

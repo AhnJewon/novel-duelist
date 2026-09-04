@@ -28,6 +28,7 @@ const BADGE_TONES = {
 const STATUS_BADGE_TONES = {
   stun: 'bg-yellow-900/90 text-yellow-200 border-yellow-400',
   freeze: 'bg-cyan-900/90 text-cyan-200 border-cyan-400',
+  corrosion: 'bg-lime-900/90 text-lime-200 border-lime-400',
   burn: 'bg-orange-950 text-orange-300 border-orange-500',
   shock: 'bg-amber-950 text-amber-200 border-amber-400',
   poison: 'bg-emerald-950 text-emerald-300 border-emerald-500',
@@ -79,9 +80,10 @@ const SKILL_BADGE_SPECS = [
 // 상태이상 뱃지 문구는 status-effects의 정의를 따라간다.
 const STATUS_BADGE_LABEL = {
   stun: st => `💫 ${st.duration || 1}턴 기절`,
-  freeze: () => '❄️ 빙결/약화',
+  freeze: st => `❄️ 빙결 -공${st.value || STATUS_EFFECTS.freeze.defaultValue}`,
+  corrosion: st => `🧪 부식 -방${st.value || STATUS_EFFECTS.corrosion.defaultValue}`,
   burn: st => `🔥 화상 ${st.value || STATUS_EFFECTS.burn.defaultValue}`,
-  shock: () => '⚡ 감전',
+  shock: st => `⚡ 감전 ${st.value || STATUS_EFFECTS.shock.defaultValue}`,
   poison: st => `☣️ 맹독 ${st.value || STATUS_EFFECTS.poison.defaultValue}`,
   vulnerable: () => '💥 받피증 +50%',
   // 🔄 사이클 — 남은 턴을 보여 줘야 언제 부화하는지 읽을 수 있다

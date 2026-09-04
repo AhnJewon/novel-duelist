@@ -260,7 +260,8 @@ export function growMana(side, turnCount, cap = 10) {
  */
 export function refreshMinions(side) {
   side.minions.forEach(m => {
-    m.frozen = !!m.blockedBy && m.blockedBy === 'freeze';
+    // 🐛 `m.frozen`은 사라졌다 — 빙결이 봉쇄가 아니라 공격력 약화가 됐다 (DECISIONS #105).
+    //    행동 가능 여부는 blockedBy(기절)와 소환 후유증만 본다.
     const summonSick = Number.isFinite(m.summonedTurn) && m.summonedTurn >= state.turnCount;
     m.canAttack = !m.blockedBy && !summonSick;
   });

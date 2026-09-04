@@ -7,7 +7,8 @@
 
 import { escapeHtml } from './dom-utils.js';
 import { resolveTargetKey, readHpTarget, readTargetSpec, readDamageTarget } from './effect-targets.js';
-import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, STATUS_EFFECTS } from './status-effects.js';
+import { applyStatus, getIncomingDamageMultiplier, getOnHitBonusDamage, getDefensePenalty,
+         collectChainTargets, hasChainStatus, STATUS_EFFECTS } from './status-effects.js';
 import { battleRng } from './rng.js';
 import { SLOT_CAP, HAND_CAP, EXECUTE_MULT } from './battle-rules.js';
 
@@ -41,10 +42,12 @@ export function selectFrontTarget(minions = [], { pierceShield = false } = {}) {
  *   ⚠️ entity.defense에 더해 저장하지 말고 여기로 넘기세요. 저장하면
  *      오라를 주던 건축물이 부서진 뒤에도 보너스가 남습니다.
  */
-export function damageEntity(entity, dmg, { pierce = false, defBonus = 0 } = {}) {
-  if (!entity) return { died: false, dealt: 0, blocked: 0, amplified: 0, shockBonus: 0 };
+export function damageEntity(entity, dmg, { pierce = false, defBonus = 0, chainBoard = null } = {}) {
+  if (!entity) return { died: false, dealt: 0, blocked: 0, amplified: 0, shockBonus: 0, chained: [] };
   const raw = Math.max(0, Math.floor(dmg));
-  const baseDef = Math.max(0, parseInt(entity.defense) || 0) + Math.max(0, parseInt(defBonus) || 0);
+  // 🧪 부식 — 방어력 약화. **읽는 시점에** 뺀다 (저장하면 상태가 풀려도 안 돌아온다 — 규칙 16) → DECISIONS #105
+  const corroded = Math.max(0, (parseInt(entity.defense) || 0) - getDefensePenalty(entity.statuses));
+  const baseDef = corroded + Math.max(0, parseInt(defBonus) || 0);
   const def = pierce ? 0 : baseDef;
 
   // 1) 수비력으로 흡수
@@ -65,18 +68,32 @@ export function damageEntity(entity, dmg, { pierce = false, defBonus = 0 } = {})
 
   const total = afterDef + amplified + shockBonus;
   entity.currentHp -= total;
-  return { died: entity.currentHp <= 0, dealt: total, blocked, amplified, shockBonus };
+
+  // 3-b) ⚡ 연쇄 — 감전된 대상이 맞으면 **같은 전장의 감전된 전원**이 자기 위력만큼 함께 맞는다.
+  //      넓게 걸수록 한 방이 커진다. chainBoard를 안 주는 호출부는 연쇄 없이 그대로 돈다 (DECISIONS #105).
+  const chained = [];
+  if (afterDef > 0 && chainBoard && hasChainStatus(entity.statuses)) {
+    for (const c of collectChainTargets(chainBoard, entity)) {
+      c.entity.currentHp -= c.damage;          // 수비력 무시
+      chained.push({ name: c.entity.name, damage: c.damage, died: c.entity.currentHp <= 0, spec: c.spec });
+    }
+  }
+  return { died: entity.currentHp <= 0, dealt: total, blocked, amplified, shockBonus, chained };
 }
 
 /**
  * damageEntity 결과를 로그 꼬리말로 만든다.
  * 수치가 왜 그렇게 나왔는지 보여주지 않으면 상태이상이 동작하는지 알 수 없다.
  */
-export function describeDamageExtras({ blocked = 0, amplified = 0, shockBonus = 0 } = {}) {
+export function describeDamageExtras({ blocked = 0, amplified = 0, shockBonus = 0, chained = [] } = {}) {
   const bits = [];
   if (blocked > 0) bits.push(`<span class="text-cyan-400">방어 ${blocked} 흡수</span>`);
   if (amplified > 0) bits.push(`<span class="text-purple-400">💥 취약 +${amplified}</span>`);
   if (shockBonus > 0) bits.push(`<span class="text-amber-300">⚡ 감전 +${shockBonus}</span>`);
+  if (chained && chained.length > 0) {
+    const who = chained.map(c => `${escapeHtml(c.name)} -${c.damage}`).join(', ');
+    bits.push(`<span class="text-amber-300">⚡ 연쇄 → ${who}</span>`);
+  }
   return bits.length ? ` (${bits.join(', ')})` : '';
 }
 
@@ -516,8 +533,6 @@ export function applyPlayerSkillEffects(skill, ctx, opts = {}) {
       for (const e of St.minions) {
         if (!e.statuses) e.statuses = {};
         applyStatus(e.statuses, st.type, st.duration || 1, st.value || 0);
-        // 빙결은 소환수 표시에 직접 쓰이는 플래그가 따로 있다
-        if (st.type === 'freeze') e.frozen = true;
         // ⚠️ 카드 텍스트에 엔진 키를 그대로 쓰지 않는다 → CLAUDE.md 금지사항 47
         addBattleLog(`<span class="${spec ? spec.color : 'text-yellow-400'}">${spec ? spec.icon : '⚡'} [${escapeHtml(e.name)}]에게 ${spec ? spec.name : st.type} ${st.duration || 1}턴 부여!</span>`);
       }

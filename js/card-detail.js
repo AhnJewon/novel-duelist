@@ -88,7 +88,6 @@ function detailHtml(card) {
             : ''}
         </div>`) : ''}
 
-      ${card.frozen ? `<div class="text-cyan-300 font-bold text-[10px]">❄️ 빙결 — 이번 턴 행동 불가</div>` : ''}
       ${/* 🗑️ 도발 표시는 제거됐다 (DECISIONS #84). 전장에 서 있는 것만으로 벽이다. */''}
       ${readDirectAttack(card) ? `<div class="text-purple-300 font-bold text-[10px]">⚔️ 직접 공격 — 상대 전장을 무시하고 본체를 칩니다</div>` : ''}
     </div>`;

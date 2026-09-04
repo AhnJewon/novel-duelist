@@ -587,7 +587,7 @@ Return ONLY JSON:
   "searchDeck": 0-3,
   "summonToken": 0-3,
   "hpTarget": "body|minion",
-  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}", "duration": 1-3, "value": 0-10 },
+  "statusEffect": { "type": "none|stun|freeze|corrosion|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}", "duration": 1-3, "value": 0-10 },
   "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
 
@@ -599,8 +599,13 @@ Return ONLY JSON:
   설명문이 아니라 위 필드에 숫자를 넣을 것.
 
 
+💫 STATUS EFFECT — 하는 일이 각각 다르다 (value=위력, duration=턴):
+  stun 행동 불가 · freeze **공격력 약화** · corrosion **방어력 약화** · burn/poison 매 턴 지속 피해
+  · shock 맞으면 추가 피해 + **감전된 그 진영 전원**에게 번짐 · vulnerable 받는 피해 +50%
+  빙결과 부식은 짝이다(공/방). 감전은 넓게 걸수록 세다.
+
 💫 STATUS EFFECT 적용 범위 (중요):
-- **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
+- **stun(기절) / freeze(빙결) / corrosion(부식) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
   본체에는 걸리지 않고, 상대 전장이 비어 있으면 **불발**한다.
   본체는 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없기 때문이다.
   * ✅ "적 소환수 1체를 2턴간 빙결"    ❌ "상대를 2턴간 기절"

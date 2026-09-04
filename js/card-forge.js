@@ -385,14 +385,25 @@ ${buildNamingRule(targetType)}
   executeThreshold(처형) · doubleCastNext(더블캐스트) · invulnerableTurns(무적)
   damageReduction(피해 경감 %) · attackDown(공격력 약화) · silence(효과 무효화)
   maxHpGain(본체 최대 체력 증가 — 영구)
-  statusEffect(stun/freeze/burn/shock/poison/vulnerable)
+  statusEffect(stun/freeze/corrosion/burn/shock/poison/vulnerable)
   destroy(적 소환수 파괴 — 체력 무관, 1~3체) · searchDeck(덱에서 카드 서치, 1~3장)
   summonToken(4/2/10 토큰 소환, 1~3체)
 
-💫 STATUS EFFECT 적용 범위 (중요):
-- **stun(기절) / freeze(빙결) / burn(화상) / poison(맹독)** 은 **소환수·건축물 전용**이다.
+💫 STATUS EFFECT — 각각 하는 일이 다르다. value(위력)와 duration(턴)의 뜻도 다르다:
+| type | 하는 일 | value의 뜻 | duration의 뜻 |
+|---|---|---|---|
+| stun(기절) | 그 턴 행동 불가 | 안 쓴다 | 몇 턴 묶이나 |
+| freeze(빙결) | **공격력 약화** (때릴 때만 빠진다, 원래 값은 안 지워진다) | 깎이는 공격력 | 몇 턴 |
+| corrosion(부식) | **방어력 약화** (맞을 때만 빠진다) | 깎이는 방어력 | 몇 턴 |
+| burn(화상) | 매 턴 시작에 지속 피해 | 턴당 피해 | 몇 턴 |
+| poison(맹독) | 매 턴 시작에 지속 피해(방어막 관통) | 턴당 피해 | 몇 턴 |
+| shock(감전) | 맞으면 추가 피해 + **감전된 그 진영 전원**에게 같은 값이 번진다 | 한 번에 들어가는 피해 | 몇 턴 |
+| vulnerable(취약) | 받는 피해 +50% | 안 쓴다 | 몇 턴 |
+- 빙결과 부식은 **짝**이다. 하나는 공격력, 하나는 방어력 — 섞어 쓰지 마라.
+- 감전은 **넓게 걸수록** 세다. 한 대 때리면 걸린 전원이 함께 맞는다.
+- **stun / freeze / corrosion / burn / poison** 은 **소환수·건축물 전용**이다.
   본체(나/상대 모두)에는 걸리지 않는다. 상대 전장이 비어 있으면 **불발**한다.
-  * 이유: 본체는 체력이 낮은데 행동 봉쇄와 지속 피해는 대응할 여지가 없다.
+  * 이유: 본체는 체력이 낮은데 행동 봉쇄·약화·지속 피해는 대응할 여지가 없다.
     이 계열은 **보드 컨트롤 수단**이다.
   * ✅ "적 소환수 1체를 2턴간 빙결시킨다"
   * ❌ "상대를 2턴간 기절시킨다"   — 본체 지정은 걸리지 않는다
@@ -448,7 +459,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "targetCount": 1-3,
     "damageTarget": "body|field|any",
     "statusEffect": {
-      "type": "none|stun|freeze|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}",
+      "type": "none|stun|freeze|corrosion|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}",
       "duration": 1-2,
       "value": 0-8
     },

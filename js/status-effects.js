@@ -21,9 +21,17 @@ export const STATUS_EFFECTS = {
     name: '기절', icon: '💫', color: 'text-yellow-300',
     blocksTurn: true, entityOnly: true
   },
+  // ❄️ 빙결 — **공격력 약화**. 🐛 예전엔 blocksTurn이라 기절과 코드가 **완전히 같았다**.
+  //    뱃지만 "빙결/약화"라 적어 놓고 약화하는 것은 아무것도 없었다 (유저 지적) → DECISIONS #105
+  //    행동 봉쇄는 기절 하나로 충분하다. 빙결은 "얼어서 제대로 못 휘두른다"로 갈랐다.
   freeze: {
     name: '빙결', icon: '❄️', color: 'text-cyan-300',
-    blocksTurn: true, entityOnly: true
+    defaultValue: 4, weakensAttack: true, entityOnly: true
+  },
+  // 🧪 부식 — **방어력 약화**. 빙결의 짝 (공격 약화 / 방어 약화를 서로 다른 상태이상이 맡는다)
+  corrosion: {
+    name: '부식', icon: '🧪', color: 'text-lime-400',
+    defaultValue: 4, weakensDefense: true, entityOnly: true
   },
   burn: {
     name: '화상', icon: '🔥', color: 'text-orange-300',
@@ -33,9 +41,12 @@ export const STATUS_EFFECTS = {
     name: '맹독', icon: '☣️', color: 'text-emerald-300',
     defaultValue: 8, dot: true, ignoresShield: false, entityOnly: true
   },
+  // ⚡ 감전 — **연쇄**. 감전된 대상이 맞으면 그 진영에서 감전된 **전원**이 자기 위력만큼 함께 맞는다.
+  //    (예전엔 맞은 본인에게만 추가 피해였다 — "연쇄"라는 이름값을 못 했다) → DECISIONS #105
+  //    위력(value)은 **연쇄 1회당 피해량**이지 횟수가 아니다. 넓게 걸수록 한 방이 커진다.
   shock: {
     name: '감전', icon: '⚡', color: 'text-amber-300',
-    defaultValue: 4, bonusOnHit: true
+    defaultValue: 4, bonusOnHit: true, chains: true
   },
   vulnerable: {
     name: '취약', icon: '💥', color: 'text-purple-300',
@@ -152,6 +163,57 @@ export function getOnHitBonusDamage(statuses) {
     if (spec && spec.bonusOnHit && st.turns > 0) bonus += st.value || spec.defaultValue || 0;
   }
   return bonus;
+}
+
+/**
+ * ⚡ 연쇄 피해 대상 모으기 — 감전된 대상이 맞았을 때, **같은 전장의 감전된 다른 것들**을 돌려준다.
+ * 각자 **자기가 가진 위력**만큼 맞는다 (수비력 무시 — 전기는 갑옷을 타고 흐른다).
+ * @returns [{ entity, damage }]
+ */
+export function collectChainTargets(board, hitEntity) {
+  if (!Array.isArray(board)) return [];
+  const out = [];
+  for (const e of board) {
+    if (!e || e === hitEntity || !e.statuses || e.currentHp <= 0) continue;
+    for (const [type, st] of Object.entries(e.statuses)) {
+      const spec = STATUS_EFFECTS[type];
+      if (!spec || !spec.chains || !st || st.turns <= 0) continue;
+      const dmg = st.value || spec.defaultValue || 0;
+      if (dmg > 0) out.push({ entity: e, damage: dmg, spec });
+    }
+  }
+  return out;
+}
+
+/** 이 대상이 연쇄를 일으키는 상태(감전)를 가지고 있는가 */
+export function hasChainStatus(statuses) {
+  if (!statuses) return false;
+  return Object.entries(statuses).some(([type, st]) => {
+    const spec = STATUS_EFFECTS[type];
+    return spec && spec.chains && st && st.turns > 0;
+  });
+}
+
+/**
+ * ⚔️🛡️ 능력치 약화 (빙결 = 공격력, 부식 = 방어력).
+ *
+ * ⚠️ **읽는 시점에 계산한다.** entity.attack/defense에 더해 저장하면 상태이상이 풀려도 수치가 안 돌아온다
+ *    — 건축물 오라와 같은 이유다 (규칙 16). 영구히 깎는 것은 `attackDown` **효과**가 따로 한다.
+ */
+export function getAttackPenalty(statuses) {
+  return sumPenalty(statuses, 'weakensAttack');
+}
+export function getDefensePenalty(statuses) {
+  return sumPenalty(statuses, 'weakensDefense');
+}
+function sumPenalty(statuses, flag) {
+  let n = 0;
+  if (!statuses) return 0;
+  for (const [type, st] of Object.entries(statuses)) {
+    const spec = STATUS_EFFECTS[type];
+    if (spec && spec[flag] && st && st.turns > 0) n += st.value || spec.defaultValue || 0;
+  }
+  return n;
 }
 
 // 받는 피해 배율 (취약)

@@ -14,7 +14,8 @@ import {
 import {
   STATUS_EFFECTS, createStatusState, applyStatus, consumeBlockingStatus, isEntityOnly,
   collectDamageOverTime, decayStatuses,
-  getIncomingDamageMultiplier, getOnHitBonusDamage, describeStatuses
+  getIncomingDamageMultiplier, getOnHitBonusDamage, describeStatuses,
+  getAttackPenalty, getDefensePenalty, collectChainTargets, hasChainStatus
 } from './status-effects.js';
 import { isCycleStatus, resolveCycleExpiry } from './status-cycles.js';   // 🔄 기생 → 성장 → 부화 (DECISIONS #104)
 import {
@@ -209,6 +210,8 @@ function helpersFor(side) {
 //    실제로 두 번 오판했다. → DECISIONS #82
 // ============================================================
 export const __test = {
+  /** 진영 객체 그대로 (resolveAttack 등 side를 받는 함수용) */
+  sides: () => sides,
   /** 진영 상대적 헬퍼 (기본 플레이어). 'boss'를 주면 거울 진영의 같은 묶음 */
   helpers: (key = SIDE_PLAYER) => helpersFor(sides[key]),
   /** 상대 진영의 게임 뷰 (거울) */
@@ -797,7 +800,7 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   const isStructure = entity.cardType === 'structure';
   const div = document.createElement('div');
   
-  const canAtk = !isStructure && entity.canAttack && activeSideKey === SIDE_PLAYER && !entity.frozen;
+  const canAtk = !isStructure && entity.canAttack && activeSideKey === SIDE_PLAYER;   // 봉쇄는 canAttack이 이미 반영한다 (빙결은 이제 봉쇄가 아니다)
   // 카드군은 스탯을 올리지 않는다 (오토체스식 종족 버프 없음).
   // 같은 카드군이 전개돼 있으면 테두리로만 표시해 연계 가능 상태임을 알린다.
   const inArchetypePlay = !!findSynergyForEntity(synergyInfo, entity);
@@ -819,7 +822,7 @@ export function createMinionFieldElement(entity, slotIdx, synergyInfo = null) {
   const typeTag = isStructure ? '<span class="text-[9px] text-amber-300 font-bold bg-amber-950/80 px-1 rounded">성물</span>' : '';
   // 💫 행동 봉쇄(기절·빙결)는 카드 전체를 덮어 즉시 알아볼 수 있게 한다.
   //    🐛 수정: 예전에는 `entity.frozen`만 봐서 **기절은 화면에 표시되지 않았다.**
-  const blockSpec = entity.blockedBy ? STATUS_EFFECTS[entity.blockedBy] : (entity.frozen ? STATUS_EFFECTS.freeze : null);
+  const blockSpec = entity.blockedBy ? STATUS_EFFECTS[entity.blockedBy] : null;   // 🐛 frozen 플래그는 사라졌다 — 봉쇄는 blockedBy 하나 (DECISIONS #105)
   const frozenTag = blockSpec
     ? `<div class="absolute inset-0 bg-slate-900/70 flex items-center justify-center font-black ${blockSpec.color} text-xs z-20">${blockSpec.icon} ${blockSpec.name}됨</div>`
     : '';
@@ -1221,7 +1224,7 @@ export function attackWithMinion(slotIdx) {
   if (activeSideKey !== SIDE_PLAYER || state.isAnimating) return;
   if (isTargeting()) { cancelTargeting(); return; }
   const entity = state.playerMinions[slotIdx];
-  if (!entity || !entity.canAttack || entity.cardType === 'structure' || entity.frozen) return;
+  if (!entity || !entity.canAttack || entity.cardType === 'structure') return;
 
   const pickable = (state.bossMinions || []).filter(m => m && m.currentHp > 0);
 
@@ -1306,7 +1309,8 @@ export function resolveAttack(side, slotIdx, targetKey = null, { attacker = null
   if (side.hp <= 0 || foe.hp <= 0) return true;   // 함정이 판을 끝냈을 수 있다
 
   // 🏛️ 전장 오라 보정 — 읽는 시점에 계산한다 (저장하면 건축물이 죽어도 남는다)
-  const finalAtk = entity.attack + auraAttackBonus(entity, side);
+  // ❄️ 빙결 = 공격력 약화. 읽는 시점에 뺀다 (규칙 16) → DECISIONS #105
+  const finalAtk = Math.max(0, entity.attack + auraAttackBonus(entity, side) - getAttackPenalty(entity.statuses));
 
   if (targetKey === 'face') {
     dealFaceDamage(foe, finalAtk, { source: entity.name, attacker: side });
@@ -1324,9 +1328,9 @@ export function resolveAttack(side, slotIdx, targetKey = null, { attacker = null
       //    🐛 예전엔 공격이 공짜였다 — 고화력 소환수가 매 턴 때려도 아무 손해가 없어 전장에 영원히 남았고,
       //       실측에서 상대 전장 4기 만석·내 전장 0기로 끝났다 (#94).
       const counterAtk = (target.cardType !== 'structure' && target.attack > 0)
-        ? target.attack + auraAttackBonus(target, foe) : 0;
-      const hit = damageEntity(target, finalAtk, { defBonus: auraDefenseBonus(target, foe) });
-      const back = counterAtk > 0 ? damageEntity(entity, counterAtk, { defBonus: auraDefenseBonus(entity, side) }) : null;
+        ? Math.max(0, target.attack + auraAttackBonus(target, foe) - getAttackPenalty(target.statuses)) : 0;
+      const hit = damageEntity(target, finalAtk, { defBonus: auraDefenseBonus(target, foe), chainBoard: foe.minions });
+      const back = counterAtk > 0 ? damageEntity(entity, counterAtk, { defBonus: auraDefenseBonus(entity, side), chainBoard: side.minions }) : null;
       addBattleLog(`<span class="text-amber-300">⚔️ [${escapeHtml(entity.name)}] ➔ [${escapeHtml(target.name)}] 타격! (${hit.dealt} 피해)${describeDamageExtras(hit)}${back ? ` <span class="text-orange-300">· 반격 ${back.dealt}${describeDamageExtras(back)}</span>` : ''}</span>`);
       if (hit.died) {
         addBattleLog(`<span class="text-red-400 font-bold">💥 [${escapeHtml(target.name)}] 처치!</span>`);
@@ -1408,11 +1412,19 @@ export function dealFaceDamage(target, dmg, { pierce = false, source = '', attac
     addBattleLog(`<span class="text-purple-300">💥 [취약] ${escapeHtml(label)}이(가) 받는 피해가 증폭되었습니다! (x${mult})</span>`);
   }
 
-  // ⚡ 감전: 피격될 때마다 추가 연쇄 피해
+  // ⚡ 감전: 맞은 본인이 추가 피해를 받고, 그 진영의 감전된 소환수 **전원**에게 번진다 (DECISIONS #105)
   const shockBonus = getOnHitBonusDamage(target.statuses);
   if (shockBonus > 0) {
     remaining += shockBonus;
-    addBattleLog(`<span class="text-amber-300">⚡ [감전 연쇄] ${escapeHtml(label)}에게 추가 번개 피해 +${shockBonus}!</span>`);
+    addBattleLog(`<span class="text-amber-300">⚡ [감전] ${escapeHtml(label)}에게 추가 번개 피해 +${shockBonus}!</span>`);
+  }
+  if (hasChainStatus(target.statuses)) {
+    for (const c of collectChainTargets(target.minions, null)) {
+      c.entity.currentHp -= c.damage;   // 수비력 무시
+      addBattleLog(`<span class="text-amber-300">⚡ [감전 연쇄] [${escapeHtml(c.entity.name)}] -${c.damage}</span>`);
+      if (c.entity.currentHp <= 0) addBattleLog(`<span class="text-red-400">💥 [${escapeHtml(c.entity.name)}] 감전사!</span>`);
+    }
+    target.minions = removeDead(target.minions);
   }
 
   // 🎯 관통 — 명시된 관통이거나, **때린 진영**이 연계로 예약한 관통 버프를 소모한다.
@@ -1685,7 +1697,6 @@ function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, v
   }
   if (!target.statuses) target.statuses = {};
   const applied = applyStatus(target.statuses, type, turns, value);
-  if (type === 'freeze') target.frozen = true;
   addBattleLog(`<span class="${spec.color}">${spec.icon} [${escapeHtml(target.name)}]에게 ${spec.name} ${turns}턴 부여!</span>`);
   return applied;
 }

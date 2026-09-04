@@ -28,7 +28,11 @@ import { triggerArchetypeCombo } from '/js/archetype-service.js';
 import { attachPvpSession, detachPvpSession, handleRemoteAction, slimCardForWire } from '/js/pvp-battle.js';
 import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          collectDamageOverTime, decayStatuses, consumeBlockingStatus,
-         getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
+         getIncomingDamageMultiplier, getOnHitBonusDamage,
+         isBlocked } from '/js/status-effects.js';
+// ⚠️ 새 API는 **네임스페이스로** 받는다. 이름 import로 받으면 구버전에서 모듈 로드 자체가 죽어
+//    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
+import * as SE from '/js/status-effects.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
 import { EXECUTE_MULT } from '/js/battle-rules.js';
 import { withFlavorDisabled } from '/js/local-flavor.js';
@@ -74,7 +78,7 @@ function minion(over = {}) {
     id: 'm' + Math.random().toString(36).slice(2, 7),
     name: '테스트병', cardType: 'unit', element: 'fire',
     attack: 10, defense: 0, maxHp: 30, currentHp: 30,
-    canAttack: true, taunt: false, frozen: false, statuses: {},
+    canAttack: true, taunt: false, statuses: {},   // `frozen` 플래그는 제거됐다 (DECISIONS #105)
     summonedTurn: 0, skills: [{}]
   }, over);
 }
@@ -237,14 +241,18 @@ function suiteAttack() {
     minion({ name: '이번턴소환', summonedTurn: 5, canAttack: false }),
     minion({ name: '지난턴소환', summonedTurn: 4, canAttack: false }),
     minion({ name: '기절중', summonedTurn: 1, blockedBy: 'stun' }),
-    minion({ name: '빙결중', summonedTurn: 1, blockedBy: 'freeze' })
+    minion({ name: '빙결중', summonedTurn: 1, statuses: {} })
   ];
+  applyStatus(state.playerMinions[3].statuses, 'freeze', 2, 4);
   refreshMinions(sides.player);
   check(S, '이번 턴 소환수는 공격 불가 (소환 후유증)', state.playerMinions[0].canAttack === false);
   check(S, '지난 턴 소환수는 공격 가능', state.playerMinions[1].canAttack === true);
   check(S, '기절 중이면 공격 불가', state.playerMinions[2].canAttack === false);
-  check(S, '빙결 중이면 frozen 플래그가 선다',
-    state.playerMinions[3].canAttack === false && state.playerMinions[3].frozen === true);
+  // 🔁 재기준선 (DECISIONS #105): 빙결은 더 이상 행동을 막지 않는다 — 기절과 코드가 같은 중복이었다.
+  //    이제 공격력 약화다. 때릴 수는 있고, 약하게 때린다. `frozen` 플래그는 제거됐다.
+  check(S, '빙결은 행동을 막지 않는다 (기절 중복이 아니다)',
+    state.playerMinions[3].canAttack === true && state.playerMinions[3].frozen === undefined,
+    `canAttack=${state.playerMinions[3].canAttack} frozen=${state.playerMinions[3].frozen}`);
 
   // 오라 공격력이 실제 공격에 반영되는가
   resetBoard({
@@ -720,8 +728,8 @@ function suiteStatus() {
   const S = '상태이상';
 
   // entityOnly 분류
-  check(S, 'entityOnly: 기절·빙결·화상·맹독',
-    ['stun', 'freeze', 'burn', 'poison'].every(isEntityOnly));
+  check(S, 'entityOnly: 기절·빙결·부식·화상·맹독',
+    ['stun', 'freeze', 'corrosion', 'burn', 'poison'].every(isEntityOnly));
   check(S, '본체 허용: 감전·취약',
     !isEntityOnly('shock') && !isEntityOnly('vulnerable'));
 
@@ -1886,6 +1894,97 @@ async function suiteBossBudget() {
 // ------------------------------------------------------------
 // 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
 // ============================================================
+// ============================================================
+// 약화·연쇄 — 빙결(공격력)·부식(방어력)·감전(연쇄)  → DECISIONS #105
+// ============================================================
+function suiteWeakenChain() {
+  const S = '약화·연쇄';
+  // 구버전에서도 검사가 **개별로** 빨갛게 되도록 안전 껍데기를 쓴다 (예외로 스위트째 죽지 않게)
+  const getAttackPenalty = s => (typeof SE.getAttackPenalty === 'function' ? SE.getAttackPenalty(s) : 0);
+  const getDefensePenalty = s => (typeof SE.getDefensePenalty === 'function' ? SE.getDefensePenalty(s) : 0);
+  const collectChainTargets = (b, h) => (typeof SE.collectChainTargets === 'function' ? SE.collectChainTargets(b, h) : []);
+  const hasChainStatus = s => (typeof SE.hasChainStatus === 'function' ? SE.hasChainStatus(s) : false);
+  const playerSide = () => (BE.__test.sides ? BE.__test.sides().player : null);
+  const attack0 = () => { const s = playerSide(); if (s) BE.resolveAttack(s, 0, 'foe:0'); };
+
+  // ① 빙결은 봉쇄가 아니다 (예전엔 stun과 코드가 **완전히 같았다**)
+  const stF = createStatusState();
+  applyStatus(stF, 'freeze', 2, 4);
+  check(S, '빙결은 행동을 봉쇄하지 않는다', isBlocked(stF) === null || isBlocked(stF) === undefined || isBlocked(stF) === false,
+    `${isBlocked(stF)}`);
+  check(S, '빙결 = 공격력 약화 4', getAttackPenalty(stF) === 4 && getDefensePenalty(stF) === 0,
+    `atk=${getAttackPenalty(stF)} def=${getDefensePenalty(stF)}`);
+
+  // ② 부식은 방어력만 깎는다 — 빙결의 짝
+  const stC = createStatusState();
+  applyStatus(stC, 'corrosion', 2, 6);
+  check(S, '부식 = 방어력 약화 6 (공격력은 그대로)',
+    getDefensePenalty(stC) === 6 && getAttackPenalty(stC) === 0,
+    `atk=${getAttackPenalty(stC)} def=${getDefensePenalty(stC)}`);
+
+  // ③ 방어력 약화가 **실제 피해 계산**에 들어간다 (damageEntity 한 곳 — 규칙 29)
+  const mc = minion({ defense: 8, currentHp: 100, statuses: {} });
+  const before = damageEntity(minion({ defense: 8, currentHp: 100 }), 20).dealt;   // 20-8 = 12
+  applyStatus(mc.statuses, 'corrosion', 2, 5);
+  const after = damageEntity(mc, 20).dealt;                                        // 20-(8-5) = 17
+  check(S, '부식이 수비를 깎아 피해가 늘어난다 (12 → 17)',
+    before === 12 && after === 17, `before=${before} after=${after}`);
+
+  // ④ 공격력 약화가 **실제 공격**에 들어간다 (resolveAttack)
+  resetBoard({
+    playerMinions: [minion({ name: '빙결딜러', attack: 12, summonedTurn: 0, statuses: {} })],
+    bossMinions: [minion({ name: '표적', defense: 0, currentHp: 100, attack: 0 })]
+  });
+  applyStatus(state.playerMinions[0].statuses, 'freeze', 2, 5);
+  attack0();
+  check(S, '빙결 걸린 소환수는 약하게 때린다 (12 → 7)',
+    state.bossMinions[0] && state.bossMinions[0].currentHp === 93,
+    `hp=${state.bossMinions[0] && state.bossMinions[0].currentHp}`);
+
+  // ⑤ 약화는 **저장하지 않는다** — 상태가 풀리면 원래 값으로 돌아온다 (규칙 16)
+  check(S, '약화는 entity.attack/defense를 건드리지 않는다',
+    state.playerMinions[0].attack === 12 && mc.defense === 8,
+    `atk=${state.playerMinions[0].attack} def=${mc.defense}`);
+
+  // ⑥ 감전 연쇄 — 한 대 때리면 그 진영의 감전된 **전원**이 자기 위력만큼 맞는다
+  resetBoard({
+    playerMinions: [minion({ name: '방전기', attack: 10, summonedTurn: 0 })],
+    bossMinions: [
+      minion({ name: '감전A', defense: 0, currentHp: 100, attack: 0, statuses: {} }),
+      minion({ name: '감전B', defense: 0, currentHp: 100, attack: 0, statuses: {} }),
+      minion({ name: '멀쩡이', defense: 0, currentHp: 100, attack: 0, statuses: {} })
+    ]
+  });
+  applyStatus(state.bossMinions[0].statuses, 'shock', 3, 4);
+  applyStatus(state.bossMinions[1].statuses, 'shock', 3, 7);
+  attack0();
+  const [a, b, c] = state.bossMinions;
+  check(S, '감전 연쇄: 맞은 A는 10+4, B는 자기 위력 7, 안 걸린 C는 무사',
+    a.currentHp === 86 && b.currentHp === 93 && c.currentHp === 100,
+    `A=${a.currentHp} B=${b.currentHp} C=${c.currentHp}`);
+
+  // ⑦ 감전이 없으면 연쇄도 없다 (음성 통제)
+  resetBoard({
+    playerMinions: [minion({ name: '방전기', attack: 10, summonedTurn: 0 })],
+    bossMinions: [
+      minion({ name: '표적', defense: 0, currentHp: 100, attack: 0, statuses: {} }),
+      minion({ name: '옆사람', defense: 0, currentHp: 100, attack: 0, statuses: {} })
+    ]
+  });
+  attack0();
+  check(S, '감전이 없으면 옆 소환수는 안 맞는다',
+    state.bossMinions[0].currentHp === 90 && state.bossMinions[1].currentHp === 100,
+    `${state.bossMinions[0].currentHp} / ${state.bossMinions[1].currentHp}`);
+
+  // ⑧ 연쇄는 수비력을 무시한다 (전기는 갑옷을 타고 흐른다)
+  const armored = minion({ name: '중장갑', defense: 20, currentHp: 100, statuses: {} });
+  applyStatus(armored.statuses, 'shock', 2, 6);
+  const targets = collectChainTargets([armored], null);
+  check(S, '연쇄 피해는 수비력을 보지 않는다 (위력 그대로 6)',
+    targets.length === 1 && targets[0].damage === 6, JSON.stringify(targets.map(t => t.damage)));
+  check(S, 'hasChainStatus는 감전만 참', hasChainStatus(armored.statuses) === true && hasChainStatus(stF) === false);
+}
+
 function suiteStatusCycles() {
   const S = '사이클';
   const host = (over = {}) => minion({ name: '숙주', currentHp: 60, maxHp: 60, defense: 0, ...over });
@@ -2716,7 +2815,7 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['사이클', suiteStatusCycles],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['사이클', suiteStatusCycles],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]

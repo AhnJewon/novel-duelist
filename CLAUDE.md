@@ -140,7 +140,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (432항목):
+전투 로직은 **하네스가 있습니다** (442항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -322,7 +322,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (432항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (442항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -575,3 +575,21 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     옵트인에서도 막습니다. 보상 토큰은 **디버프를 건 쪽**에 서고, 자리가 없으면 한 턴 기다린 뒤 파열 피해로
     전환합니다(불발로 날리지 않습니다). 숙주가 죽으면 사이클이 사라지는 것은 **상대의 대응 수단**이니 고치지
     마세요. → [DECISIONS #104](docs/DECISIONS.md)
+
+111. **상태이상은 하나에 하나만 합니다.** 빙결=공격력 약화, 부식=방어력 약화, 화상·맹독=지속 피해,
+    감전=연쇄, 취약=받피증, 기절=행동 불가. 🐛 빙결은 예전에 **기절과 코드가 완전히 같았고** 뱃지만
+    "약화"를 약속했습니다. 같은 일을 하는 상태이상을 다시 만들지 마세요.
+    → [DECISIONS #105](docs/DECISIONS.md)
+
+112. **약화(빙결·부식)를 `entity.attack`/`defense`에 저장하지 마세요.** `getAttackPenalty()`·
+    `getDefensePenalty()`로 **읽는 시점에** 뺍니다 (규칙 16과 같은 이유 — 상태가 풀려도 안 돌아옵니다).
+    읽는 곳은 `resolveAttack`의 `finalAtk`와 `damageEntity`의 `baseDef` 둘뿐입니다. 영구 삭감이
+    필요하면 그건 `attackDown`입니다. → [DECISIONS #105](docs/DECISIONS.md)
+
+113. **감전은 진영 연쇄입니다.** 감전된 대상이 맞으면 그 진영의 감전된 **전원**이 자기 위력만큼
+    맞습니다(수비력 무시). `damageEntity`에 `chainBoard`를 넘기는 호출부만 연쇄가 돕니다 —
+    새 피해 경로를 만들면 그 전장을 함께 넘기세요. → [DECISIONS #105](docs/DECISIONS.md)
+
+114. **하네스에서 새 API는 네임스페이스로 받으세요** (`import * as SE`). 이름 import로 받으면
+    `git stash` 한 옛 코드에서 **모듈 로드가 통째로 죽어** fail-first가 아무것도 증명하지 못합니다
+    ("검사가 빨갛다"가 아니라 "하네스가 안 뜬다"). → [DECISIONS #105](docs/DECISIONS.md)
