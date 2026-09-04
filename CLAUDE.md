@@ -109,6 +109,7 @@
 | 효과 **크기**의 값 (피해 28 vs 8) | `js/config.js`의 `EFFECT_MAGNITUDE` **한 곳** |
 | 전투 무작위 / 재현 | `js/rng.js` (`initBattle({seed})`) |
 | 새 상태이상 추가 | `js/status-effects.js` **한 곳** |
+| 종족 추가·이미지 태그·종족 시너지 | `js/races.js` **한 곳** (연계는 `comboScope: 'race'`) |
 | 상태이상 적용 범위 (소환수 전용 여부) | `js/status-effects.js`의 `entityOnly` + `config.js`의 `ENTITY_ONLY_STATUSES` |
 | 스탯 체증·체감 곡선 | `js/config.js`의 `STAT_CURVE` |
 | 새 스킬 뱃지 추가 | `js/card-renderer.js`의 `SKILL_BADGE_SPECS` |
@@ -140,7 +141,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (442항목):
+전투 로직은 **하네스가 있습니다** (461항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -322,7 +323,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (442항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (461항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -593,3 +594,18 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 114. **하네스에서 새 API는 네임스페이스로 받으세요** (`import * as SE`). 이름 import로 받으면
     `git stash` 한 옛 코드에서 **모듈 로드가 통째로 죽어** fail-first가 아무것도 증명하지 못합니다
     ("검사가 빨갛다"가 아니라 "하네스가 안 뜬다"). → [DECISIONS #105](docs/DECISIONS.md)
+
+115. **종족(race)을 속성처럼 강제하지 마세요.** 카드는 종족을 **0~2개** 가지고, 카드군과 어긋나도
+    `coerceCardRaces`는 갈아치우지 않습니다(비었을 때만 대표 종족을 채웁니다). 유사도 게이트
+    (`elementsOverlap`)에도 넣지 마세요 — 축을 곱하면 유사 카드군이 안 잡혀 병합이 죽습니다.
+    → [DECISIONS #106](docs/DECISIONS.md)
+
+116. **종족은 `readRaces(card)`로만 읽으세요.** LLM이 `races`(배열)와 `race`(문자열)를 섞어 씁니다.
+    읽는 곳마다 처리하면 한쪽만 보는 버그가 납니다. 종족에 **스탯 보너스를 붙이지 마세요** —
+    시너지는 `comboScope: 'race'`로 줍니다 (규칙 1과 같은 이유).
+    → [DECISIONS #106](docs/DECISIONS.md)
+
+117. **파이프가 든 문자열을 `perl -0pi -e 's\|…\|…\|'`로 바꾸지 마세요.** 구분자를 `\|`로 이스케이프하면
+    Perl이 정규식 안에서 그냥 `|`로 되돌려 **교체(alternation)** 가 됩니다. 실제로 프롬프트 enum을 바꾸려다
+    `import { cardTypeRules }`의 `cardType`이 치환됐습니다. 다른 구분자나 Edit 도구를 쓰세요.
+    → [DECISIONS #106](docs/DECISIONS.md)

@@ -7,6 +7,7 @@ import { callOllamaChat, generateNovelAIImage, getLastImageRequest } from './ai-
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
+import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { validateCardPlan, buildRetryDirective, validateRequestedEffects } from './card-validator.js';
 import { applyLlmDescription } from './card-describe.js';
@@ -308,6 +309,7 @@ ${knownThemes}
 - "comboScope" (무엇에 반응하는가) — 이게 덱 컨셉을 결정한다:
   * "archetype" 같은 카드군에만 반응 (위력 100%) — 정체성이 가장 뚜렷한 카드군
   * "element"   같은 속성이면 카드군이 달라도 반응 (위력 80%) — **속성 덱**이 성립
+  * "race"      같은 종족이면 카드군이 달라도 반응 (위력 85%) — **종족 덱**이 성립. 종족 없는 카드는 기여 못 함
   * "cardType"  같은 카드 타입에만 반응 (위력 80%) — **소환수 덱 / 주문 덱 / 함정 덱**이 성립
                 이때 "comboScopeValue"에 unit|spell|structure|trap 중 하나를 지정
   * "any"       아무 아군 카드나 반응 (위력 60%) — **범용 카드 중심 덱**이 성립
@@ -430,7 +432,8 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "elements": ["허용 속성 배열, 예: fire 또는 fire,lightning"],
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
-  "comboScope": "archetype|element|cardType|any",
+  "comboScope": "archetype|element|race|cardType|any",
+  "races": ["종족 0~2개. 이 카드가 무엇인가 — 그림에 직접 반영된다. human|beast|undead|demon|construct|fae|aberration|dragon. 사람·괴물이 아닌 카드(주문·건축물 대부분)는 빈 배열."],
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeSynergyDesc": "카드군 테마 상호 연계 효과 설명",
   "rarity": "common|rare|epic|legendary",
@@ -1208,6 +1211,12 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     console.log(`[Element] ${elementFix.reason} → ${finalElement}로 교정`);
   }
 
+  // 🧬 종족 정제 — 속성과 달리 **갈아치우지 않는다.** 잘못된 키만 버리고,
+  //    카드군이 종족을 밝혔는데 카드가 비었을 때만 대표 종족을 채운다 (races.js 머리말).
+  const raceFix = coerceCardRaces(finalTheme, data);
+  const finalRaces = raceFix.races;
+  if (raceFix.changed) console.log('[Race] ' + raceFix.reason);
+
   // 🏛️ 건축물에 지속 패시브를 보장한다.
   //    🐛 수정: 이 AI 경로는 passiveEffect를 **한 번도 넣지 않았다.** 프롬프트에
   //       패시브 필드가 없으니 LLM도 안 만들었고, 결과적으로 AI로 만든 건축물은
@@ -1252,6 +1261,7 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     name: finalName,
     title: `${rarity.toUpperCase()} ${cardType.toUpperCase()}`,
     element: finalElement,
+    races: finalRaces,
     themeId: finalTheme ? finalTheme.id : null,
     themeName: finalTheme ? finalTheme.name : null,
     themeKeyword: finalTheme ? finalTheme.keyword : null,

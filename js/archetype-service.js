@@ -838,7 +838,7 @@ export function enforceKeywordInName(cardName = '', theme = null, cardType = 'un
 //    속성 정책·설명 등을 고쳐도 이미 저장된 사용자에게는 영원히 반영되지 않았다.
 //    사용자가 쌓은 정보(별칭·시드·생성시각)는 보존한다.
 const DEFINITION_FIELDS = ['name', 'title', 'keyword', 'icon', 'badge', 'description',
-                           'element', 'elements', 'elementPolicy',
+                           'element', 'elements', 'elementPolicy', 'races',
                            'comboAction', 'comboTrigger', 'comboScaling', 'synergy'];
 
 function syncDefaultArchetypeDefinitions() {

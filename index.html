@@ -1176,6 +1176,10 @@
           <select id="trap-filter-select" onchange="filterTrapTrigger(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
             <option value="all">함정 조건 전체</option>
           </select>
+          <!-- 🧬 종족 — 옵션은 deck-builder가 보유 카드에서 채운다 (플레이버 팩 이름 반영) -->
+          <select id="race-filter-select" onchange="filterRace(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">종족 전체</option>
+          </select>
           <select id="deck-filter-select" onchange="filterDeckStatus(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
             <option value="all">덱 여부 전체</option>
             <option value="in">✅ 출전 덱에 있음</option>

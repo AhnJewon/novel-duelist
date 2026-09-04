@@ -1,6 +1,7 @@
 // card-renderer.js - 3D 카드 렌더러 & 스킬 뱃지 컴포넌트
 
 import { ELEMENT_CONFIG, RARITY_STYLE, CARD_TYPES } from './config.js';
+import { RACE_CONFIG, readRaces, describeRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
 import { escapeHtml, escapeJsString } from './dom-utils.js';
 import { STATUS_EFFECTS } from './status-effects.js';
 import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
@@ -175,6 +176,11 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
   const copiesBadge = (showCopies && ownedCopies > 1)
     ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-950/90 text-cyan-200 border border-cyan-500/60" title="보유 ${ownedCopies}장">×${ownedCopies}</span>`
     : '';
+  // 🧬 종족 — 없으면 아무것도 안 그린다. 대부분의 주문·건축물은 종족이 없다 (DECISIONS #106)
+  const cardRaces = readRaces(card);
+  const raceBadge = cardRaces.length > 0
+    ? `<span class="text-sm" title="${escapeHtml(cardRaces.map(r => RACE_CONFIG[r].name).join(' · '))} 종족">${cardRaces.map(r => RACE_CONFIG[r].icon).join('')}</span>`
+    : '';
   const themeLabel = card.themeName || (card.theme && card.theme.name) || null;
 
   // 하단 스탯 바 구성 (카드 타입별 분기)
@@ -230,6 +236,7 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
       </div>
       <div class="flex items-center gap-1 shrink-0">
         ${copiesBadge}
+        ${raceBadge}
         <span class="text-sm" title="${elCfg.name} 속성">${elCfg.icon}</span>
       </div>
     </div>

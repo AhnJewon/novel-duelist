@@ -1,4 +1,5 @@
 // dan-tag-gen.js - Danbooru Tag Generator (DanTagGen) NLP Converter & Expansion Engine
+import { raceImageTags } from './races.js';   // 🧬 종족 태그를 시드 맨 앞에 (DECISIONS #106)
 
 /**
  * 🏷️ 1. 단부루 속성별 핵심 연관(Co-occurrence) 태그 데이터베이스
@@ -388,16 +389,23 @@ export function extractCoreSeedsFromConcept(concept = '', element = 'fire', card
 export function buildVisualPromptFromCard(card = {}, element = 'fire', cardType = 'unit', userConcept = '') {
   const skill = card.skill || (card.skills && card.skills[0]) || {};
 
+  // 🧬 종족 태그를 **시드 맨 앞**에 붙인다. 뒤에 붙이면 확장기가 길이를 맞추며 잘라낸다.
+  //    종족은 "무엇을 그릴 것인가"의 뼈대라 확장 태그보다 우선한다 (DECISIONS #106).
+  //    ⚠️ 최종 **출력** 순서는 확장기가 카테고리별로 다시 잡는다 — 여기서 정하는 건 생존 우선순위다.
+  const raceTags = raceImageTags(card);
+  const withRace = (s) => (raceTags.length > 0 ? raceTags.join(', ') + ', ' + s : s);
+
   // 1순위: LLM이 준 영어 핵심 키워드
   const seeds = card.visualSeeds || card.visualPrompt || '';
   if (seeds && String(seeds).trim().length > 0) {
     // LLM 키워드에 따옴표·설명문이 섞여 와도 확장기가 정규화한다
-    return expandDanbooruTags(String(seeds), element, cardType, 28);
+    return expandDanbooruTags(withRace(String(seeds)), element, cardType, 28);
   }
 
   // 폴백: LLM이 실패했거나 오프라인 -> 한국어 사전으로 최소한의 시드를 뽑는다.
   // 정확도는 떨어지지만 이미지가 아예 안 나오는 것보다는 낫다.
   const koreanParts = [userConcept, card.name, card.title, card.themeName,
                        skill.name, skill.description].filter(Boolean);
-  return extractCoreSeedsFromConcept(koreanParts.join(' '), element, cardType);
+  const fallback = extractCoreSeedsFromConcept(koreanParts.join(' '), element, cardType);
+  return withRace(fallback);
 }

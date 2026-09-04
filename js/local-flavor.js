@@ -130,10 +130,11 @@ async function applyTables(pack) {
   const { registerStatusBadge } = await import('./card-renderer.js');
   const { BOSS_DATA } = await import('./data.js');
   const { STATUS_CYCLES } = await import('./status-cycles.js');
+  const { RACE_CONFIG } = await import('./races.js');   // 🧬 종족 이름·아이콘·이미지 태그 (DECISIONS #106)
   const { state } = await import('./storage.js');
   // 모듈 참조를 잡아 두면 이후 켜고 끄기는 동기로 처리된다 (하네스가 await 없이 감쌀 수 있게)
   _tables = { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge,
-              ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE, BOSS_DATA, STATUS_CYCLES, state,
+              ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE, BOSS_DATA, STATUS_CYCLES, RACE_CONFIG, state,
               orig: { status: {}, label: {}, keyword: {}, badge: {}, generic: [] }, added: [] };
   applyPackToTables();
 }
@@ -211,6 +212,8 @@ function applyPackToTables() {
   overrideTable(_tables.ELEMENT_CONFIG, _pack.elements, orig.generic);
   overrideTable(_tables.CARD_TYPES, _pack.cardTypes, orig.generic);
   overrideTable(_tables.RARITY_STYLE, _pack.rarities, orig.generic);
+  // 🧬 종족은 name·icon에 더해 **tags**(이미지 시드)까지 갈 수 있다 — overrideTable이 필드 단위라 그대로 된다
+  overrideTable(_tables.RACE_CONFIG, _pack.races, orig.generic);
   overrideBosses(_pack, orig.generic);
 
   // 🔄 사이클(기생 → 성장 → 부화)의 수치·토큰 이름. `payoff`는 통째로 갈지 않고 **필드만** 병합한다.

@@ -22,7 +22,7 @@
 import { state } from '/js/storage.js';
 import * as BE from '/js/battle-engine.js';
 import { COMBO_TRIGGERS, COMBO_SCALINGS, COMBO_SCOPES, SCOPE_POWER_MULT,
-         selfView, foeView, HAND_CAP } from '/js/archetype-identity.js';
+         selfView, foeView, HAND_CAP, matchesScope } from '/js/archetype-identity.js';
 import { ARCHETYPE_COMBO_ACTIONS, runArchetypeCombo, belongsToTheme } from '/js/archetype-combos.js';
 import { triggerArchetypeCombo } from '/js/archetype-service.js';
 import { attachPvpSession, detachPvpSession, handleRemoteAction, slimCardForWire } from '/js/pvp-battle.js';
@@ -33,6 +33,8 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
 // ⚠️ 새 API는 **네임스페이스로** 받는다. 이름 import로 받으면 구버전에서 모듈 로드 자체가 죽어
 //    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
 import * as SE from '/js/status-effects.js';
+import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106) — 네임스페이스로 (규칙 114)
+import { buildVisualPromptFromCard } from '/js/dan-tag-gen.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
 import { EXECUTE_MULT } from '/js/battle-rules.js';
 import { withFlavorDisabled } from '/js/local-flavor.js';
@@ -1895,6 +1897,70 @@ async function suiteBossBudget() {
 // 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
 // ============================================================
 // ============================================================
+// 🧬 종족 — 속성과 평행하지만 **강제가 아닌** 축  → DECISIONS #106
+// ============================================================
+function suiteRaces() {
+  const S = '종족';
+
+  // ① 필드가 두 벌로 들어와도 한 곳에서 읽는다 (LLM이 races/race를 섞어 쓴다)
+  check(S, 'races 배열을 읽는다', JSON.stringify(RC.readRaces({ races: ['beast'] })) === '["beast"]');
+  check(S, 'race 단수도 읽는다', JSON.stringify(RC.readRaces({ race: 'demon' })) === '["demon"]');
+  check(S, '없는 종족 키는 버린다', JSON.stringify(RC.readRaces({ races: ['bogus', 'fae'] })) === '["fae"]');
+  check(S, '중복은 하나로', JSON.stringify(RC.readRaces({ races: ['fae', 'fae'] })) === '["fae"]');
+  check(S, `한 카드 상한 ${RC.MAX_RACES_PER_CARD}종`,
+    RC.readRaces({ races: ['human', 'beast', 'undead', 'dragon'] }).length === RC.MAX_RACES_PER_CARD);
+  check(S, '종족 없는 카드가 정상이다 (주문·건축물)', JSON.stringify(RC.readRaces({})) === '[]');
+
+  // ② 정제 — 속성과 달리 **갈아치우지 않는다**. 이게 두 축의 결정적 차이다.
+  const beastTheme = { name: '수인단', races: ['beast'] };
+  const kept = RC.coerceCardRaces(beastTheme, { races: ['dragon'] });
+  check(S, '카드군과 어긋난 종족을 갈아치우지 않는다 (속성과 다른 점)',
+    kept.races[0] === 'dragon' && kept.changed === false, JSON.stringify(kept));
+  const filled = RC.coerceCardRaces(beastTheme, { races: [] });
+  check(S, '비었을 때만 카드군 대표 종족을 채운다',
+    filled.races[0] === 'beast' && filled.changed === true, JSON.stringify(filled));
+  const free = RC.coerceCardRaces({ name: '범용' }, { races: [] });
+  check(S, '카드군이 종족을 안 밝히면 비운 채로 둔다',
+    free.races.length === 0 && free.changed === false, JSON.stringify(free));
+
+  // ③ 연계 범위 — 종족 덱이 성립한다
+  const raceTheme = { id: 't1', name: '수인단', races: ['beast'], comboScope: 'race' };
+  check(S, '같은 종족이면 카드군이 달라도 연계에 기여',
+    matchesScope(card({ themeId: 'other', races: ['beast'] }), raceTheme));
+  check(S, '다른 종족은 기여하지 못한다',
+    !matchesScope(card({ themeId: 'other', races: ['undead'] }), raceTheme));
+  // 🔑 속성 범위와 갈리는 지점: 속성은 모든 카드가 가지지만 종족은 없을 수 있다
+  check(S, '종족 없는 카드는 종족 연계에 기여하지 못한다',
+    !matchesScope(card({ themeId: 'other' }), raceTheme));
+  const multi = { id: 't2', name: '혼합', races: ['beast', 'demon'], comboScope: 'race' };
+  check(S, '다종족 카드군은 어느 쪽이든 받는다',
+    matchesScope(card({ races: ['demon'] }), multi) && matchesScope(card({ races: ['beast'] }), multi));
+  check(S, '범위 위력 감산이 등록돼 있다 (속성 0.8보다 덜 깎인다)',
+    SCOPE_POWER_MULT.race === 0.85 && SCOPE_POWER_MULT.race > SCOPE_POWER_MULT.element,
+    `${SCOPE_POWER_MULT.race}`);
+
+  // ④ 이미지 — 이게 종족을 넣는 가장 큰 이유다
+  const tags = RC.raceImageTags({ races: ['beast'] });
+  check(S, '종족이 이미지 태그를 낸다', tags.length > 0 && tags.includes('animal ears'), JSON.stringify(tags));
+  check(S, '종족 없으면 태그도 없다', RC.raceImageTags({}).length === 0);
+  const prompt = buildVisualPromptFromCard({ visualSeeds: 'crimson knight', races: ['dragon'] }, 'fire', 'unit');
+  // 확장기가 카테고리 순으로 재배열하므로 위치가 아니라 **살아남았는가**를 본다.
+  //    시드 뒤에 붙이면 길이(28) 맞추는 단계에서 잘려 나간다 — 그래서 앞에 넣는다.
+  const raceIn = RC.RACE_CONFIG.dragon.tags.every(t => prompt.includes(t));
+  check(S, '종족 태그가 확장 뒤에도 살아남고 속성 태그보다 앞에 온다',
+    raceIn && prompt.indexOf('dragon horns') < prompt.indexOf('flames'), prompt.slice(0, 90));
+
+  // ⑤ 예산에 영향을 주지 않는다 — 종족은 정체성이지 힘이 아니다 (규칙 1과 같은 정신)
+  const base = { name: '무종족', cardType: 'unit', rarity: 'common', cost: 3, attack: 10, defense: 0, hp: 30, skills: [{}] };
+  const withRace = { ...base, races: ['dragon'] };
+  const a = sanitizeAndClampCardData({ ...base }, 'common');
+  const b = sanitizeAndClampCardData({ ...withRace }, 'common');
+  check(S, '종족은 파워 예산을 먹지 않는다',
+    a.cost === b.cost && a.attack === b.attack && a.hp === b.hp,
+    `무종족 ${a.cost}/${a.attack}/${a.hp} vs 종족 ${b.cost}/${b.attack}/${b.hp}`);
+}
+
+// ============================================================
 // 약화·연쇄 — 빙결(공격력)·부식(방어력)·감전(연쇄)  → DECISIONS #105
 // ============================================================
 function suiteWeakenChain() {
@@ -2815,7 +2881,7 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['사이클', suiteStatusCycles],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['약화·연쇄', suiteWeakenChain], ['종족', suiteRaces], ['사이클', suiteStatusCycles],
     ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]

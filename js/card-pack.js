@@ -10,6 +10,7 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { escapeHtml } from './dom-utils.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
+import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
 import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
@@ -392,6 +393,7 @@ async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardTy
   let skillTargetSide = 'foe';
   let skillTargetScope = 'single';
   let skillTargetCount = 1;
+  let llmRaces = null;           // 🧬 LLM이 고른 종족 (races/race 어느 쪽으로 와도 readRaces가 걸러낸다)
   let llmPassiveRaw = null;      // 🏛️ LLM이 설계한 건축물 패시브 (없으면 폴백)
   let llmVanilla = false;        // 🃏 LLM이 바닐라로 만들겠다고 했는가
   let llmFlavorText = null;      // 🃏 그때 쓸 플레이버 텍스트
@@ -505,6 +507,7 @@ ${archetypeRule}
 - "comboScope" (무엇에 반응하는가) — 이게 덱 컨셉을 결정한다:
   * "archetype" 같은 카드군에만 반응 (위력 100%) — 정체성이 가장 뚜렷한 카드군
   * "element"   같은 속성이면 카드군이 달라도 반응 (위력 80%) — **속성 덱**이 성립
+  * "race"      같은 종족이면 카드군이 달라도 반응 (위력 85%) — **종족 덱**이 성립. 종족 없는 카드는 기여 못 함
   * "cardType"  같은 카드 타입에만 반응 (위력 80%) — **소환수 덱 / 주문 덱 / 함정 덱**이 성립
                 이때 "comboScopeValue"에 unit|spell|structure|trap 중 하나를 지정
   * "any"       아무 아군 카드나 반응 (위력 60%) — **범용 카드 중심 덱**이 성립
@@ -555,7 +558,8 @@ Return ONLY JSON:
   "elements": ["허용 속성 배열, 예: fire 또는 fire,lightning"],
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
-  "comboScope": "archetype|element|cardType|any",
+  "comboScope": "archetype|element|race|cardType|any",
+  "races": ["종족 0~2개(그림에 직접 반영). human|beast|undead|demon|construct|fae|aberration|dragon. 주문·건축물 대부분은 빈 배열"],
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
   "themeComboAction": "search|chainDamage|manaCharge|shieldHeal|freeze|doubleCast|draw|specialSummon|archetypeRally|archetypeSalvage|archetypeGuard|shieldBreak|handDisrupt|sacrificeStrike",
   "themeComboDesc": "TCG 상호 연계 효과 설명",
@@ -653,11 +657,13 @@ Return ONLY JSON:
         name: cardJson.name,
         themeName: cardJson.themeName,
         visualSeeds: cardJson.visualSeeds || cardJson.visualPrompt,
+        races: cardJson.races || cardJson.race,
         skill: { name: cardJson.skillName, description: cardJson.skillDesc }
       }, element, cardType, packThemeName || '');
       if (cardJson.skillName) skillName = cardJson.skillName;
       if (cardJson.skillDesc) skillDesc = cardJson.skillDesc;
       // 🃏 바닐라 — 효과 대신 플레이버 텍스트를 담는 카드
+      if (cardJson.races || cardJson.race) llmRaces = cardJson.races || cardJson.race;
       if (cardJson.isVanilla) llmVanilla = true;
       if (cardJson.flavorText) llmFlavorText = String(cardJson.flavorText);
       if (cardJson.targetSide) skillTargetSide = cardJson.targetSide;
@@ -749,6 +755,12 @@ Return ONLY JSON:
   //   이 경로에는 빠져 있었던 것이 원인이다.
   //
   //   ⚠️ 이미지 생성보다 **먼저** 교정해야 일러스트도 올바른 속성으로 그려진다.
+  // 🧬 종족도 여기서 정제한다 — 이미지 생성보다 **먼저**여야 종족 태그가 일러스트에 실린다.
+  //    (규칙 7과 같은 사정: 생성 경로가 셋이라 한 곳만 걸면 나머지가 샌다)
+  const raceFix = coerceCardRaces(themeObj, { races: llmRaces });
+  const cardRaces = raceFix.races;
+  if (raceFix.changed) console.info('[카드팩] 종족: ' + raceFix.reason);
+
   const elementFix = coerceCardElement(themeObj, element);
   if (elementFix.changed) {
     console.info(`[카드팩] 속성 교정: ${element} → ${elementFix.element} (${elementFix.reason})`);
@@ -884,6 +896,7 @@ Return ONLY JSON:
     name: cardName,
     title: `${rarity.toUpperCase()} ${cardType.toUpperCase()}`,
     element: element,
+    races: cardRaces,
     themeId: themeObj ? themeObj.id : null,
     themeName: themeObj ? themeObj.name : null,
     themeKeyword: themeObj ? themeObj.keyword : null,

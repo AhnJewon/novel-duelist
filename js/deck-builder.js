@@ -8,7 +8,9 @@ import { ELEMENT_CONFIG, CARD_TYPES } from './config.js';
 import { getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
 import { escapeHtml, escapeJsString } from './dom-utils.js';
 import { TRAP_TRIGGERS } from './trap-system.js';
+import { RACE_CONFIG, readRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
 
+let currentRaceFilter = 'all';   // 🧬 종족 필터 (DECISIONS #106)
 let currentElementFilter = 'all';
 let currentTypeFilter = 'all';
 let currentThemeFilter = 'all';
@@ -176,6 +178,10 @@ function renderCollectionSection() {
     filtered = filtered.filter(c => c.element === currentElementFilter);
   }
 
+  if (currentRaceFilter !== 'all') {
+    filtered = filtered.filter(c => readRaces(c).includes(currentRaceFilter));
+  }
+
   if (currentTypeFilter !== 'all') {
     filtered = filtered.filter(c => (c.cardType || 'unit') === currentTypeFilter);
   }
@@ -226,6 +232,22 @@ function renderCollectionSection() {
     trapSelect.value = [...trapSelect.options].some(o => o.value === prev) ? prev : 'all';
     if (trapSelect.value === 'all') currentTrapFilter = 'all';
   }
+  // 🧬 종족 셀렉트도 **보유한 종족만** 채운다. 옵션을 코드가 만들므로 플레이버 팩이
+  //    이름을 바꾸면 필터에도 그대로 반영된다 (index.html에 박아 두면 안 바뀐다).
+  const raceSelect = document.getElementById('race-filter-select');
+  if (raceSelect) {
+    const prev = raceSelect.value || 'all';
+    const present = new Map();
+    state.cardsCollection.forEach(c => readRaces(c).forEach(r => present.set(r, (present.get(r) || 0) + 1)));
+    raceSelect.innerHTML = '<option value="all">종족 전체</option>' +
+      [...present.entries()].map(([r, n]) => {
+        const spec = RACE_CONFIG[r] || { icon: '🧬', name: r };
+        return `<option value="${r}">${spec.icon} ${escapeHtml(spec.name)} (${n})</option>`;
+      }).join('');
+    raceSelect.value = [...raceSelect.options].some(o => o.value === prev) ? prev : 'all';
+    if (raceSelect.value === 'all') currentRaceFilter = 'all';
+  }
+
   const countEl = document.getElementById('grimoire-filter-count');
   if (countEl) countEl.innerText = filtered.length === state.cardsCollection.length ? '' : `${filtered.length} / ${state.cardsCollection.length}장`;
 
@@ -466,15 +488,18 @@ export function filterRarity(v) { currentRarityFilter = v || 'all'; renderGrimoi
 export function filterCost(v) { currentCostFilter = v || 'all'; renderGrimoire(); }
 export function filterEffect(v) { currentEffectFilter = v || 'all'; renderGrimoire(); }
 export function filterTrapTrigger(v) { currentTrapFilter = v || 'all'; renderGrimoire(); }
+export function filterRace(v) { currentRaceFilter = v || 'all'; renderGrimoire(); }
 export function filterDeckStatus(v) { currentDeckFilter = v || 'all'; renderGrimoire(); }
 export function sortCollection(v) { currentSort = v || 'newest'; renderGrimoire(); }
 export function resetGrimoireFilters() {
   currentRarityFilter = currentCostFilter = currentEffectFilter = currentTrapFilter = currentDeckFilter = 'all';
+  currentRaceFilter = 'all';
   currentSort = 'newest';
   currentSearchQuery = '';
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   set('rarity-filter-select', 'all'); set('cost-filter-select', 'all'); set('effect-filter-select', 'all');
   set('trap-filter-select', 'all'); set('deck-filter-select', 'all'); set('sort-select', 'newest'); set('grimoire-search', '');
+  set('race-filter-select', 'all');
   filterType('all');
   filterCollection('all');
   filterTheme('all');

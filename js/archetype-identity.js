@@ -13,6 +13,8 @@
 // 🎨 속성 정책
 // ============================================================
 
+import { readRaces, getAllowedRaces, RACE_CONFIG } from './races.js';   // 🧬 종족 (DECISIONS #106)
+
 /** 서로 상극인 속성 쌍. 단일·이중 카드군은 이 조합을 가질 수 없다. */
 export const ELEMENT_OPPOSITES = {
   fire: 'water',
@@ -301,6 +303,22 @@ export const COMBO_SCOPES = {
       return allowed.includes(card.element);
     }
   },
+  // 🧬 종족 덱 — 속성 덱과 같은 자리다. "수인만 모은 덱"이 성립한다.
+  //    ⚠️ 종족이 **없는** 카드는 기여하지 않는다 (건축물·주문 대부분). 그래서 조건이
+  //       속성보다 조금 더 빡빡하고, 그만큼 위력 감산이 덜하다.
+  race: {
+    label: '같은 종족',
+    desc: '종족만 맞으면 카드군이 달라도 기여한다. 종족 덱이 성립한다. 종족이 없는 카드는 기여하지 못한다.',
+    match: (card, theme) => {
+      if (!card || !theme) return false;
+      const mine = readRaces(card);
+      if (mine.length === 0) return false;
+      const allowed = getAllowedRaces(theme);
+      // 카드군이 종족을 안 밝혔으면 **카드군 대표 종족**이 없으니 아무 종족이나 기여한다
+      if (allowed.length === 0) return true;
+      return mine.some(r => allowed.includes(r));
+    }
+  },
   cardType: {
     label: '같은 카드 타입',
     desc: '소환수/주문/성물/함정 중 하나에만 반응한다. 타입 덱이 성립한다.',
@@ -334,6 +352,7 @@ export function matchesScope(card, theme) {
 export const SCOPE_POWER_MULT = {
   archetype: 1.0,   // 가장 어려운 조건 → 위력 그대로
   element: 0.8,
+  race: 0.85,      // 종족 없는 카드는 기여 못 하므로 속성보다 조금 좁다
   cardType: 0.8,
   any: 0.6          // 아무 카드나 → 위력 크게 감소
 };
