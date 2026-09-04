@@ -7,9 +7,17 @@ import { generateNovelAIImage, getLastImageRequest } from './ai-service.js';
 import { extractCoreSeedsFromConcept } from './dan-tag-gen.js';
 import { expandTagsDetailed } from './tag-slm.js';
 
-// 🃏 카드 일러스트 프레임의 실제 크기 (card-renderer: 일반 카드 205px 폭, 프레임 높이 135px). 크롭 계산의 기준.
-const CARD_FRAME_W = 205;
-const CARD_FRAME_H = 135;
+// 🃏 카드 일러스트 프레임 **안쪽**(img 요소 박스) 크기 — 카드 205px − 좌우 여백 2×10 − 테두리 2×1 = 183, 높이 135 − 2 = 133.
+//    🐛 처음엔 205×135로 잡아 세로가 11% 어긋났다(실측 h 0.244 vs 0.274). 미리보기 카드가 있으면 그 DOM에서 직접 잰다.
+const CARD_FRAME_W = 183;
+const CARD_FRAME_H = 133;
+
+/** 미리보기 카드의 실제 프레임 안쪽 크기 (렌더러가 바뀌어도 계산이 따라간다) */
+function measureFrame() {
+  const frame = document.querySelector('#crop-card-preview-box .card-art-frame');
+  if (frame && frame.clientWidth > 0 && frame.clientHeight > 0) return { fw: frame.clientWidth, fh: frame.clientHeight };
+  return { fw: CARD_FRAME_W, fh: CARD_FRAME_H };
+}
 
 /**
  * 📐 카드 프레임에 실제로 보이는 원본 이미지 영역(원본 대비 0~1 분수).
@@ -231,7 +239,8 @@ export function updateCropPreview() {
     const c = Math.min(cw / iw, ch / ih);                     // contain 배율
     const dw = iw * c, dh = ih * c;                           // 표시된 원본 크기
     const dx = (cw - dw) / 2, dy = (ch - dh) / 2;             // 레터박스 여백
-    const r = visibleRegionOnImage(iw, ih, currentCrop);
+    const { fw, fh } = measureFrame();                         // 미리보기 카드의 실제 프레임 안쪽 크기
+    const r = visibleRegionOnImage(iw, ih, currentCrop, fw, fh);
     // 원본 밖으로 나간 부분(scale < 1의 여백)은 잘라서 그린다
     const x0 = Math.max(0, r.x), y0 = Math.max(0, r.y);
     const x1 = Math.min(1, r.x + r.w), y1 = Math.min(1, r.y + r.h);
@@ -402,7 +411,8 @@ export function initCropperDragEvents() {
     const dw = iw * c, dh = ih * c, dx = (rect.width - dw) / 2, dy = (rect.height - dh) / 2;
     const cx = Math.max(0, Math.min(1, (clickX - dx) / dw));
     const cy = Math.max(0, Math.min(1, (clickY - dy) / dh));
-    const pos = positionForCenter(iw, ih, currentCrop, cx, cy);
+    const { fw, fh } = measureFrame();
+    const pos = positionForCenter(iw, ih, currentCrop, cx, cy, fw, fh);
     currentCrop.x = pos.x;
     currentCrop.y = pos.y;
 
