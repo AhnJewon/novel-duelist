@@ -2075,7 +2075,7 @@ function suiteStatusCycles() {
     `boss=${bornOn} mine=${state.playerMinions.length}`);
   check(S, '부화한 토큰은 소환 후유증을 가진다 (그 턴에 못 때린다)',
     state.bossMinions[0] && state.bossMinions[0].canAttack === false, `${state.bossMinions[0] && state.bossMinions[0].canAttack}`);
-  check(S, '숙주는 뚫고 나온 피해를 입는다 (60 - 성장 지속 5 - 출산 6 = 49)',
+  check(S, '숙주는 뚫고 나온 피해를 입는다 (60 - 성장 지속 5 - 부화 관통 6 = 49)',
     survivor && survivor.currentHp === 49, `${survivor && survivor.currentHp}`);
 
   // ③ 상대 전장이 꽉 차면 **한 턴 기다린다** — 소환이 핵심이라 불발로 날리지 않는다

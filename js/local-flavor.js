@@ -172,7 +172,7 @@ function overrideBosses(pack, orig) {
 /**
  * 팩 내용을 테이블에 적용한다. **원래 값을 먼저 담아 두고** 덮어쓰므로 껐다 켜기를 반복해도 안전하다.
  * 🐛 예전엔 켜기 경로가 이름·라벨만 다시 넣고 **추가 상태이상은 빠뜨려서**, 하네스가 한 번 돌고 나면
- *    수정·임신·발정이 사라졌다 (실측: 하네스 뒤 STATUS_EFFECTS.pregnancy 없음). 적용 경로를 하나로 합쳤다.
+ *    팩이 추가한 상태이상이 통째로 사라졌다 (실측: 하네스 뒤 STATUS_EFFECTS에 팩 항목 없음). 적용 경로를 하나로 합쳤다.
  */
 function applyPackToTables() {
   if (!_tables || !_pack) return;
