@@ -34,6 +34,23 @@ const STATUS_BADGE_TONES = {
   vulnerable: 'bg-purple-950 text-purple-300 border-purple-500'
 };
 
+/**
+ * 🔌 상태이상 뱃지 등록 — 플레이버 팩이 새 상태이상을 넣을 때 쓴다 (DECISIONS #103).
+ * 등록하지 않은 타입은 뱃지가 안 그려질 뿐 게임은 정상 동작한다(호출부가 존재를 확인한다).
+ * @returns 되돌리기용 이전 값 { tone, label } (없었으면 undefined)
+ */
+export function registerStatusBadge(type, tone, labelFn) {
+  const prev = { tone: STATUS_BADGE_TONES[type], label: STATUS_BADGE_LABEL[type] };
+  if (tone === undefined && labelFn === undefined) {
+    delete STATUS_BADGE_TONES[type];
+    delete STATUS_BADGE_LABEL[type];
+  } else {
+    STATUS_BADGE_TONES[type] = tone;
+    STATUS_BADGE_LABEL[type] = labelFn;
+  }
+  return prev;
+}
+
 // 조건 / 표시문구 / 색상만 선언하면 뱃지가 만들어진다.
 const SKILL_BADGE_SPECS = [
   { key: 'spell', tone: 'red', when: s => s.isAoeSpell, label: () => '💥 광역 타격' },

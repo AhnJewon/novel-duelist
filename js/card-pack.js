@@ -16,7 +16,7 @@ import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD
 import { applyLlmDescription } from './card-describe.js';
 import { cardTypeRules } from './card-type-rules.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect } from './card-design-roll.js';
-import { flavorConceptDirective } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
+import { flavorConceptDirective, flavorStatusTypes } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 
 export const PACK_THEMES = {
   fire_dark: {
@@ -587,7 +587,7 @@ Return ONLY JSON:
   "searchDeck": 0-3,
   "summonToken": 0-3,
   "hpTarget": "body|minion",
-  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable", "duration": 1-3, "value": 0-10 },
+  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable${flavorStatusTypes().map(t => '|' + t).join('')}", "duration": 1-3, "value": 0-10 },
   "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
 

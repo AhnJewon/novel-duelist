@@ -4257,8 +4257,10 @@ LLM이 조건을 안 적으면 sanitize 기본값이 foePlaysUnit이고, 적어�
 | `terms` | `describeSkillFromData`가 만든 규칙 텍스트 · 카드 뱃지 · 전투 로그의 낱말 (`flavorRewrite`) |
 | `image.rating` · `image.positive` · `image.negative` | TIPO의 `rating:` 줄, NovelAI 프롬프트/네거티브 |
 | `llm.conceptDirective` | 카드 기획 프롬프트 꼬리 (연성소·카드팩 공용) |
+| `statusEffects` | **새 상태이상**을 `STATUS_EFFECTS`에 등록 (+ `ENTITY_ONLY_STATUSES`·뱃지 테이블) |
+| `archetypes` | 카드군 시드 — `registerNewArchetype`로 보관함 DB에 등록 |
 
-효과 필드·수치·예산·전투 로직은 팩이 건드릴 수 없다. `flavorRewrite`는 **우리가 데이터에서 만든** 문장의 낱말만 바꾼다 —
+효과 필드·수치·예산·전투 로직은 팩이 건드릴 수 없다. 새 상태이상은 예외처럼 보이지만 아니다 — `STATUS_EFFECTS`가 완전히 데이터 주도라(모든 읽는 쪽이 테이블을 순회한다) 항목만 넣으면 지속 피해·증폭·봉쇄·감쇠가 그대로 돌고, 가격은 기존 `statusEffect`(cost 2)로 매겨지므로 밸런스 축은 그대로다. 조합(예: dot + damageTakenMultiplier)은 기본 게임에 없던 것도 만들 수 있다. `flavorRewrite`는 **우리가 데이터에서 만든** 문장의 낱말만 바꾼다 —
 LLM 산문을 정규식으로 수리하는 것이 아니다(규칙 81).
 낱말을 바꾸면 받침이 달라져 조사가 어긋나므로(“15 피해를” → “15 자극를”) `korean-grammar.js`의 `fixParticles`를 태운다(규칙 46).
 
@@ -4276,3 +4278,23 @@ LLM 산문을 정규식으로 수리하는 것이 아니다(규칙 81).
 ### 규칙
 - 팩에 규칙·수치를 넣을 수 있는 필드를 추가하지 마세요. 플레이버는 **표시와 프롬프트**까지다.
 - 표시 문구를 단언하는 검사를 추가하면 하네스가 팩을 끄고 도는지 확인하세요.
+
+### 추가 (#103b) — 팩이 **새 상태이상과 카드군**까지 넣을 수 있게
+
+문구만으로는 부족하다는 요구가 있었다. 확장점을 두 가지 넓혔다.
+
+- **`statusEffects`**: `STATUS_EFFECTS`가 완전히 데이터 주도라(`isBlocked`·`collectDamageOverTime`·`getOnHitBonusDamage`·
+  `getIncomingDamageMultiplier`·`decayStatuses`·`describeStatuses`가 전부 테이블을 순회한다) **항목만 넣으면 엔진 수정 없이
+  돈다.** `dot`+`damageTakenMultiplier`처럼 기본 게임에 없던 조합도 된다. 가격은 기존 `statusEffect`(cost 2)라 예산 축은 그대로.
+  ⚠️ `entityOnly`는 `ENTITY_ONLY_STATUSES`에도 함께 넣어야 가격이 맞는다(규칙 26) — 확장점이 자동으로 처리한다.
+  뱃지는 `card-renderer.registerStatusBadge()`로 등록한다(등록 안 하면 뱃지만 안 그려지고 게임은 정상).
+  프롬프트의 `statusEffect.type` enum도 `flavorStatusTypes()`로 자동으로 넓어진다 — 안 그러면 LLM이 새 타입을 고르지 못한다.
+- **`archetypes`**: `registerNewArchetype`로 시드한다. ⚠️ 카드군은 **유저 데이터**라 팩을 지워도 남는다(카드가 소속돼 있을 수
+  있어 자동 삭제하지 않는다). 정리는 `resetArchetypes()`.
+  실측 함정: 기존 카드군과 이름이 비슷하면 동일성 게이트가 흡수한다("심연의 촉수군" → [심연의 그림자단]). 접두를 피할 것.
+
+🐛 켜기 경로가 이름·라벨만 다시 넣고 **추가 상태이상은 빠뜨려서** 하네스가 한 번 돌면 새 상태이상이 사라졌다.
+   적용 경로를 `applyPackToTables()` 하나로 합쳤다. 실측: 하네스 2연속 424/424, 그 뒤에도 테이블 유지.
+
+실측 (팩 켠 상태): 새 상태이상 3종 등록 → 지속 피해 7·9, 증폭 1.4×1.3=1.82, 피격 보너스 5, 감쇠 정상, 뱃지 렌더,
+전투 엔진에서 실제 틱(임신 9, 로그 "🥚 [시험체] 임신 쾌감 -9"), 프롬프트 enum에 3종 추가, 카드군 4종 등록.

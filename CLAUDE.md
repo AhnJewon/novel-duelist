@@ -564,7 +564,8 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     효과가 없으면 **바닐라**입니다. 팩 상점 이름을 프롬프트의 테마 단서로 쓰지 마세요("차원…" 카드군의 원인).
     → [DECISIONS #102](docs/DECISIONS.md)
 
-109. **로컬 플레이버 팩은 문구와 프롬프트까지만 바꿉니다** (`js/local-flavor.js` 확장점, 팩 파일은 `.gitignore`).
-    규칙·수치·예산을 팩이 건드릴 수 있게 만들지 마세요. `flavorRewrite`는 **우리가 만든** 문장의 낱말만 바꿉니다(규칙 81).
-    표시 문구를 단언하는 검사를 추가하면 하네스가 `withFlavorDisabled`로 도는지 확인하세요.
-    → [DECISIONS #103](docs/DECISIONS.md)
+109. **로컬 플레이버 팩은 표시·프롬프트·데이터 주도 항목까지만 바꿉니다** (`js/local-flavor.js` 확장점, 팩 파일은 `.gitignore`).
+    문구·이미지 프롬프트·기획 지시문에 더해 **새 상태이상**(`STATUS_EFFECTS` 테이블 항목)과 **카드군 시드**를 넣을 수 있습니다 —
+    둘 다 데이터라 엔진 수정이 없고 가격은 기존 예산이 매깁니다. 전투 로직·예산 규칙을 팩이 건드릴 수 있게 만들지 마세요.
+    `flavorRewrite`는 **우리가 만든** 문장의 낱말만 바꿉니다(규칙 81). 표시 문구를 단언하는 검사를 추가하면 하네스가
+    `withFlavorDisabled`로 도는지 확인하세요. → [DECISIONS #103](docs/DECISIONS.md)

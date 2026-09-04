@@ -70,6 +70,15 @@ export function flavorNegativeTags() {
   return [...own, ...ageSafety];
 }
 
+/**
+ * 팩이 추가한 상태이상 타입 이름들 — 카드 기획 프롬프트의 `statusEffect.type` enum을 넓힌다.
+ * 엔진은 STATUS_EFFECTS 테이블을 순회하므로 등록만 하면 그대로 돌지만, LLM은 목록에 없으면 고르지 못한다.
+ */
+export function flavorStatusTypes() {
+  if (!isFlavorActive() || !_pack.statusEffects) return [];
+  return Object.keys(_pack.statusEffects);
+}
+
 /** 카드 기획(LLM) 프롬프트에 붙일 지시문 */
 export function flavorConceptDirective() {
   if (!isFlavorActive() || !_pack.llm) return '';
@@ -104,7 +113,7 @@ export async function loadLocalFlavor() {
 
   _terms = (pack.terms || []).map(([from, to]) => [new RegExp(escapeRe(from), 'g'), to]);
 
-  if (_enabled) await applyTables(pack);
+  if (_enabled) { await applyTables(pack); await seedArchetypes(pack); }
   injectSettingRow(pack, key, state, saveSettingsToStorage);
   console.log(`[Flavor] 로컬 팩 '${pack.label || pack.id}' ${_enabled ? '적용됨' : '대기 중 (설정에서 켜기)'}`);
   return pack;
@@ -116,34 +125,87 @@ export async function loadLocalFlavor() {
  */
 async function applyTables(pack) {
   const { STATUS_EFFECTS } = await import('./status-effects.js');
-  const { EFFECT_COSTS } = await import('./config.js');
+  const { EFFECT_COSTS, ENTITY_ONLY_STATUSES } = await import('./config.js');
   const { KEYWORD_DEFINITIONS } = await import('./keyword-service.js');
-  _tables = { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, orig: { status: {}, label: {}, keyword: {} } };
+  const { registerStatusBadge } = await import('./card-renderer.js');
+  // 모듈 참조를 잡아 두면 이후 켜고 끄기는 동기로 처리된다 (하네스가 await 없이 감쌀 수 있게)
+  _tables = { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge,
+              orig: { status: {}, label: {}, keyword: {}, badge: {} }, added: [] };
+  applyPackToTables();
+}
 
-  for (const [type, name] of Object.entries(pack.statusNames || {})) {
+/**
+ * 팩 내용을 테이블에 적용한다. **원래 값을 먼저 담아 두고** 덮어쓰므로 껐다 켜기를 반복해도 안전하다.
+ * 🐛 예전엔 켜기 경로가 이름·라벨만 다시 넣고 **추가 상태이상은 빠뜨려서**, 하네스가 한 번 돌고 나면
+ *    수정·임신·발정이 사라졌다 (실측: 하네스 뒤 STATUS_EFFECTS.pregnancy 없음). 적용 경로를 하나로 합쳤다.
+ */
+function applyPackToTables() {
+  if (!_tables || !_pack) return;
+  const { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge, orig } = _tables;
+  _tables.added = [];
+
+  // ➕ 팩이 추가하는 **새 상태이상**. STATUS_EFFECTS가 완전히 데이터 주도라(모든 읽는 쪽이 이 테이블을 순회한다)
+  //    항목만 넣으면 지속 피해·증폭·봉쇄·감쇠가 그대로 돈다 — 엔진 수정이 없다 (DECISIONS #103).
+  //    ⚠️ entityOnly는 config의 ENTITY_ONLY_STATUSES에도 함께 넣어야 가격이 맞는다 (규칙 26).
+  for (const [type, spec] of Object.entries(_pack.statusEffects || {})) {
+    if (STATUS_EFFECTS[type]) continue;                     // 기본 상태이상은 덮어쓰지 않는다 (이름은 statusNames로)
+    const { badge, ...def } = spec;
+    STATUS_EFFECTS[type] = def;
+    _tables.added.push(type);
+    if (def.entityOnly) ENTITY_ONLY_STATUSES.add(type);
+    if (badge) orig.badge[type] = registerStatusBadge(type, badge.tone, badge.label);
+  }
+
+  for (const [type, name] of Object.entries(_pack.statusNames || {})) {
     if (!STATUS_EFFECTS[type]) continue;
-    _tables.orig.status[type] = STATUS_EFFECTS[type].name;
+    orig.status[type] = STATUS_EFFECTS[type].name;
     STATUS_EFFECTS[type].name = name;
   }
-  for (const [k, label] of Object.entries(pack.effectLabels || {})) {
+  for (const [k, label] of Object.entries(_pack.effectLabels || {})) {
     if (!EFFECT_COSTS[k]) continue;
-    _tables.orig.label[k] = EFFECT_COSTS[k].label;
+    orig.label[k] = EFFECT_COSTS[k].label;
     EFFECT_COSTS[k].label = label;
   }
-  for (const [k, v] of Object.entries(pack.keywords || {})) {
+  for (const [k, v] of Object.entries(_pack.keywords || {})) {
     if (!KEYWORD_DEFINITIONS[k]) continue;
-    _tables.orig.keyword[k] = { ...KEYWORD_DEFINITIONS[k] };
+    orig.keyword[k] = { ...KEYWORD_DEFINITIONS[k] };
     Object.assign(KEYWORD_DEFINITIONS[k], v);
   }
+}
+
+/**
+ * 팩이 들고 온 카드군을 보관함 카드군 DB에 심는다 (이미 있으면 registerNewArchetype의 동일성 게이트가 흡수한다).
+ *
+ * ⚠️ 카드군은 **유저 데이터**다(IndexedDB). 팩을 지워도 남는다 — 카드가 그 카드군에 소속돼 있을 수 있으므로
+ *    자동으로 지우지 않는다. 정리하려면 콘솔에서 `resetArchetypes()`.
+ */
+async function seedArchetypes(pack) {
+  const list = pack.archetypes || [];
+  if (list.length === 0) return;
+  const { registerNewArchetype } = await import('./archetype-service.js');
+  let added = 0;
+  for (const a of list) {
+    const before = a.id;
+    const reg = await registerNewArchetype(a);
+    if (reg && reg.id === before) added++;
+  }
+  if (added > 0) console.log(`[Flavor] 카드군 ${added}종 등록/확인`);
 }
 
 /** 덮어쓴 이름 테이블을 원래 값으로 되돌린다 */
 function restoreTables() {
   if (!_tables) return;
-  const { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, orig } = _tables;
+  const { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge, orig, added } = _tables;
   for (const [type, name] of Object.entries(orig.status)) STATUS_EFFECTS[type].name = name;
   for (const [k, label] of Object.entries(orig.label)) EFFECT_COSTS[k].label = label;
   for (const [k, v] of Object.entries(orig.keyword)) Object.assign(KEYWORD_DEFINITIONS[k], v);
+  // 팩이 추가한 상태이상은 통째로 걷어낸다 (하네스가 기본 게임을 검증할 수 있게)
+  for (const type of added) {
+    delete STATUS_EFFECTS[type];
+    ENTITY_ONLY_STATUSES.delete(type);
+    const prev = orig.badge[type];
+    registerStatusBadge(type, prev && prev.tone, prev && prev.label);
+  }
 }
 
 /**
@@ -155,9 +217,7 @@ export function setFlavorEnabled(on) {
   const next = !!on;
   if (next === _enabled) return _enabled;
   _enabled = next;
-  if (next) { for (const [type, name] of Object.entries(_pack.statusNames || {})) { if (_tables && _tables.STATUS_EFFECTS[type]) _tables.STATUS_EFFECTS[type].name = name; }
-              for (const [k, label] of Object.entries(_pack.effectLabels || {})) { if (_tables && _tables.EFFECT_COSTS[k]) _tables.EFFECT_COSTS[k].label = label; }
-              for (const [k, v] of Object.entries(_pack.keywords || {})) { if (_tables && _tables.KEYWORD_DEFINITIONS[k]) Object.assign(_tables.KEYWORD_DEFINITIONS[k], v); } }
+  if (next) applyPackToTables();
   else restoreTables();
   return _enabled;
 }

@@ -14,7 +14,7 @@ import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective } from './card-design-roll.js';
-import { flavorConceptDirective } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
+import { flavorConceptDirective, flavorStatusTypes } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 import { getDust, spendDust, dustForExcessPower } from './card-copies.js';
 
 let currentLLMSkillData = null;
@@ -448,7 +448,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "targetCount": 1-3,
     "damageTarget": "body|field|any",
     "statusEffect": {
-      "type": "none|stun|freeze|burn|shock|poison|vulnerable",
+      "type": "none|stun|freeze|burn|shock|poison|vulnerable${flavorStatusTypes().map(t => '|' + t).join('')}",
       "duration": 1-2,
       "value": 0-8
     },
