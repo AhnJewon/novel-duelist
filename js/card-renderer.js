@@ -204,8 +204,9 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
       </div>
     </div>
 
-    <!-- ⬛ 카드 일러스트 프레임 (고정 높이) -->
-    <div class="card-art-frame relative rounded-xl overflow-hidden border border-slate-700/80 bg-black ${isSmall ? 'h-[105px]' : 'h-[135px]'} w-full shadow-inner shrink-0 group/frame">
+    <!-- ⬛ 카드 일러스트 프레임 — 1:1. 🐛 예전엔 135px 고정(약 4:3)이라 카드 세로에 52px가 남아 justify-between이
+         구역 사이를 빈 띠로 벌렸다("이미지와 효과 사이 베젤이 너무 넓다"). 정사각형이면 남는 세로가 거의 0이다 (DECISIONS #101) -->
+    <div class="card-art-frame relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-square w-full shadow-inner shrink-0 group/frame">
       <img class="card-art-img w-full h-full object-cover block pointer-events-none" style="${cropStyle}" src="${card.imageUrl}" alt="${safeName}">
       <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none"></div>
 

@@ -10,7 +10,7 @@ import { expandTagsDetailed } from './tag-slm.js';
 // 🃏 카드 일러스트 프레임 **안쪽**(img 요소 박스) 크기 — 카드 205px − 좌우 여백 2×10 − 테두리 2×1 = 183, 높이 135 − 2 = 133.
 //    🐛 처음엔 205×135로 잡아 세로가 11% 어긋났다(실측 h 0.244 vs 0.274). 미리보기 카드가 있으면 그 DOM에서 직접 잰다.
 const CARD_FRAME_W = 183;
-const CARD_FRAME_H = 133;
+const CARD_FRAME_H = 183;   // 1:1 프레임 (DECISIONS #101)
 
 /** 미리보기 카드의 실제 프레임 안쪽 크기 (렌더러가 바뀌어도 계산이 따라간다) */
 function measureFrame() {
@@ -191,8 +191,15 @@ export function onCropYChange(val) {
 
 export function setCropPreset(preset) {
   if (preset === 'fit') {
-    // 🖼️ 전체 맞춤 (0.85x - 정사각형 일러스트 전체 표시)
-    currentCrop = { scale: 0.85, x: 50, y: 50 };
+    // 🖼️ 전체 맞춤 — 원본 전체가 프레임 안에 들어오는 배율을 **계산**한다 (cover 배율 k 대비 contain 배율).
+    //    정사각형 원본은 1:1 프레임에서 1.0, 세로 원본(832×1216)은 그 비율만큼 축소된다.
+    //    🐛 예전엔 0.85 고정 — 4:3 프레임·정사각형 원본에만 맞는 숫자였다.
+    const img = document.getElementById('crop-full-art-img');
+    const iw = (img && img.naturalWidth) || 1, ih = (img && img.naturalHeight) || 1;
+    const { fw, fh } = measureFrame();
+    const k = Math.max(fw / iw, fh / ih);
+    const fit = Math.min(fw / (iw * k), fh / (ih * k));
+    currentCrop = { scale: Math.max(0.4, Math.round(fit * 100) / 100), x: 50, y: 50 };
   } else if (preset === 'center') {
     // 🌟 1.0x 전체 중앙
     currentCrop = { scale: 1.0, x: 50, y: 50 };
