@@ -56,13 +56,15 @@ window._setPackArchetype = (id) => { setPackArchetype(id); };
 window.addEventListener('DOMContentLoaded', async () => {
   await loadArchetypes();
   await loadInitialData();
-  await loadLocalFlavor();   // 🎭 설정을 읽은 뒤, 화면을 그리기 전에 이름 테이블을 갈아끼운다
   syncReasoningSelects();   // 🧠 추론 모드 선택칸(연성·카드팩·보스)을 저장된 설정으로 — 예전엔 부팅 시 아무 칸도 안 맞췄다 (DECISIONS #96)
   await repairArchetypeRecords();      // 🧰 괄호 키워드·원시 comboAction·지저분한 카드명 정리
   await mergeDuplicateArchetypes();     // 🧹 중복 카드군 병합 (보수 후에 해야 정확)
   await rebalanceExistingCards();       // ⚖️ 등급 예산 초과 카드 재조정
   await ensureArchetypeEmbeddings({ silent: false });  // 🧠 의미 벡터 준비 (모델 없으면 조용히 건너뜀)
   await loadBosses();
+  // 🎭 로컬 플레이버 팩 — 보스 목록까지 **불러온 뒤**, 화면을 그리기 **전에** 이름 테이블을 갈아끼운다.
+  //    🐛 loadBosses보다 먼저 부르면 보스 이름만 원본으로 되돌아온다(저장된 목록이 나중에 덮어쓴다) — DECISIONS #103
+  await loadLocalFlavor();
   initBattle();
   moveArenaTo('pve');    // 전장을 PvE 슬롯에 앉힌다 (PvP 시작 시 온라인 탭으로 옮겨간다)
   updateForgePromptPreview();

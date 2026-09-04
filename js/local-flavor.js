@@ -113,7 +113,7 @@ export async function loadLocalFlavor() {
 
   _terms = (pack.terms || []).map(([from, to]) => [new RegExp(escapeRe(from), 'g'), to]);
 
-  if (_enabled) { await applyTables(pack); await seedArchetypes(pack); }
+  if (_enabled) { await applyTables(pack); await seedArchetypes(pack); sweepStaticUi(pack); }
   injectSettingRow(pack, key, state, saveSettingsToStorage);
   console.log(`[Flavor] 로컬 팩 '${pack.label || pack.id}' ${_enabled ? '적용됨' : '대기 중 (설정에서 켜기)'}`);
   return pack;
@@ -125,13 +125,46 @@ export async function loadLocalFlavor() {
  */
 async function applyTables(pack) {
   const { STATUS_EFFECTS } = await import('./status-effects.js');
-  const { EFFECT_COSTS, ENTITY_ONLY_STATUSES } = await import('./config.js');
+  const { EFFECT_COSTS, ENTITY_ONLY_STATUSES, ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE } = await import('./config.js');
   const { KEYWORD_DEFINITIONS } = await import('./keyword-service.js');
   const { registerStatusBadge } = await import('./card-renderer.js');
+  const { BOSS_DATA } = await import('./data.js');
+  const { state } = await import('./storage.js');
   // 모듈 참조를 잡아 두면 이후 켜고 끄기는 동기로 처리된다 (하네스가 await 없이 감쌀 수 있게)
   _tables = { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge,
-              orig: { status: {}, label: {}, keyword: {}, badge: {} }, added: [] };
+              ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE, BOSS_DATA, state,
+              orig: { status: {}, label: {}, keyword: {}, badge: {}, generic: [] }, added: [] };
   applyPackToTables();
+}
+
+/**
+ * 표 하나의 항목들을 덮어쓰고 **원래 값을 되돌리기 목록에 남긴다**. 필드 단위라 색상·뱃지 클래스는 그대로 둔다.
+ * 속성·카드 타입·등급·보스처럼 "이름과 아이콘만 갈아끼우면 되는" 표에 공통으로 쓴다 (DECISIONS #103).
+ */
+function overrideTable(table, overrides, orig) {
+  for (const [key, fields] of Object.entries(overrides || {})) {
+    const target = table[key];
+    if (!target) continue;
+    for (const [f, v] of Object.entries(fields)) {
+      orig.push({ target, field: f, value: target[f], had: Object.prototype.hasOwnProperty.call(target, f) });
+      target[f] = v;
+    }
+  }
+}
+
+/** 보스는 배열이라 id로 찾는다. 기본 표(BOSS_DATA)와 **메모리의 유저 보스 목록**을 함께 덮어쓴다(저장하지 않는다). */
+function overrideBosses(pack, orig) {
+  const lists = [_tables.BOSS_DATA, _tables.state.bossesList].filter(Array.isArray);
+  for (const [id, fields] of Object.entries(pack.bosses || {})) {
+    for (const list of lists) {
+      const boss = list.find(b => b && (b.id === id || b.name === id));
+      if (!boss) continue;
+      for (const [f, v] of Object.entries(fields)) {
+        orig.push({ target: boss, field: f, value: boss[f], had: Object.prototype.hasOwnProperty.call(boss, f) });
+        boss[f] = v;
+      }
+    }
+  }
 }
 
 /**
@@ -171,6 +204,13 @@ function applyPackToTables() {
     orig.keyword[k] = { ...KEYWORD_DEFINITIONS[k] };
     Object.assign(KEYWORD_DEFINITIONS[k], v);
   }
+
+  // 🌍 속성 · 카드 타입 · 등급 · 보스 — 이름과 아이콘만 갈아끼운다 (색상 클래스는 건드리지 않는다)
+  orig.generic = [];
+  overrideTable(_tables.ELEMENT_CONFIG, _pack.elements, orig.generic);
+  overrideTable(_tables.CARD_TYPES, _pack.cardTypes, orig.generic);
+  overrideTable(_tables.RARITY_STYLE, _pack.rarities, orig.generic);
+  overrideBosses(_pack, orig.generic);
 }
 
 /**
@@ -206,6 +246,11 @@ function restoreTables() {
     const prev = orig.badge[type];
     registerStatusBadge(type, prev && prev.tone, prev && prev.label);
   }
+  // 속성·타입·등급·보스는 기록해 둔 순서의 역순으로 되돌린다
+  for (const e of (orig.generic || []).slice().reverse()) {
+    if (e.had) e.target[e.field] = e.value; else delete e.target[e.field];
+  }
+  orig.generic = [];
 }
 
 /**
@@ -258,6 +303,44 @@ function injectSettingRow(pack, key, state, saveSettings) {
     await saveSettings();
     location.reload();   // 이름 테이블을 되돌리려면 다시 불러오는 편이 확실하다
   });
+}
+
+/**
+ * 🏷️ 화면에 고정으로 박혀 있는 문구(탭 이름·버튼·라벨·안내문)를 팩 사전으로 갈아끼운다.
+ *
+ * index.html의 한국어는 전부 정적 텍스트라 코드가 손댈 자리가 없다. 부팅 때 **텍스트 노드만** 한 번 훑는다 —
+ * 태그·속성·클래스는 건드리지 않으므로 레이아웃이 깨질 일이 없다. 이후 동적으로 그려지는 것들은
+ * 각자의 경로(flavorRewrite·이름 테이블)에서 이미 처리된다.
+ *
+ * `uiTerms`는 UI 전용 사전이다 — 전투 규칙 텍스트에는 쓰이지 않는 낱말(탭 이름 등)을 여기 둔다.
+ */
+function sweepStaticUi(pack) {
+  if (!isFlavorActive()) return;
+  const pairs = [...(pack.uiTerms || []), ...(pack.terms || [])]
+    .map(([from, to]) => [new RegExp(escapeRe(from), 'g'), to]);
+  if (pairs.length === 0) return;
+  const apply = (s) => { let o = s; for (const [re, to] of pairs) o = o.replace(re, to); return o; };
+
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT']);
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement && !SKIP.has(n.parentElement.tagName) && /[가-힣]/.test(n.nodeValue))
+      ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+  });
+  let n, count = 0;
+  while ((n = walker.nextNode())) {
+    const next = apply(n.nodeValue);
+    if (next !== n.nodeValue) { n.nodeValue = next; count++; }
+  }
+  // 입력칸 안내문·툴팁도 함께 (값은 건드리지 않는다)
+  for (const el of document.querySelectorAll('[placeholder], [title]')) {
+    for (const attr of ['placeholder', 'title']) {
+      const v = el.getAttribute(attr);
+      if (!v || !/[가-힣]/.test(v)) continue;
+      const next = apply(v);
+      if (next !== v) { el.setAttribute(attr, next); count++; }
+    }
+  }
+  console.log(`[Flavor] 화면 문구 ${count}곳 교체`);
 }
 
 function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }

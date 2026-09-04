@@ -39,3 +39,6 @@ _archive/antigravity-*/
 
 # 로컬 플레이버 팩 — 각자 로컬에만 둔다 (저장소에는 확장점 js/local-flavor.js만 올라간다)
 js/*.local.js
+
+# 성인 플레이버 팩 — 별도 프라이빗 저장소 (여기에는 절대 올리지 않는다)
+nsfw-pack/
