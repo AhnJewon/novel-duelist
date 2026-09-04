@@ -10,7 +10,7 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { registerNewArchetype, findMatchingArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { escapeHtml } from './dom-utils.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
-import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD, getAllowedRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
 import { isCycleRole, describeCycleRole } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { buildNamingRule, nameMatchesType, fixCardName, conceptTypeHint } from './card-naming.js';
 import { battleRng, seedBattleRng } from './rng.js';
@@ -18,7 +18,7 @@ import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD
 import { applyLlmDescription } from './card-describe.js';
 import { cardTypeRules } from './card-type-rules.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect,
-         rollNewRaceSlot, raceDirective } from './card-design-roll.js';
+         rollNewRaceSlot, raceDirective, rollCardRace } from './card-design-roll.js';
 import { registerNewRace, racesForPrompt } from './race-service.js';   // 🧬 새 종족 등록·게이트 (DECISIONS #108)
 import { flavorConceptDirective, flavorStatusTypes } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 
@@ -291,7 +291,9 @@ export async function openBoosterPack(fastMode = false) {
         // 🎭 효과 성향·🪤 함정 조건은 코드가 슬롯마다 굴린다 — 4B 모델에 맡기면 늘 "적 피해"·"소환수를 낼 때"다 (DECISIONS #102)
         effectRole: rollEffectRole(cardType),
         trapPlan: cardType === 'trap' ? rollTrapTrigger({ element, themeName: theme.name }) : null,
-        packNewRaceSlot: rollNewRaceSlot()   // 🧬 새 종족 슬롯도 코드가 굴린다 (DECISIONS #108)
+        // 🧬 종족과 새 종족 슬롯도 코드가 굴린다 — LLM에게 고르게 하면 거의 전부 인간이다 (DECISIONS #108·#109)
+        packNewRaceSlot: rollNewRaceSlot(),
+        packRolledRace: rollCardRace(cardType, { allowed: getAllowedRaces(theme), customKeys: Object.entries(RACE_CONFIG).filter(([, v]) => v.custom).map(([k]) => k) })
       });
 
     if (progressText) progressText.innerText = `[${i + 1}/5] ✨ [${cardData.rarity.toUpperCase()}] ${cardData.name} 완성!`;
@@ -363,7 +365,7 @@ function fallbackEffectFor(role, rarity, spellDmg) {
 }
 
 async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, cardIndex, packThemeName = 'Fantasy Pack',
-  { newArchetype = false, effectRole = null, trapPlan = null, packNewRaceSlot = false } = {}) {
+  { newArchetype = false, effectRole = null, trapPlan = null, packNewRaceSlot = false, packRolledRace = null } = {}) {
 
   // 🔁 확률적으로 이미 가진 카드를 중복으로 뽑는다 — AI 호출을 건너뛰어 카드깡이 빨라진다
   const packMode = getSelectedPackMode();
@@ -564,7 +566,7 @@ Return ONLY JSON:
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
   "comboScope": "archetype|element|race|cardType|any",
-  "races": ["종족 0~2개(그림에 직접 반영). human|beast|undead|demon|construct|fae|aberration|dragon. 주문·건축물 대부분은 빈 배열"],
+  "races": ["종족 — **시스템이 정해 준다**. 위 🧬 지시문이 준 값을 그대로 쓸 것"],
   "newRace": "새 종족 슬롯일 때만. { key, name, icon, tags[], cycleRole }. 아니면 생략",
   "cycleRole": "비우면 종족 기본값. none|host|vector|both. parasite 계열 statusEffect는 vector·both만 가질 수 있다",
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
@@ -644,7 +646,7 @@ Return ONLY JSON:
 
 🎯 대상 규칙: 범위가 넓을수록 카드가 강해지고 마나도 비싸진다.
    single(1배) < 2체(1.5배) < 3체(2배) < 전체(2.2배), random은 0.8배.
-   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}${raceDirective(racesForPrompt(), packNewRaceSlot)}${flavorConceptDirective()}`;
+   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}${raceDirective(packRolledRace, packRolledRace ? RACE_CONFIG[packRolledRace].name : '', packNewRaceSlot)}${flavorConceptDirective()}`;
 
       const packReasoningSelect = document.getElementById('pack-reasoning-select');
       const packReasoningMode = packReasoningSelect ? packReasoningSelect.value : (state.settings.reasoningMode || 'fast');
@@ -671,6 +673,7 @@ Return ONLY JSON:
       if (cardJson.skillDesc) skillDesc = cardJson.skillDesc;
       // 🃏 바닐라 — 효과 대신 플레이버 텍스트를 담는 카드
       if (cardJson.races || cardJson.race) llmRaces = cardJson.races || cardJson.race;
+      if (packRolledRace) llmRaces = [packRolledRace];   // 🧬 추첨이 LLM 답을 이긴다 (규칙 108)
       if (isCycleRole(cardJson.cycleRole)) llmCycleRole = cardJson.cycleRole;
       // 🧬 새 종족 제안 — 게이트가 흡수하면 기존 키를 돌려준다 (DECISIONS #108)
       if (cardJson.newRace && cardJson.newRace.name) {

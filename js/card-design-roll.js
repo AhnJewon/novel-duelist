@@ -10,6 +10,7 @@
 //    주문·함정은 효과가 전부라 빈손이면 성향에 맞는 **최소 1개**(방어막/드로우/피해)만 굴려 넣는다 — 호출부의 몫.
 
 import { TRAP_TRIGGERS } from './trap-system.js';
+import { RACE_CONFIG } from './races.js';   // 🧬 커스텀 종족 판별용 (races.js는 import 0이라 순환 없음)
 
 /** 효과 성향 — 타입별 가중치. 소환수는 바닐라·방어·유틸을 합쳐 70%로 "소환수 = 몸"이 되게 한다. */
 export const EFFECT_ROLE_WEIGHTS = {
@@ -182,19 +183,74 @@ export function rollNewRaceSlot(rng = Math.random) {
 }
 
 /**
- * 종족 지시문. 슬롯이 아니면 **기존 목록에서 고르라**고만 한다.
- * @param known racesForPrompt()의 결과 ("human(인간) | beast(수인) | …")
+ * 종족 **추첨** — LLM에게 고르게 하지 않는다 (DECISIONS #109).
+ *
+ * 🐛 효과 성향·함정 조건과 **완전히 같은 사정**이다(규칙 108): 4B 모델에게 목록을 주고 고르라고 하면
+ *    거의 전부 human이 나온다. 다양성은 코드가 굴려 만들고, LLM은 그 종족에 맞게 **그리게** 한다.
+ *
+ * 타입별 가중치가 다른 이유: 주문·함정은 개체가 아니라 사건이라 대개 종족이 없고,
+ * 건축물은 있다면 기물이다. 종족이 붙어야 자연스러운 것은 소환수다.
  */
-export function raceDirective(known, isNewSlot) {
-  if (!isNewSlot) {
-    return `\n\n🧬 종족("races")은 아래 목록에서만 고른다 (0~${2}개, 사람·괴물이 아니면 빈 배열):\n  ${known}\n` +
-      `- 목록에 없는 종족을 지어내지 마라. 이 카드는 새 종족을 만드는 슬롯이 아니다.`;
+const RACE_ROLL_WEIGHTS = {
+  unit:      { __none: 6, human: 26, beast: 13, undead: 10, demon: 10, construct: 9, fae: 9, aberration: 9, dragon: 8 },
+  spell:     { __none: 85, human: 5, demon: 4, fae: 3, aberration: 3 },
+  structure: { __none: 55, construct: 35, fae: 5, aberration: 5 },
+  trap:      { __none: 80, aberration: 8, fae: 6, undead: 6 }
+};
+
+/** LLM이 만든 종족에도 추첨 기회를 준다 — 안 그러면 한 번 만들고 다시는 안 쓰인다 */
+const CUSTOM_RACE_WEIGHT = 6;
+
+// 🐛 여기에 **기본 종족**을 넘기면 안 된다. 타입 표가 일부러 뺀 종족(주문에 용족 같은)이
+//    가중치 6으로 되살아나 "주문은 대개 종족이 없다"가 무너진다 (실측: 종족 없음 85% → 68%).
+//    그래서 인자 이름이 customKeys다 — custom:true인 것만 넘기세요.
+
+/**
+ * 이 카드의 종족을 굴린다.
+ * @param opts.allowed 카드군이 선호하는 종족 (있으면 **그 안에서만** 굴린다 — 카드군이 추첨보다 위다)
+ * @param opts.customKeys LLM이 만든 종족 키만 (기본 8종을 넘기면 타입별 가중치가 무너진다)
+ * @returns 종족 키, 또는 null(종족 없음)
+ */
+export function rollCardRace(cardType = 'unit', { allowed = [], customKeys = [], rng = Math.random } = {}) {
+  if (Array.isArray(allowed) && allowed.length > 0) {
+    return allowed[Math.floor(rng() * allowed.length)] || null;
   }
-  return `\n\n🧬 이 카드는 **새 종족을 만드는 슬롯**이다 (시스템이 정했다).\n` +
-    `기존 목록(${known})에 **없는** 종족이 컨셉에 어울리면 "newRace"로 제안하라. 어울리는 게 이미 있으면 그냥 "races"에 그 키를 쓴다.\n` +
-    `  "newRace": { "key": "영문 소문자 3~12자", "name": "한국어 종족명(2~5자)", "icon": "이모지 1개",\n` +
-    `               "tags": ["그 종족을 그림으로 만드는 danbooru 태그 3~5개 — 이게 종족의 정의다"],\n` +
-    `               "cycleRole": "none|host|vector|both" }\n` +
-    `- 그리고 "races"에는 그 key를 넣는다.\n` +
-    `- ⚠️ 태그가 기존 종족과 비슷하면 시스템이 **흡수**한다. 정말 다른 그림일 때만 제안하라.`;
+  const table = { ...(RACE_ROLL_WEIGHTS[cardType] || RACE_ROLL_WEIGHTS.unit) };
+  for (const k of customKeys) {
+    // 🐛 호출부를 믿지 않는다. **기본 종족**이 섞여 들어오면 타입 표가 일부러 뺀 종족이
+    //    가중치 6으로 되살아나 "주문은 대개 종족이 없다"가 무너진다 (실측: 85% → 68%).
+    if (!k || k === '__none' || table[k] !== undefined) continue;
+    if (!RACE_CONFIG[k] || !RACE_CONFIG[k].custom) continue;
+    table[k] = CUSTOM_RACE_WEIGHT;
+  }
+  const total = Object.values(table).reduce((a, b) => a + b, 0);
+  let roll = rng() * total;
+  for (const [k, w] of Object.entries(table)) {
+    roll -= w;
+    if (roll <= 0) return k === '__none' ? null : k;
+  }
+  return null;
+}
+
+/**
+ * 종족 지시문. **고르라고 하지 않는다** — 코드가 정한 종족을 알려주고 그리게 한다 (DECISIONS #109).
+ * @param rolled rollCardRace의 결과 (null이면 종족 없음)
+ * @param label  그 종족의 한국어 이름 (플레이버 팩이 바꾼 이름이 들어온다)
+ */
+export function raceDirective(rolled, label, isNewSlot) {
+  if (isNewSlot) {
+    return `\n\n🧬 이 카드는 **새 종족을 만드는 슬롯**이다 (시스템이 정했다).\n` +
+      `컨셉에 어울리는 종족을 하나 지어 "newRace"로 제안하라.\n` +
+      `  "newRace": { "key": "영문 소문자 3~12자", "name": "한국어 종족명(2~5자)", "icon": "이모지 1개",\n` +
+      `               "tags": ["그 종족을 그림으로 만드는 danbooru 태그 3~5개 — 이게 종족의 정의다"],\n` +
+      `               "cycleRole": "none(기계 등) | host(걸리기만) | vector(걸기만) | both" }\n` +
+      `- ⚠️ 이미 있는 종족과 태그가 비슷하면 시스템이 **흡수**한다. 정말 다른 그림일 때만 제안하라.`;
+  }
+  if (!rolled) {
+    return `\n\n🧬 이 카드는 **종족이 없다** (시스템이 정했다). "races"는 빈 배열로 두고,` +
+      ` 그림도 특정 종족의 생김새가 아니라 사건·사물·현상으로 묘사하라.`;
+  }
+  return `\n\n🧬 이 카드의 종족은 **${label}**("${rolled}")이다 (시스템이 정했다 — 반드시 따를 것).\n` +
+    `- "races": ["${rolled}"] 그대로 쓴다. 다른 종족으로 바꾸지 마라.\n` +
+    `- 이름·서사·그림 묘사(visualSeeds)를 **${label}답게** 짓는다. 종족은 그림에 직접 반영된다.`;
 }

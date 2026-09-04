@@ -143,7 +143,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (490항목):
+전투 로직은 **하네스가 있습니다** (497항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -325,7 +325,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (490항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (497항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -636,3 +636,12 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     `registerNewRace`가 항상 저장하는 바람에 검증을 한 번 돌린 것만으로 테스트 종족이 유저
     데이터에 남았고, 다음 실행이 빨갛게 됐습니다. 쓰기가 있는 API에는 `{ persist: false }` 같은
     문을 두고 하네스가 그걸 쓰게 하세요. → [DECISIONS #108](docs/DECISIONS.md)
+
+123. **종족은 코드가 굴립니다** (`rollCardRace`). LLM에게 고르게 하지 마세요 — 규칙 108과 같은
+    사정으로 거의 전부 `human`이 나옵니다. 우선순위는 **유저 지정 > 카드군 `races` > 추첨**이고,
+    지시문은 "고르라"가 아니라 "이 종족이다"라고 말한 뒤 코드가 응답을 덮어씁니다. 새 종족을
+    만드는 슬롯(#108)만 예외입니다. → [DECISIONS #109](docs/DECISIONS.md)
+
+124. **호출부 규약에 기대지 말고 함수가 스스로 방어하게 하세요.** `rollCardRace`의 `customKeys`에
+    기본 종족이 섞여 들어오자 타입별 가중치가 무너졌습니다(주문의 "종족 없음" 85% → 68%).
+    이제 함수가 `custom` 여부를 직접 확인합니다. → [DECISIONS #109](docs/DECISIONS.md)

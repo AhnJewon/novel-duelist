@@ -7,7 +7,7 @@ import { callOllamaChat, generateNovelAIImage, getLastImageRequest } from './ai-
 import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js';
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
-import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD, getAllowedRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
 import { isCycleRole, describeCycleRole, CYCLE_ROLES } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
 import { escapeHtml } from './dom-utils.js';   // 셀렉트 옵션에 팩 이름이 들어간다 (금지사항 3)
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
@@ -17,7 +17,7 @@ import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective,
-         rollNewRaceSlot, raceDirective } from './card-design-roll.js';
+         rollNewRaceSlot, raceDirective, rollCardRace } from './card-design-roll.js';
 import { registerNewRace, racesForPrompt } from './race-service.js';   // 🧬 새 종족 등록·게이트 (DECISIONS #108)
 import { flavorConceptDirective, flavorStatusTypes } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 import { getDust, spendDust, dustForExcessPower } from './card-copies.js';
@@ -40,6 +40,7 @@ let lastPlanRaw = null;
 // 🎭 이번 기획에 코드가 굴린 효과 성향·함정 조건 (DECISIONS #102). 유저가 효과 설명·함정 조건을 적었으면 null.
 let forgeEffectRole = null;
 let forgeTrapPlan = null;
+let forgeRolledRace = null;   // 🧬 코드가 굴린 종족 — 기획과 저장이 같은 값을 쓴다 (DECISIONS #109)
 
 /** 💎 생성 버튼 옆 가루 소모 안내 — 초과분이 있을 때만 보인다 */
 function renderForgeDustCost() {
@@ -201,11 +202,15 @@ export async function generatePromptWithLLM(isRandom = false) {
   forgeEffectRole = custom.effectDesc ? null : rollEffectRole(targetType);
   forgeTrapPlan = (targetType === 'trap' && !custom.trapTrigger) ? rollTrapTrigger({ element: custom.element || 'fire', themeName: custom.themeName }) : null;
   if (forgeTrapPlan) { custom.trapTrigger = forgeTrapPlan.trapTrigger; custom.trapCondition = forgeTrapPlan.condition ? Object.values(forgeTrapPlan.condition)[0] : null; }
-  // 🧬 유저가 종족을 직접 골랐으면 창작 슬롯을 끈다 — 고른 것은 그대로가 원칙이다 (규칙 105)
+  // 🧬 종족은 **코드가 굴린다** — LLM에게 고르게 하면 거의 전부 인간이 나온다 (규칙 108과 같은 사정, DECISIONS #109).
+  //    유저가 직접 골랐으면 추첨도 창작 슬롯도 건너뛴다 — 고른 것은 그대로가 원칙이다 (규칙 105).
+  const forgeThemeForRace = custom.themeId ? (state.archetypesList || []).find(a => a.id === custom.themeId) : null;
   const newRaceSlot = !custom.race && rollNewRaceSlot();
+  forgeRolledRace = (custom.race || newRaceSlot) ? null
+    : rollCardRace(targetType, { allowed: getAllowedRaces(forgeThemeForRace), customKeys: Object.entries(RACE_CONFIG).filter(([, v]) => v.custom).map(([k]) => k) });
   const customDirective = customOverridesToPrompt(custom) + effectRoleDirective(forgeEffectRole, targetType)
     + trapTriggerDirective(forgeTrapPlan)
-    + (custom.race ? '' : raceDirective(racesForPrompt(), newRaceSlot))
+    + (custom.race ? '' : raceDirective(forgeRolledRace, forgeRolledRace ? RACE_CONFIG[forgeRolledRace].name : '', newRaceSlot))
     + flavorConceptDirective();   // 🎭 로컬 플레이버 팩 (없으면 빈 문자열)
 
   // 🎭 유저가 기존 카드군을 골랐으면 그 카드군의 플레이스타일 가이드를 싣는다.
@@ -441,7 +446,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
   "comboTrigger": "always|archetypePair|lowHp|bossShielded|handRich|lateGame|earlyGame",
   "comboScaling": "flat|perAlly|perTurn|perHand",
   "comboScope": "archetype|element|race|cardType|any",
-  "races": ["종족 0~2개. 이 카드가 무엇인가 — 그림에 직접 반영된다. human|beast|undead|demon|construct|fae|aberration|dragon. 사람·괴물이 아닌 카드(주문·건축물 대부분)는 빈 배열."],
+  "races": ["종족 — **시스템이 정해 준다**. 위 🧬 지시문이 준 값을 그대로 쓸 것. 스스로 고르지 마라"],
   "newRace": "새 종족 슬롯일 때만. { key, name, icon, tags[], cycleRole }. 아니면 생략",
   "cycleRole": "사이클(기생·성장·부화)에서의 역할. 비우면 종족 기본값. none(무관·기계) | host(걸리기만) | vector(걸기만) | both(둘 다). ⚠️ parasite 계열 statusEffect는 vector·both만 가질 수 있다 — 아니면 효과가 떼인다",
   "comboScopeValue": "comboScope가 cardType일 때만: unit|spell|structure|trap",
@@ -1248,6 +1253,11 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
   if (data.newRace && data.newRace.name && !(data.races && data.races.length > 0)) {
     const reg = await registerNewRace(data.newRace);
     if (reg) data.races = [reg.key];
+  }
+  // 🧬 코드가 굴린 종족이 LLM 답을 **이긴다** (규칙 108). 지시문으로만 말하면 4B 모델이 흘린다.
+  //    유저 지정(applyCustomOverrides가 이미 넣었다)과 새 종족 창작은 위에서 처리됐으므로 건드리지 않는다.
+  if (forgeRolledRace && !(data.newRace && data.races && data.races.length > 0)) {
+    data.races = [forgeRolledRace];
   }
   const raceFix = coerceCardRaces(finalTheme, data);
   const finalRaces = raceFix.races;

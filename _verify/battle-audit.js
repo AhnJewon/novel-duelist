@@ -34,6 +34,7 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
 //    fail-first가 "검사 하나가 빨갛다"가 아니라 "하네스가 안 뜬다"가 된다 (실제로 밟았다).
 import * as SE from '/js/status-effects.js';
 import * as RC from '/js/races.js';                       // 🧬 종족 (DECISIONS #106)
+import * as DR from '/js/card-design-roll.js';               // 🎲 설계 추첨 (효과 성향·함정 조건·종족)
 import * as RS from '/js/race-service.js';                // 🧬 종족 등록 게이트 (DECISIONS #108)
 import * as CR from '/js/cycle-roles.js';                  // 🧬 사이클 역할 (DECISIONS #107) — 새 API는 네임스페이스로 (규칙 114)
 import { buildVisualPromptFromCard } from '/js/dan-tag-gen.js';
@@ -2157,6 +2158,37 @@ function suiteRaces() {
   const raceIn = RC.RACE_CONFIG.dragon.tags.every(t => prompt.includes(t));
   check(S, '종족 태그가 확장 뒤에도 살아남고 속성 태그보다 앞에 온다',
     raceIn && prompt.indexOf('dragon horns') < prompt.indexOf('flames'), prompt.slice(0, 90));
+
+  // ④-b 종족은 **코드가 굴린다** — LLM에게 고르게 하면 거의 전부 인간이다 (DECISIONS #109)
+  const roll = (type, opts) => DR.rollCardRace(type, opts);
+  const tally = (type, opts = {}, n = 1200) => {
+    const c = {};
+    for (let i = 0; i < n; i++) { const r = roll(type, opts) || 'none'; c[r] = (c[r] || 0) + 1; }
+    return c;
+  };
+  const unit = tally('unit');
+  check(S, '소환수 추첨은 한 종족에 쏠리지 않는다 (인간 45% 미만, 5종 이상 등장)',
+    unit.human / 1200 < 0.45 && Object.keys(unit).length >= 5,
+    JSON.stringify(unit));
+  const spell = tally('spell');
+  check(S, '주문은 대개 종족이 없다 (70% 이상)', spell.none / 1200 >= 0.7, `none=${spell.none}/1200`);
+  const struct = tally('structure');
+  check(S, '건축물에 종족이 붙으면 대개 기물이다',
+    (struct.construct || 0) > (struct.beast || 0) && (struct.construct || 0) > (struct.human || 0),
+    JSON.stringify(struct));
+  // 🐛 기본 종족을 customKeys로 넘기면 타입 표가 일부러 뺀 종족이 되살아난다 — 실제로 밟았다
+  const spell2 = tally('spell', { customKeys: ['human', 'beast', 'undead', 'demon', 'construct', 'fae', 'aberration', 'dragon'] });
+  check(S, '기본 종족을 customKeys로 넘겨도 타입 가중치가 무너지지 않는다',
+    spell2.none / 1200 >= 0.7, `none=${spell2.none}/1200`);
+  // 카드군이 종족을 밝히면 추첨은 그 안에서만 — 카드군이 추첨보다 위다
+  const themed = tally('unit', { allowed: ['beast', 'dragon'] }, 300);
+  check(S, '카드군이 종족을 밝히면 그 안에서만 굴린다',
+    Object.keys(themed).every(k => k === 'beast' || k === 'dragon'), JSON.stringify(Object.keys(themed)));
+  // 지시문은 "고르라"가 아니라 "이것이다"라고 말해야 한다
+  const d = DR.raceDirective('beast', '수인', false);
+  check(S, '지시문이 종족을 지정한다 (고르라고 하지 않는다)',
+    d.includes('수인') && d.includes('"beast"') && !d.includes('고른다'), d.slice(0, 80));
+  check(S, '종족 없음도 명시적으로 지시한다', DR.raceDirective(null, '', false).includes('종족이 없다'));
 
   // ⑤ 예산에 영향을 주지 않는다 — 종족은 정체성이지 힘이 아니다 (규칙 1과 같은 정신)
   const base = { name: '무종족', cardType: 'unit', rarity: 'common', cost: 3, attack: 10, defense: 0, hp: 30, skills: [{}] };
