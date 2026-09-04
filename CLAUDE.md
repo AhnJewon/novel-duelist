@@ -660,6 +660,8 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     4/4/2/5마나가 나와 첫 턴이 통째로 버려진 적이 있습니다. 1마나 카드를 충분히 두세요.
     → [DECISIONS #110](docs/DECISIONS.md)
 
-128. **기본 카드 정의를 고치면 `STARTER_RULES_VERSION`을 올리고 `STARTER_V1_TEXT`도 갱신하세요.**
-    마이그레이션은 유저의 일러스트를 항상 보존하고, 이름은 **그 판의 기본 문구와 다를 때만** 보존합니다.
-    문구표를 갱신하지 않으면 유저가 붙인 이름을 조용히 지웁니다. → [DECISIONS #110](docs/DECISIONS.md)
+128. **기본 카드 마이그레이션은 판 번호가 아니라 `needsRefresh`(정의와 실제로 다른가)로 판단합니다.**
+    🐛 판 번호만 보면 **어떤 정의로 갈렸는지**를 기록하지 못합니다 — 구버전 data.js가 로드된 채
+    마이그레이션이 돌아 13장이 "완료"로 찍히고, 새 정의로 되돌린 뒤에는 갱신이 건너뛰어졌습니다.
+    유저의 일러스트는 항상 보존하고, 이름은 `STARTER_V1_TEXT`와 다를 때만 보존합니다.
+    → [DECISIONS #110](docs/DECISIONS.md)

@@ -4,8 +4,9 @@ import { DEFAULT_STARTER_CARDS } from './data.js';
 import { ensureCopiesField, loadDust, MAX_CARD_COPIES } from './card-copies.js';
 
 /**
- * 기본 카드 규칙 판. 올리면 저장된 기본 카드가 새 정의로 한 번 갈린다 (DECISIONS #110).
- * ⚠️ 올릴 때는 STARTER_V1_TEXT도 그 판의 문구로 갱신하세요. 안 하면 유저가 붙인 이름을 못 지킵니다 —
+ * 기본 카드 규칙 판. **판단 기준이 아니다** — 언제 갈렸는지 남기는 기록용이다 (DECISIONS #110).
+ * 갱신 여부는 `needsRefresh`가 **정의와 실제로 다른가**로 판단한다 (번호를 올릴 필요가 없다).
+ * ⚠️ STARTER_V1_TEXT는 그 판의 문구로 유지하세요. 안 하면 유저가 붙인 이름을 못 지킵니다 —
  *    v1 문구와 다르면 "유저가 고쳤다"로 보고 남기는 방식이기 때문이다.
  */
 export const STARTER_RULES_VERSION = 2;
@@ -206,10 +207,27 @@ export async function loadInitialData() {
     //   · 이름·영문 제목·플레이버는 크롭 모달에서 고칠 수 있다(#100 ⑦) → **v1 기본값과 다르면** 보존
     // v1 문구 표를 들고 있는 이유가 그것이다. 이게 없으면 유저가 붙인 이름을 조용히 지운다.
     //
-    // `_starterRules` 표식으로 한 번만 돈다 — 유저가 나중에 수치를 손대면 다시 덮지 않는다.
+    // 🐛 판 번호(`_starterRules`)만 보고 건너뛰면 **어떤 정의로 갈렸는지**를 기록하지 않는다.
+    //    실측: 구버전 data.js가 로드된 상태로 마이그레이션이 돌아 카드 13장이 "v2 완료"로 찍혔고,
+    //    새 정의로 되돌린 뒤에는 갱신이 건너뛰어져 종족·코스트가 옛 값에 남았다.
+    //    그래서 번호가 아니라 **정의와 실제로 다른가**를 본다 — 자기 교정되고 판 번호를 올릴 필요가 없다.
+    //    수치·효과는 유저가 고칠 수 없으므로(고칠 수 있는 건 이름·플레이버·일러스트뿐 — #100 ⑦)
+    //    다르면 곧 "정의가 바뀌었다"는 뜻이다.
+    const RULE_FIELDS = ['cardType', 'cost', 'attack', 'defense', 'hp', 'rarity', 'element'];
+    const needsRefresh = (card, def) => {
+      for (const k of RULE_FIELDS) if (JSON.stringify(card[k]) !== JSON.stringify(def[k])) return true;
+      if (JSON.stringify(card.races || []) !== JSON.stringify(def.races || [])) return true;
+      const a = (card.skills && card.skills[0]) || {};
+      const b = (def.skills && def.skills[0]) || {};
+      for (const k of Object.keys(b)) {
+        if (k === 'description' || k === 'name' || k === 'flavorText') continue;   // 문구는 유저 몫
+        if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) return true;
+      }
+      return false;
+    };
     loadedCards.forEach(card => {
       const def = DEFAULT_STARTER_CARDS.find(s => s.id === card.id);
-      if (!def || card._starterRules >= STARTER_RULES_VERSION) return;
+      if (!def || !needsRefresh(card, def)) return;
       const v1 = STARTER_V1_TEXT[card.id];
       const keptName = (v1 && card.name && card.name !== v1.name) ? card.name : def.name;
       const keptTitle = (v1 && card.title && card.title !== v1.title) ? card.title : def.title;
