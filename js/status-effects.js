@@ -40,6 +40,19 @@ export const STATUS_EFFECTS = {
   vulnerable: {
     name: '취약', icon: '💥', color: 'text-purple-300',
     damageTakenMultiplier: 1.5
+  },
+
+  // 🔄 사이클 상태이상 — 소멸할 때 **다음 단계로 넘어가거나 보상을 낸다** (status-cycles.js).
+  //    기생 → 성장 → 부화(토큰). 단계 자체는 평범한 상태이상이라 지속 피해·증폭·뱃지가 기존 기계로 돈다.
+  //    지속 피해가 있으므로 다른 DoT와 같이 **소환수 전용**이다 (본체 DoT는 대응 수단이 없다).
+  parasite: {
+    name: '기생', icon: '🦠', color: 'text-lime-300',
+    defaultValue: 3, dot: true, ignoresShield: false, entityOnly: true
+  },
+  gestation: {
+    name: '성장', icon: '🌱', color: 'text-emerald-300',
+    defaultValue: 5, dot: true, ignoresShield: false, entityOnly: true,
+    damageTakenMultiplier: 1.25
   }
 };
 

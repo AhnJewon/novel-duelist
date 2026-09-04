@@ -587,7 +587,7 @@ Return ONLY JSON:
   "searchDeck": 0-3,
   "summonToken": 0-3,
   "hpTarget": "body|minion",
-  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable${flavorStatusTypes().map(t => '|' + t).join('')}", "duration": 1-3, "value": 0-10 },
+  "statusEffect": { "type": "none|stun|freeze|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}", "duration": 1-3, "value": 0-10 },
   "passiveEffect": "건축물(structure)일 때만. 아래 🏛️ 규칙 참고. 다른 타입이면 null"
 }
 

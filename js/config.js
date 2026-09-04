@@ -273,7 +273,8 @@ export function scaledEffectCost(key, baseCost, skill) {
   // 💫 소환수 전용 상태이상을 본체에 걸겠다고 산 경우 할증.
   //    봉쇄(기절·빙결)는 bodyStatus로도 본체에 걸리지 않으므로 할증도 없다 — 값을 못 받는 걸 팔지 않는다.
   if (key === 'statusEffect' && skill.bodyStatus && skill.statusEffect
-      && ENTITY_ONLY_STATUSES.has(skill.statusEffect.type) && !BLOCKING_STATUSES.has(skill.statusEffect.type)) {
+      && ENTITY_ONLY_STATUSES.has(skill.statusEffect.type) && !BLOCKING_STATUSES.has(skill.statusEffect.type)
+      && !BODY_BLOCKED_STATUSES.has(skill.statusEffect.type)) {
     cost *= BODY_STATUS_COST_MULT;
   }
   return cost;
@@ -291,7 +292,14 @@ export const BLOCKING_STATUSES = new Set(['stun', 'freeze']);
  *    config.js가 status-effects.js를 import하면 순환이 생기므로 여기에 복제했다.
  *    한쪽만 고치면 예산과 실제 동작이 어긋난다.
  */
-export const ENTITY_ONLY_STATUSES = new Set(['stun', 'freeze', 'burn', 'poison']);
+export const ENTITY_ONLY_STATUSES = new Set(['stun', 'freeze', 'burn', 'poison', 'parasite', 'gestation']);
+
+/**
+ * bodyStatus 옵트인으로도 **본체에 걸 수 없는** 지속 피해 계열 — 사이클(기생·성장).
+ * 단계 진행·부화는 소환수를 순회하며 처리하므로 본체에 걸면 조용히 무효가 된다 (DECISIONS #104).
+ * ⚠️ status-cycles.js의 STATUS_CYCLES 키와 같아야 한다 (순환 import를 피해 복제한 목록 — 규칙 26과 같은 사정).
+ */
+export const BODY_BLOCKED_STATUSES = new Set(['parasite', 'gestation']);
 
 // 스킬 객체에서 실제로 켜져 있는 효과 목록을 뽑는다
 function listActiveEffects(skill = {}) {
@@ -615,7 +623,9 @@ export function enforcePowerBudget(cardData, skill) {
   if (skill.statusEffect) out.statusEffect = { ...skill.statusEffect };
   // 🚫 봉쇄(기절·빙결)는 bodyStatus로도 본체에 걸리지 않는다 (DECISIONS #94).
   //    카드가 그 약속을 들고 있으면 지운다 — 할증도, 설명문의 "본체"도 함께 사라진다. 멱등하다.
-  if (out.bodyStatus && out.statusEffect && BLOCKING_STATUSES.has(out.statusEffect.type)) delete out.bodyStatus;
+  //    사이클(기생·성장)도 본체에 못 걸리므로 bodyStatus 할증을 받지 않는다 (DECISIONS #104)
+  if (out.bodyStatus && out.statusEffect
+      && (BLOCKING_STATUSES.has(out.statusEffect.type) || BODY_BLOCKED_STATUSES.has(out.statusEffect.type))) delete out.bodyStatus;
   if (skill.passiveEffect) {
     out.passiveEffect = { ...skill.passiveEffect };
     if (skill.passiveEffect.aura) out.passiveEffect.aura = { ...skill.passiveEffect.aura };

@@ -140,7 +140,7 @@
 
 테스트 프레임워크가 없습니다. 브라우저 콘솔에서 확인하세요.
 
-전투 로직은 **하네스가 있습니다** (424항목):
+전투 로직은 **하네스가 있습니다** (432항목):
 
 ```js
 const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
@@ -322,7 +322,7 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 55. **`export { x } from '...'`는 지역 바인딩을 만들지 않습니다.** 그 파일 안에서도
     쓰려면 `import`를 따로 하세요. → [DECISIONS #83](docs/DECISIONS.md)
 
-56. **전투 코드를 고쳤으면 하네스를 돌리세요** (424항목, 약 5초):
+56. **전투 코드를 고쳤으면 하네스를 돌리세요** (432항목, 약 5초):
     ```js
     const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runAll();
     ```
@@ -569,3 +569,9 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     둘 다 데이터라 엔진 수정이 없고 가격은 기존 예산이 매깁니다. 전투 로직·예산 규칙을 팩이 건드릴 수 있게 만들지 마세요.
     `flavorRewrite`는 **우리가 만든** 문장의 낱말만 바꿉니다(규칙 81). 표시 문구를 단언하는 검사를 추가하면 하네스가
     `withFlavorDisabled`로 도는지 확인하세요. → [DECISIONS #103](docs/DECISIONS.md)
+
+110. **사이클 상태이상은 소환수 전용입니다** (`js/status-cycles.js`: 기생 → 성장 → 부화). 단계 진행과 부화는
+    소환수를 순회하며 처리하므로 본체에 걸리면 조용히 무효가 됩니다 — `BODY_BLOCKED_STATUSES`가 `bodyStatus`
+    옵트인에서도 막습니다. 보상 토큰은 **디버프를 건 쪽**에 서고, 자리가 없으면 한 턴 기다린 뒤 파열 피해로
+    전환합니다(불발로 날리지 않습니다). 숙주가 죽으면 사이클이 사라지는 것은 **상대의 대응 수단**이니 고치지
+    마세요. → [DECISIONS #104](docs/DECISIONS.md)

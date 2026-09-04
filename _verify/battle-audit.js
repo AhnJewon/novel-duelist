@@ -1882,6 +1882,71 @@ async function suiteBossBudget() {
 }
 
 // ============================================================
+// 9j. 사이클 상태이상 — 기생 → 성장 → 부화 (DECISIONS #104)
+// ------------------------------------------------------------
+// 단계가 **소멸할 때** 다음 단계로 넘어가거나 보상(토큰)을 낸다. 토큰은 디버프를 건 쪽(숙주의 반대편)에 선다.
+// ============================================================
+function suiteStatusCycles() {
+  const S = '사이클';
+  const host = (over = {}) => minion({ name: '숙주', currentHp: 60, maxHp: 60, defense: 0, ...over });
+
+  // ① 기생이 소멸하면 성장으로 넘어간다 (사라지지 않는다)
+  resetBoard({ playerMinions: [host()], bossMinions: [] });
+  applyStatus(state.playerMinions[0].statuses, 'parasite', 1, 3);
+  BE.__test.startTurn('player');
+  const st1 = state.playerMinions[0] && state.playerMinions[0].statuses;
+  check(S, '기생 소멸 → 성장 단계로 진행 (예전: 그냥 사라짐)',
+    !!(st1 && st1.gestation && st1.gestation.turns > 0) && !st1.parasite,
+    `statuses=${JSON.stringify(st1)}`);
+
+  // ② 성장이 소멸하면 **상대(디버프를 건 쪽)** 전장에 토큰이 서고 숙주가 피해를 입는다
+  resetBoard({ playerMinions: [host()], bossMinions: [] });
+  applyStatus(state.playerMinions[0].statuses, 'gestation', 1, 5);
+  BE.__test.startTurn('player');
+  const bornOn = state.bossMinions.length;
+  const survivor = state.playerMinions[0];
+  check(S, '성장 소멸 → 디버프를 건 쪽(상대) 전장에 토큰 부화 · 내 전장엔 안 생긴다',
+    bornOn === 1 && state.playerMinions.length === 1 && state.bossMinions[0].isToken === true,
+    `boss=${bornOn} mine=${state.playerMinions.length}`);
+  check(S, '부화한 토큰은 소환 후유증을 가진다 (그 턴에 못 때린다)',
+    state.bossMinions[0] && state.bossMinions[0].canAttack === false, `${state.bossMinions[0] && state.bossMinions[0].canAttack}`);
+  check(S, '숙주는 뚫고 나온 피해를 입는다 (60 - 성장 지속 5 - 출산 6 = 49)',
+    survivor && survivor.currentHp === 49, `${survivor && survivor.currentHp}`);
+
+  // ③ 상대 전장이 꽉 차면 **한 턴 기다린다** — 소환이 핵심이라 불발로 날리지 않는다
+  resetBoard({ playerMinions: [host()], bossMinions: [minion(), minion(), minion(), minion()] });
+  applyStatus(state.playerMinions[0].statuses, 'gestation', 1, 5);
+  BE.__test.startTurn('player');
+  const held = state.playerMinions[0] && state.playerMinions[0].statuses.gestation;
+  check(S, '자리가 없으면 성장이 한 턴 미뤄진다 (토큰 없음, 단계 유지)',
+    state.bossMinions.length === 4 && !!(held && held.turns > 0),
+    `boss=${state.bossMinions.length} held=${JSON.stringify(held)}`);
+
+  // ④ 기다린 뒤에도 자리가 없으면 숙주 안에서 터진다 (불발이 아니라 피해로 전환)
+  const hpBeforeBurst = state.playerMinions[0].currentHp;
+  BE.__test.startTurn('player');
+  const after = state.playerMinions[0];
+  check(S, '계속 자리가 없으면 안에서 터져 숙주가 피해 (성장 지속 5 + 파열 10)',
+    !!after && after.currentHp === hpBeforeBurst - 15 && !after.statuses.gestation && state.bossMinions.length === 4,
+    `hp ${hpBeforeBurst}→${after && after.currentHp} st=${JSON.stringify(after && after.statuses)}`);
+
+  // ⑤ 숙주가 도중에 죽으면 부화하지 않는다 — 이게 상대의 대응 수단이다
+  resetBoard({ playerMinions: [host({ currentHp: 4 })], bossMinions: [] });
+  applyStatus(state.playerMinions[0].statuses, 'gestation', 1, 5);
+  BE.__test.startTurn('player');
+  check(S, '숙주가 지속 피해로 죽으면 부화하지 않는다 (상대의 대응 수단)',
+    state.playerMinions.length === 0 && state.bossMinions.length === 0,
+    `mine=${state.playerMinions.length} boss=${state.bossMinions.length}`);
+
+  // ⑥ 사이클 상태이상은 지속 피해가 있으므로 **본체에 걸리지 않는다** (다른 DoT와 같은 규칙)
+  resetBoard({ playerMinions: [minion({ name: '최전방' })], bossMinions: [] });
+  BE.__test.helpers('boss').setFoeStatus('parasite', 2, 3, true);   // allowBody=true여도 본체엔 안 걸린다
+  check(S, '기생은 본체에 걸리지 않고 최전방 소환수로 간다 (allowBody여도)',
+    !BE.__test.statuses().player.parasite && !!state.playerMinions[0].statuses.parasite,
+    `body=${JSON.stringify(BE.__test.statuses().player)} front=${JSON.stringify(state.playerMinions[0].statuses)}`);
+}
+
+// ============================================================
 // 10. 보스 턴
 // ============================================================
 async function suiteBossTurn() {
@@ -2651,7 +2716,8 @@ async function runAllSuites() {
     ['건축물', suiteStructures], ['시전 규칙', suitePlayRules],
     ['시전 통합', suitePlayCard], ['진영 대칭', suiteSides], ['본체 피해', suiteFaceDamage],
     ['공격 대칭', suiteAttackSymmetry], ['전투 반격', suiteRetaliation], ['시전 대칭', suiteCastSymmetry], ['봇 컨트롤러', suiteBotController],
-    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
+    ['대전 초기화', suitePvpInit], ['보스 카드 예산', suiteBossBudget], ['사이클', suiteStatusCycles],
+    ['보스 턴', suiteBossTurn], ['턴 사이클', suiteTurnCycle],
     ['PvP 거울', suitePvpMirror], ['함정 통합', suiteTrapIntegration],
     ['키워드 표시', suiteKeywordDisplay], ['음성 통제', suiteNegativeControl]
   ];

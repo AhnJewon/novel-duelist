@@ -129,10 +129,11 @@ async function applyTables(pack) {
   const { KEYWORD_DEFINITIONS } = await import('./keyword-service.js');
   const { registerStatusBadge } = await import('./card-renderer.js');
   const { BOSS_DATA } = await import('./data.js');
+  const { STATUS_CYCLES } = await import('./status-cycles.js');
   const { state } = await import('./storage.js');
   // 모듈 참조를 잡아 두면 이후 켜고 끄기는 동기로 처리된다 (하네스가 await 없이 감쌀 수 있게)
   _tables = { STATUS_EFFECTS, EFFECT_COSTS, KEYWORD_DEFINITIONS, ENTITY_ONLY_STATUSES, registerStatusBadge,
-              ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE, BOSS_DATA, state,
+              ELEMENT_CONFIG, CARD_TYPES, RARITY_STYLE, BOSS_DATA, STATUS_CYCLES, state,
               orig: { status: {}, label: {}, keyword: {}, badge: {}, generic: [] }, added: [] };
   applyPackToTables();
 }
@@ -211,6 +212,23 @@ function applyPackToTables() {
   overrideTable(_tables.CARD_TYPES, _pack.cardTypes, orig.generic);
   overrideTable(_tables.RARITY_STYLE, _pack.rarities, orig.generic);
   overrideBosses(_pack, orig.generic);
+
+  // 🔄 사이클(기생 → 성장 → 부화)의 수치·토큰 이름. `payoff`는 통째로 갈지 않고 **필드만** 병합한다.
+  for (const [type, over] of Object.entries(_pack.cycles || {})) {
+    const cyc = _tables.STATUS_CYCLES[type];
+    if (!cyc) continue;
+    for (const [f, v] of Object.entries(over)) {
+      if (f === 'payoff' && cyc.payoff && v && typeof v === 'object') {
+        for (const [pf, pv] of Object.entries(v)) {
+          orig.generic.push({ target: cyc.payoff, field: pf, value: cyc.payoff[pf], had: Object.prototype.hasOwnProperty.call(cyc.payoff, pf) });
+          cyc.payoff[pf] = pv;
+        }
+      } else {
+        orig.generic.push({ target: cyc, field: f, value: cyc[f], had: Object.prototype.hasOwnProperty.call(cyc, f) });
+        cyc[f] = v;
+      }
+    }
+  }
 }
 
 /**

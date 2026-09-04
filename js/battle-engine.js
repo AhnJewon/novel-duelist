@@ -16,6 +16,7 @@ import {
   collectDamageOverTime, decayStatuses,
   getIncomingDamageMultiplier, getOnHitBonusDamage, describeStatuses
 } from './status-effects.js';
+import { isCycleStatus, resolveCycleExpiry } from './status-cycles.js';   // 🔄 기생 → 성장 → 부화 (DECISIONS #104)
 import {
   applyPlayerSkillEffects, selectFrontTarget,
   damageEntity, removeDead, describeDamageExtras
@@ -1598,7 +1599,7 @@ export function describeActiveAuras(side = sides.player) {
 // ⚠️ 소모(consume)는 **여기 한 곳에서만** 한다. combat-side의 refreshMinions는
 //    `m.blockedBy` 결과만 읽는다. 두 곳에서 소모하면 이중 차감이 된다.
 // ============================================================
-export function tickMinionStatuses(minions, label = '아군') {
+export function tickMinionStatuses(minions, label = '아군', foeMinions = null) {
   if (!Array.isArray(minions)) return;
   // 역순 순회 — 지속 피해로 죽은 소환수를 제거하면서 인덱스가 밀리지 않는다
   for (let i = minions.length - 1; i >= 0; i--) {
@@ -1626,7 +1627,29 @@ export function tickMinionStatuses(minions, label = '아군') {
       addBattleLog(`<span class="${blocked.spec.color} font-bold">${blocked.spec.icon} [${escapeHtml(m.name)}]이(가) ${blocked.spec.name} 상태로 이번 턴 행동하지 못합니다!</span>`);
     } else {
       // ⚠️ 봉쇄를 소모한 턴에는 감쇠를 **또** 하지 않는다
-      decayStatuses(m.statuses);
+      const expired = decayStatuses(m.statuses);
+
+      // 🔄 사이클 단계가 끝났으면 다음 단계로 넘기거나 보상(부화)을 낸다.
+      //    보상 토큰은 **디버프를 건 쪽**(숙주의 반대편) 전장에 선다 — 이유는 status-cycles.js 주석.
+      //    숙주가 이미 죽었다면 여기까지 오지 않는다(위에서 splice) — 그게 상대의 대응 수단이다.
+      for (const e of expired) {
+        if (!isCycleStatus(e.type)) continue;
+        resolveCycleExpiry(e.type, {
+          host: m,
+          hostLabel: escapeHtml(m.name),
+          foeMinions,
+          turnCount: state.turnCount,
+          statusName: (t) => (STATUS_EFFECTS[t] && STATUS_EFFECTS[t].name) || t,
+          log: addBattleLog,
+          damageHost: (n) => { if (n > 0) m.currentHp -= n; }
+        });
+      }
+      // 부화로 숙주가 쓰러졌을 수 있다
+      if (m.currentHp <= 0) {
+        addBattleLog(`<span class="text-red-500">💀 [${escapeHtml(m.name)}] 쓰러졌습니다!</span>`);
+        minions.splice(i, 1);
+        continue;
+      }
     }
   }
 }
@@ -1649,7 +1672,9 @@ function applyStatusRespectingScope(statuses, minions, sideLabel, type, turns, v
   //    한 턴을 통째로 빼앗기는 건 게임이 아니라 벌칙이고, 양 진영 같은 규칙이어야 한다.
   //    🐛 예전엔 보스 본체만 기절할 수 있었다(플레이어가 템포를 사는 수단) — 비대칭 → DECISIONS #94
   //    지속 피해(화상·맹독)는 bodyStatus 할증을 치르면 본체에 걸 수 있다. 그건 이미 대칭이다.
-  const bodyOk = !isEntityOnly(type) || (allowBody && !(spec && spec.blocksTurn));
+  // 🚫 사이클(기생·성장)도 본체에 걸리지 않는다 — 단계 진행과 부화는 **소환수를 순회하며** 처리하므로
+  //    본체에 걸리면 감쇠만 되고 조용히 아무 일도 일어나지 않는다 (실측: bodyStatus로 본체에 붙었다) → DECISIONS #104
+  const bodyOk = !isEntityOnly(type) || (allowBody && !(spec && spec.blocksTurn) && !isCycleStatus(type));
   if (bodyOk) {
     return applyStatus(statuses, type, turns, value);
   }
@@ -1858,7 +1883,8 @@ export function startTurn(side) {
 
   // 💫 소환수 상태이상 처리 (지속 피해 → 봉쇄 소모 → 감쇠)
   //    ⚠️ refreshMinions **앞에** 와야 한다. refreshMinions는 여기서 세운 `m.blockedBy`를 읽는다.
-  tickMinionStatuses(side.minions, side.key === SIDE_PLAYER ? '내' : '상대');
+  //    🔄 사이클 보상 토큰은 상대(=디버프를 건 쪽) 전장에 서므로 그 배열도 함께 넘긴다
+  tickMinionStatuses(side.minions, side.key === SIDE_PLAYER ? '내' : '상대', sides[opponentOf(side.key)].minions);
   refreshMinions(side);
 
   // 🏛️ 건축물 턴 시작 패시브 (마나 공급 등) — 상대 건축물도 일한다

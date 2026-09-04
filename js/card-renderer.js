@@ -31,7 +31,9 @@ const STATUS_BADGE_TONES = {
   burn: 'bg-orange-950 text-orange-300 border-orange-500',
   shock: 'bg-amber-950 text-amber-200 border-amber-400',
   poison: 'bg-emerald-950 text-emerald-300 border-emerald-500',
-  vulnerable: 'bg-purple-950 text-purple-300 border-purple-500'
+  vulnerable: 'bg-purple-950 text-purple-300 border-purple-500',
+  parasite: 'bg-lime-950 text-lime-300 border-lime-500',
+  gestation: 'bg-emerald-950 text-emerald-200 border-emerald-400'
 };
 
 /**
@@ -81,7 +83,10 @@ const STATUS_BADGE_LABEL = {
   burn: st => `🔥 화상 ${st.value || STATUS_EFFECTS.burn.defaultValue}`,
   shock: () => '⚡ 감전',
   poison: st => `☣️ 맹독 ${st.value || STATUS_EFFECTS.poison.defaultValue}`,
-  vulnerable: () => '💥 받피증 +50%'
+  vulnerable: () => '💥 받피증 +50%',
+  // 🔄 사이클 — 남은 턴을 보여 줘야 언제 부화하는지 읽을 수 있다
+  parasite: st => `🦠 기생 ${st.value || 3}`,
+  gestation: st => `🌱 성장 ${st.value || 5}`
 };
 
 function badgeHtml(keywordKey, toneCls, text) {

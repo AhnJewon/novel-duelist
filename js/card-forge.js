@@ -448,7 +448,7 @@ OUTPUT SCHEMA (Return ONLY valid raw JSON):
     "targetCount": 1-3,
     "damageTarget": "body|field|any",
     "statusEffect": {
-      "type": "none|stun|freeze|burn|shock|poison|vulnerable${flavorStatusTypes().map(t => '|' + t).join('')}",
+      "type": "none|stun|freeze|burn|shock|poison|vulnerable|parasite${flavorStatusTypes().map(t => '|' + t).join('')}",
       "duration": 1-2,
       "value": 0-8
     },
