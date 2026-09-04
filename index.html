@@ -609,6 +609,19 @@
                 <option value="nature">🌿 자연 (Nature)</option>
               </select>
             </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">🧬 종족</label>
+              <!-- 옵션은 card-forge가 RACE_CONFIG에서 채운다 (플레이버 팩 이름 반영) -->
+              <select id="forge-race" onchange="updateForgePromptPreview()" class="w-full bg-[#191d33] border border-brand-border text-white text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="" selected>🎲 AI 결정</option>
+              </select>
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-bold text-slate-300">🥚 사이클 역할</label>
+              <select id="forge-cycle-role" onchange="updateForgePromptPreview()" class="w-full bg-[#191d33] border border-brand-border text-white text-xs font-bold rounded-xl px-3 py-2.5 outline-none cursor-pointer">
+                <option value="" selected>🎲 종족 기본값</option>
+              </select>
+            </div>
             <!-- 🎛️ 세부 커스터마이즈 (비워두면 LLM이 알아서 정한다) -->
             <details class="mt-3 rounded-xl border border-slate-700 bg-[#12162a]">
               <summary class="cursor-pointer px-3 py-2 text-xs font-bold text-slate-300 hover:text-white select-none">

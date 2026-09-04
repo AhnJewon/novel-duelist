@@ -18,6 +18,7 @@ import { loadArchetypes, registerNewArchetype, findMatchingArchetype, mergeDupli
 import { showKeywordInfo, closeKeywordInfoModal } from './keyword-service.js';
 import { getDust, getCopies, MAX_CARD_COPIES } from './card-copies.js';
 import { loadLocalFlavor } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (js/flavor.local.js가 있을 때만)
+import { populateForgeSelects } from './card-forge.js';   // 🧬 종족·역할 셀렉트 (팩 이름 반영 — 반드시 loadLocalFlavor 뒤)
 import { ensureArchetypeEmbeddings, checkEmbeddingAvailable, findSimilarArchetypes } from './embedding-service.js';
 
 // Setup window bindings for HTML onclick handlers
@@ -65,6 +66,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 🎭 로컬 플레이버 팩 — 보스 목록까지 **불러온 뒤**, 화면을 그리기 **전에** 이름 테이블을 갈아끼운다.
   //    🐛 loadBosses보다 먼저 부르면 보스 이름만 원본으로 되돌아온다(저장된 목록이 나중에 덮어쓴다) — DECISIONS #103
   await loadLocalFlavor();
+  populateForgeSelects();   // 🧬 팩이 이름을 바꾼 뒤에 채운다
   initBattle();
   moveArenaTo('pve');    // 전장을 PvE 슬롯에 앉힌다 (PvP 시작 시 온라인 탭으로 옮겨간다)
   updateForgePromptPreview();

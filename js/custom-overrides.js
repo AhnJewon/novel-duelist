@@ -27,6 +27,9 @@ export function readCustomOverrides() {
     //       화면 선택이 LLM 값으로 덮어써졌다.
     cardType: (document.querySelector('input[name="forge-card-type-radio"]:checked') || {}).value || v('forge-card-type'),
     element: v('forge-element'),
+    // 🧬 종족·사이클 역할 — 비우면 LLM/종족 기본값 (DECISIONS #106·#107). 규칙 105: 읽기·지시·강제 세 곳이 한 쌍이다.
+    race: v('forge-race'),
+    cycleRole: v('forge-cycle-role'),
     // 🔒 카드 이름 — #forge-name은 입력이면서 AI 결과가 쓰이는 칸이라, **유저가 직접 친 경우**(data-by-user)만 강제한다.
     //    🐛 예전엔 유저가 이름을 써 두고 기획을 눌러도 LLM 이름이 덮어썼고, 저장 때 작명 규칙이 또 고쳤다 (DECISIONS #100).
     name: (() => { const el = document.getElementById('forge-name'); return (el && el.dataset.byUser === '1' && el.value.trim()) ? el.value.trim() : null; })(),
@@ -58,6 +61,8 @@ export function customOverridesToPrompt(o) {
   const lines = [];
   if (o.name) lines.push(`- 카드 이름("name")은 반드시 "${o.name}" 그대로 쓸 것 — 한 글자도 바꾸지 말 것. 서사·스킬은 이 이름에 맞춰 짓는다.`);
   if (o.element) lines.push(`- 속성(element)은 반드시 "${o.element}"로 할 것`);
+  if (o.race) lines.push(`- 종족(races)은 반드시 ["${o.race}"]로 할 것. 그림 묘사(visualSeeds)도 이 종족에 맞출 것`);
+  if (o.cycleRole) lines.push(`- 사이클 역할(cycleRole)은 반드시 "${o.cycleRole}"로 할 것`);
   if (o.themeId) {
     // 기존 카드군을 골랐다 — id를 그대로 쓰게 해야 새 카드군이 생기지 않는다
     lines.push(`- 카드군은 기존 카드군 "${o.themeName}"에 편입시킬 것. "themeId"에 "${o.themeId}"를 그대로 복사하고 "themeName"도 한 글자도 바꾸지 말 것.`);
@@ -103,6 +108,9 @@ export function applyCustomOverrides(data, o) {
   //    한 번 더 볼 수 있다 — 그건 카드군의 규칙이지 LLM의 취향이 아니다.
   if (o.cardType) out.cardType = o.cardType;
   if (o.element) out.element = o.element;
+  // 🧬 고른 종족은 그대로 남는다. coerceCardRaces는 **비었을 때만** 채우므로 여기서 넣으면 끝까지 간다.
+  if (o.race) out.races = [o.race];
+  if (o.cycleRole) out.cycleRole = o.cycleRole;
   if (o.name) { out.name = o.name; out.nameLocked = true; }   // 저장 경로의 작명 교정·키워드 삽입도 건너뛴다
   if (o.allowOverBudget) out.allowOverBudget = true;          // enforcePowerBudget이 깎지 않고 powerDebt로 돌려준다
   // ⚜️ 소속의 권위는 themeId다 (DECISIONS #17). 프롬프트의 "id를 그대로 복사"

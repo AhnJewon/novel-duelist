@@ -8,7 +8,8 @@ import { expandDanbooruTags, buildVisualPromptFromCard } from './dan-tag-gen.js'
 import { findMatchingArchetype, registerNewArchetype, getRelevantArchetypesPrompt, cleanCardName, enforceKeywordInName } from './archetype-service.js';
 import { coerceCardElement, playstyleGuide, playstyleOptionsForPrompt, inferPlaystyle } from './archetype-identity.js';
 import { coerceCardRaces, RACE_CONFIG, RACE_KEYS, raceImageTags, MAX_RACES_PER_CARD } from './races.js';   // 🧬 종족 (DECISIONS #106)
-import { isCycleRole, describeCycleRole } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
+import { isCycleRole, describeCycleRole, CYCLE_ROLES } from './cycle-roles.js';   // 🧬 사이클 역할 (DECISIONS #107)
+import { escapeHtml } from './dom-utils.js';   // 셀렉트 옵션에 팩 이름이 들어간다 (금지사항 3)
 import { buildNamingRule, nameMatchesType, fixCardName } from './card-naming.js';
 import { validateCardPlan, buildRetryDirective, validateRequestedEffects } from './card-validator.js';
 import { applyLlmDescription } from './card-describe.js';
@@ -1030,6 +1031,26 @@ export function expandCurrentPromptWithDanTagGen() {
   promptInput.value = expanded;
   updateForgePromptPreview();
   audio.playMagic();
+}
+
+/**
+ * 🧬 종족·사이클 역할 셀렉트를 **테이블에서** 채운다.
+ *
+ * index.html에 옵션을 박아 두지 않는 이유: 플레이버 팩이 이름을 바꾸면 화면이 따라가야 한다.
+ * (속성 필터 버튼이 정적 마크업이라 못 따라가는 문제를 여기서는 반복하지 않는다 — DECISIONS #106)
+ * ⚠️ `loadLocalFlavor()` **뒤에** 부르세요. 먼저 부르면 원본 이름이 박힙니다.
+ */
+export function populateForgeSelects() {
+  const fill = (id, head, entries) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const prev = el.value || '';
+    el.innerHTML = `<option value="">${head}</option>` +
+      entries.map(([k, spec]) => `<option value="${k}">${spec.icon} ${escapeHtml(spec.name)}</option>`).join('');
+    el.value = [...el.options].some(o => o.value === prev) ? prev : '';
+  };
+  fill('forge-race', '🎲 AI 결정', Object.entries(RACE_CONFIG));
+  fill('forge-cycle-role', '🎲 종족 기본값', Object.entries(CYCLE_ROLES));
 }
 
 export function updateForgePromptPreview() {

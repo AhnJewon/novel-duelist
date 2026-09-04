@@ -2,6 +2,7 @@
 
 import { ELEMENT_CONFIG, RARITY_STYLE, CARD_TYPES } from './config.js';
 import { RACE_CONFIG, readRaces, describeRaces } from './races.js';   // 🧬 종족 (DECISIONS #106)
+import { describeCycleRole } from './cycle-roles.js';   // 🥚 사이클 역할 (DECISIONS #107)
 import { escapeHtml, escapeJsString } from './dom-utils.js';
 import { STATUS_EFFECTS } from './status-effects.js';
 import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
@@ -181,6 +182,12 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
   const raceBadge = cardRaces.length > 0
     ? `<span class="text-sm" title="${escapeHtml(cardRaces.map(r => RACE_CONFIG[r].name).join(' · '))} 종족">${cardRaces.map(r => RACE_CONFIG[r].icon).join('')}</span>`
     : '';
+  // 🥚 사이클 역할 — 제약이 있을 때만 그린다. 대부분의 카드는 `both`(제약 없음)라 조용하다.
+  //    "기능을 만들면 화면에도 보이게 하세요"(규칙 71) — 안 보이면 동작 안 하는 걸로 오해받는다.
+  const roleLabel = describeCycleRole(card);
+  const roleBadge = roleLabel
+    ? `<span class="text-sm" title="사이클 역할: ${escapeHtml(roleLabel)}">${roleLabel.split(' ')[0]}</span>`
+    : '';
   const themeLabel = card.themeName || (card.theme && card.theme.name) || null;
 
   // 하단 스탯 바 구성 (카드 타입별 분기)
@@ -237,6 +244,7 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
       <div class="flex items-center gap-1 shrink-0">
         ${copiesBadge}
         ${raceBadge}
+        ${roleBadge}
         <span class="text-sm" title="${elCfg.name} 속성">${elCfg.icon}</span>
       </div>
     </div>
