@@ -1147,6 +1147,51 @@
             </select>
           </div>
         </div>
+        <!-- 🔎 상세 필터 — 등급·코스트·효과 종류·덱 포함·함정 조건·정렬 (DECISIONS #102) -->
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-400 font-bold">상세:</span>
+          <select id="rarity-filter-select" onchange="filterRarity(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">등급 전체</option>
+            <option value="common">COMMON</option>
+            <option value="rare">RARE</option>
+            <option value="epic">EPIC</option>
+            <option value="legendary">LEGENDARY</option>
+          </select>
+          <select id="cost-filter-select" onchange="filterCost(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">코스트 전체</option>
+            <option value="1">💎 1</option><option value="2">💎 2</option><option value="3">💎 3</option><option value="4">💎 4</option><option value="5+">💎 5 이상</option>
+          </select>
+          <select id="effect-filter-select" onchange="filterEffect(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">효과 전체</option>
+            <option value="damage">💥 피해</option>
+            <option value="shield">🛡️ 방어막</option>
+            <option value="heal">💚 회복</option>
+            <option value="draw">🃏 드로우/마나</option>
+            <option value="status">💫 상태이상</option>
+            <option value="control">🔍 서치/파괴/토큰</option>
+            <option value="passive">🏛️ 패시브/오라</option>
+            <option value="vanilla">🃏 바닐라 (효과 없음)</option>
+            <option value="combo">⚡ 카드군 연계 보유</option>
+          </select>
+          <select id="trap-filter-select" onchange="filterTrapTrigger(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">함정 조건 전체</option>
+          </select>
+          <select id="deck-filter-select" onchange="filterDeckStatus(this.value)" class="bg-[#181d33] border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-amber-400">
+            <option value="all">덱 여부 전체</option>
+            <option value="in">✅ 출전 덱에 있음</option>
+            <option value="out">⬜ 덱에 없음</option>
+          </select>
+          <select id="sort-select" onchange="sortCollection(this.value)" class="bg-[#181d33] border border-cyan-500/40 text-cyan-200 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-cyan-400">
+            <option value="newest">정렬: 최신순</option>
+            <option value="name">정렬: 이름</option>
+            <option value="cost">정렬: 코스트 ↑</option>
+            <option value="rarity">정렬: 등급 ↓</option>
+            <option value="attack">정렬: 공격력 ↓</option>
+            <option value="hp">정렬: 체력 ↓</option>
+          </select>
+          <button onclick="resetGrimoireFilters()" class="px-2.5 py-1.5 rounded-lg bg-[#181d33] border border-slate-700 text-slate-400 hover:text-white text-xs font-bold">↺ 필터 초기화</button>
+          <span id="grimoire-filter-count" class="text-[11px] text-slate-500"></span>
+        </div>
 
         <!-- 보관함 카드 그리드 -->
         <div id="grimoire-grid" class="flex flex-wrap justify-center sm:justify-start gap-4 pt-2">

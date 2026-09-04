@@ -7,11 +7,53 @@ import { audio } from './audio.js';
 import { ELEMENT_CONFIG, CARD_TYPES } from './config.js';
 import { getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
 import { escapeHtml, escapeJsString } from './dom-utils.js';
+import { TRAP_TRIGGERS } from './trap-system.js';
 
 let currentElementFilter = 'all';
 let currentTypeFilter = 'all';
 let currentThemeFilter = 'all';
 let currentSearchQuery = '';
+// 🔎 상세 필터 (DECISIONS #102) — 등급·코스트·효과 종류·함정 조건·덱 포함·정렬
+let currentRarityFilter = 'all';
+let currentCostFilter = 'all';
+let currentEffectFilter = 'all';
+let currentTrapFilter = 'all';
+let currentDeckFilter = 'all';
+let currentSort = 'newest';
+
+const RARITY_RANK = { common: 0, rare: 1, epic: 2, legendary: 3 };
+const skillOf = (c) => (c.skills && c.skills[0]) || c.skill || {};
+const hasStatus = (s) => !!(s.statusEffect && s.statusEffect.type && s.statusEffect.type !== 'none');
+
+/** 효과 종류 필터 — 카드 데이터에서 판정한다 (설명문이 아니라 필드) */
+function matchesEffectFilter(c, kind) {
+  const s = skillOf(c);
+  switch (kind) {
+    case 'damage':  return (s.damage || 0) > 0;
+    case 'shield':  return (s.shield || 0) > 0;
+    case 'heal':    return (s.heal || 0) > 0 || (s.maxHpGain || 0) > 0;
+    case 'draw':    return (s.drawCards || 0) > 0 || (s.manaGain || 0) > 0;
+    case 'status':  return hasStatus(s);
+    case 'control': return (s.destroy || 0) > 0 || (s.searchDeck || 0) > 0 || (s.summonToken || 0) > 0 || !!s.silence || (s.attackDown || 0) > 0;
+    case 'passive': return !!s.passiveEffect;
+    case 'vanilla': return !!s.isVanilla;
+    case 'combo':   return !!(c.themeId || c.themeName);
+    default: return true;
+  }
+}
+
+function sortCards(list, mode) {
+  const arr = list.slice();
+  const name = (c) => String(c.name || '');
+  switch (mode) {
+    case 'name':   return arr.sort((a, b) => name(a).localeCompare(name(b), 'ko'));
+    case 'cost':   return arr.sort((a, b) => (a.cost || 0) - (b.cost || 0) || name(a).localeCompare(name(b), 'ko'));
+    case 'rarity': return arr.sort((a, b) => (RARITY_RANK[b.rarity] || 0) - (RARITY_RANK[a.rarity] || 0) || (b.cost || 0) - (a.cost || 0));
+    case 'attack': return arr.sort((a, b) => (b.attack || 0) - (a.attack || 0));
+    case 'hp':     return arr.sort((a, b) => (b.hp || 0) - (a.hp || 0));
+    default:       return arr;   // newest — 보관함은 최신이 앞에 온다(unshift)
+  }
+}
 
 export function filterTheme(themeId) {
   currentThemeFilter = themeId || 'all';
@@ -158,6 +200,35 @@ function renderCollectionSection() {
   }
 
   // 테마 필터 드롭다운 매번 갱신 (LLM이 만든 신규 카드군 실시간 반영)
+  // 🔎 상세 필터
+  if (currentRarityFilter !== 'all') filtered = filtered.filter(c => (c.rarity || 'common') === currentRarityFilter);
+  if (currentCostFilter !== 'all') {
+    filtered = currentCostFilter === '5+'
+      ? filtered.filter(c => (c.cost || 0) >= 5)
+      : filtered.filter(c => (c.cost || 0) === parseInt(currentCostFilter, 10));
+  }
+  if (currentEffectFilter !== 'all') filtered = filtered.filter(c => matchesEffectFilter(c, currentEffectFilter));
+  if (currentTrapFilter !== 'all') filtered = filtered.filter(c => c.cardType === 'trap' && skillOf(c).trapTrigger === currentTrapFilter);
+  if (currentDeckFilter !== 'all') {
+    const inDeckIds = new Set(state.activeDeckCardIds || []);
+    filtered = filtered.filter(c => currentDeckFilter === 'in' ? inDeckIds.has(c.id) : !inDeckIds.has(c.id));
+  }
+  filtered = sortCards(filtered, currentSort);
+
+  // 함정 조건 셀렉트는 실제 보유 함정의 조건으로 채운다 (없는 조건은 고를 수 없게)
+  const trapSelect = document.getElementById('trap-filter-select');
+  if (trapSelect) {
+    const prev = trapSelect.value || 'all';
+    const present = new Map();
+    state.cardsCollection.forEach(c => { if (c.cardType === 'trap') { const t = skillOf(c).trapTrigger; if (t) present.set(t, (present.get(t) || 0) + 1); } });
+    trapSelect.innerHTML = '<option value="all">함정 조건 전체</option>' +
+      [...present.entries()].map(([t, n]) => `<option value="${t}">🪤 ${escapeHtml((TRAP_TRIGGERS[t] && TRAP_TRIGGERS[t].label) || t)} (${n})</option>`).join('');
+    trapSelect.value = [...trapSelect.options].some(o => o.value === prev) ? prev : 'all';
+    if (trapSelect.value === 'all') currentTrapFilter = 'all';
+  }
+  const countEl = document.getElementById('grimoire-filter-count');
+  if (countEl) countEl.innerText = filtered.length === state.cardsCollection.length ? '' : `${filtered.length} / ${state.cardsCollection.length}장`;
+
   const themeSelect = document.getElementById('theme-filter-select');
   if (themeSelect) {
     const prevValue = themeSelect.value || 'all';
@@ -388,6 +459,25 @@ export function filterType(type) {
 export function searchCollection(query) {
   currentSearchQuery = (query || '').trim();
   renderGrimoire();
+}
+
+// 🔎 상세 필터 세터 (DECISIONS #102)
+export function filterRarity(v) { currentRarityFilter = v || 'all'; renderGrimoire(); }
+export function filterCost(v) { currentCostFilter = v || 'all'; renderGrimoire(); }
+export function filterEffect(v) { currentEffectFilter = v || 'all'; renderGrimoire(); }
+export function filterTrapTrigger(v) { currentTrapFilter = v || 'all'; renderGrimoire(); }
+export function filterDeckStatus(v) { currentDeckFilter = v || 'all'; renderGrimoire(); }
+export function sortCollection(v) { currentSort = v || 'newest'; renderGrimoire(); }
+export function resetGrimoireFilters() {
+  currentRarityFilter = currentCostFilter = currentEffectFilter = currentTrapFilter = currentDeckFilter = 'all';
+  currentSort = 'newest';
+  currentSearchQuery = '';
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('rarity-filter-select', 'all'); set('cost-filter-select', 'all'); set('effect-filter-select', 'all');
+  set('trap-filter-select', 'all'); set('deck-filter-select', 'all'); set('sort-select', 'newest'); set('grimoire-search', '');
+  filterType('all');
+  filterCollection('all');
+  filterTheme('all');
 }
 
 export function resetStarterCardsPrompt() {

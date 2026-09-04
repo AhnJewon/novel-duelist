@@ -15,6 +15,7 @@ import { battleRng, seedBattleRng } from './rng.js';
 import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD_COPIES } from './card-copies.js';
 import { applyLlmDescription } from './card-describe.js';
 import { cardTypeRules } from './card-type-rules.js';
+import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect } from './card-design-roll.js';
 
 export const PACK_THEMES = {
   fire_dark: {
@@ -238,6 +239,9 @@ export async function openBoosterPack(fastMode = false) {
   //       (둘 다 "새 카드군 금지"가 팩의 정의다) → DECISIONS #93
   const newArchetypeSlot = (getSelectedPackMode().mode === 'random' && Math.random() < PACK_NEW_ARCHETYPE_CHANCE)
     ? Math.floor(Math.random() * 5) : -1;
+  // 🏷️ 팩 이름은 카드군의 소재가 아니다. 범용·카드군 집중 팩의 이름("차원의 마스터 올라운더 팩")을 Pack Theme로 넘기자
+  //    4B 모델이 새 카드군을 전부 "차원…"으로 지었다 (유저 실측). 속성 팩만 이름을 테마 단서로 준다 (DECISIONS #102)
+  const packThemeCue = (theme.id === 'allround' || theme.id === 'archetype_focus') ? '' : theme.name;
 
   for (let i = 0; i < 5; i++) {
     const slot = document.getElementById(`pack-slot-${i}`);
@@ -276,8 +280,13 @@ export async function openBoosterPack(fastMode = false) {
     }
     if (progressBar) progressBar.style.width = `${((i + 0.3) / 5) * 100}%`;
 
-    const cardData = await generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, i, theme.name,
-      { newArchetype: i === newArchetypeSlot });
+    const cardData = await generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, i, packThemeCue,
+      {
+        newArchetype: i === newArchetypeSlot,
+        // 🎭 효과 성향·🪤 함정 조건은 코드가 슬롯마다 굴린다 — 4B 모델에 맡기면 늘 "적 피해"·"소환수를 낼 때"다 (DECISIONS #102)
+        effectRole: rollEffectRole(cardType),
+        trapPlan: cardType === 'trap' ? rollTrapTrigger({ element, themeName: theme.name }) : null
+      });
 
     if (progressText) progressText.innerText = `[${i + 1}/5] ✨ [${cardData.rarity.toUpperCase()}] ${cardData.name} 완성!`;
     if (progressBar) progressBar.style.width = `${((i + 1) / 5) * 100}%`;
@@ -336,8 +345,19 @@ function duplicateFilter(element, packMode) {
   };
 }
 
+/**
+ * 주문·함정이 효과 없이 나왔을 때 성향에 맞는 **최소 1개** 효과. 효과가 전부인 타입이라 백지 카드를 막는다.
+ * 방어형은 방어막, 유틸은 드로우 1, 공격형은 굴린 피해. 값은 등급 캡의 하한이라 예산을 넘지 않는다.
+ */
+function fallbackEffectFor(role, rarity, spellDmg) {
+  const caps = RARITY_BALANCE_CAPS[rarity] || RARITY_BALANCE_CAPS.common;
+  if (role === 'defensive') return { shield: (caps.shieldValue && caps.shieldValue[0]) || 8 };
+  if (role === 'utility') return { drawCards: 1 };
+  return { damage: spellDmg };
+}
+
 async function generateSinglePackCardWithAI(baseConcept, element, rarity, cardType, fastMode, ollamaOnline, loadingLabel, progressText, cardIndex, packThemeName = 'Fantasy Pack',
-  { newArchetype = false } = {}) {
+  { newArchetype = false, effectRole = null, trapPlan = null } = {}) {
 
   // 🔁 확률적으로 이미 가진 카드를 중복으로 뽑는다 — AI 호출을 건너뛰어 카드깡이 빨라진다
   const packMode = getSelectedPackMode();
@@ -607,7 +627,7 @@ Return ONLY JSON:
 
 🎯 대상 규칙: 범위가 넓을수록 카드가 강해지고 마나도 비싸진다.
    single(1배) < 2체(1.5배) < 3체(2배) < 전체(2.2배), random은 0.8배.
-   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.`;
+   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}`;
 
       const packReasoningSelect = document.getElementById('pack-reasoning-select');
       const packReasoningMode = packReasoningSelect ? packReasoningSelect.value : (state.settings.reasoningMode || 'fast');
@@ -785,7 +805,11 @@ Return ONLY JSON:
   //    (건축물은 패시브가 정체성이라 바닐라로 두지 않는다)
   // ⚠️ 바닐라는 **소환수 전용**이다. 마법·함정·건축물은 효과가 전부라
   //    효과 없이 내면 발동해도 아무 일이 없는 백지 카드가 된다.
-  const makeVanilla = llmVanilla && cardType === 'unit';
+  // 🎭 성향(effectRole)이 바닐라거나 LLM이 바닐라라고 했으면 바닐라. 소환수만.
+  //    🐛 예전엔 소환수 기본값이 `damage: atk`였다 — LLM이 효과를 안 줘도 공격력만큼의 피해 함성이 붙어 모든 소환수가
+  //       "적 피해" 카드가 됐고 바닐라는 나올 수 없었다(규칙 35의 효과 지어내기). 소환수는 효과가 없으면 바닐라다.
+  //       주문·함정만 효과가 전부라 성향에 맞는 최소 효과를 굴린다(fallbackEffectFor). (DECISIONS #102)
+  const makeVanilla = (llmVanilla || effectRole === 'vanilla') && cardType === 'unit';
 
   const skill = {
     name: skillName,
@@ -794,7 +818,7 @@ Return ONLY JSON:
     isVanilla: makeVanilla || undefined,
     flavorText: llmFlavorText || undefined,
     // 🪤 함정도 피해를 준다. atk를 쓰면 함정은 공격력이 0이라 피해도 0이 된다.
-    damage: makeVanilla ? 0 : ((cardType === 'spell' || cardType === 'trap') ? spellDmg : atk),
+    // (피해 기본값 없음 — LLM 효과 → 성향 정리 → 없으면 소환수는 바닐라, 주문·함정은 성향별 최소 효과)
     // 🎯 LLM이 정한 대상 규칙. 없으면 sanitizeAndClampCardData가 기본값(적 1체)으로 떨군다.
     //    isAoeSpell은 여기서 강제하지 않는다 — targetScope가 단일 소스다.
     targetSide: skillTargetSide,
@@ -803,8 +827,9 @@ Return ONLY JSON:
     damageTarget: skillDamageTarget || undefined,
     passiveEffect: structPassive,
     // 🪤 함정 전용. sanitize가 비어 있으면 기본 조건을 채운다.
-    trapTrigger: cardType === 'trap' ? (llmTrapTrigger || undefined) : undefined,
-    condition: cardType === 'trap' ? (llmTrapCondition || undefined) : undefined,
+    // 코드가 굴린 조건(trapPlan)이 LLM 답보다 우선한다 — 안 그러면 전부 foePlaysUnit이다 (DECISIONS #102)
+    trapTrigger: cardType === 'trap' ? ((trapPlan && trapPlan.trapTrigger) || llmTrapTrigger || undefined) : undefined,
+    condition: cardType === 'trap' ? ((trapPlan && trapPlan.condition) || llmTrapCondition || undefined) : undefined,
     statusEffect: { type: 'none', duration: 0, value: 0 }
   };
 
@@ -815,9 +840,23 @@ Return ONLY JSON:
   if (llmEffects && !makeVanilla) {
     Object.assign(skill, llmEffects);
     // LLM이 피해를 안 줬으면 굴린 값을 남긴다 (효과가 하나도 없는 카드 방지)
-    if (!(skill.damage > 0) && Object.keys(llmEffects).length === 0) {
-      skill.damage = (cardType === 'spell' || cardType === 'trap') ? spellDmg : atk;
+  }
+  if (!makeVanilla && cardType !== 'structure') {
+    // 🎭 성향에 안 맞는 효과는 뺀다 (지어내지 않는다)
+    const shaped = enforceEffectRole(skill, effectRole);
+    Object.assign(skill, shaped.skill);
+    if (shaped.removed.length) console.info(`[Pack] 성향(${effectRole})에 맞춰 뺀 효과: ${shaped.removed.join(', ')}`);
+    if (!hasAnyEffect(skill)) {
+      if (cardType === 'unit') {
+        skill.isVanilla = true;                       // 소환수: 효과가 없으면 바닐라
+      } else {
+        Object.assign(skill, fallbackEffectFor(effectRole, rarity, spellDmg));   // 주문·함정: 성향에 맞는 최소 1개
+      }
     }
+    // 대상 방향은 효과 성격을 따른다 (규칙 31)
+    if (skill.damage > 0) skill.targetSide = skillTargetSide;
+    else if (skill.heal > 0) skill.targetSide = 'ally';
+    else skill.targetSide = 'self';
   }
   // 🏷️ 타입에 안 맞는 이름 교정 — LLM이 규칙을 어겨도 여기서 막는다.
   //    (건축물인데 "심연의 그림자 암살자" 같은 소환수 이름이 나오던 문제)
@@ -888,7 +927,8 @@ async function revealSingleCardSlot(slot, cardData, packIdx = 0) {
   await new Promise(r => setTimeout(r, 180));
 
   slot.innerHTML = '';
-  slot.className = 'w-[205px] h-[335px] flex flex-col items-center justify-center gap-1.5 transition-all duration-300';
+  // 카드(335) + 선택 버튼이 들어가므로 높이를 고정하지 않는다 — 고정하면 카드가 눌려 스탯 바가 잘린다 (DECISIONS #102)
+  slot.className = 'w-[205px] min-h-[335px] flex flex-col items-center justify-start gap-1.5 transition-all duration-300';
 
   const cardEl = createCardElement(cardData, null, false);
   slot.appendChild(cardEl);

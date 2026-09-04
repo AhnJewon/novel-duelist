@@ -558,3 +558,8 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
 107. **크롭 가이드는 렌더러 규칙 그대로 계산하세요** (`visibleRegionOnImage` 한 곳: object-fit cover → object-position →
     scale 원점). 근사치(`85/scale`)로 그리면 프레임이 실제 카드와 어긋나 "이미 크롭된 이미지를 편집하는" 것처럼 보입니다.
     화면의 태그 칸은 **시드**입니다 — 실제 전송 프롬프트는 `getLastImageRequest()`로 보여 주세요. → [DECISIONS #100](docs/DECISIONS.md)
+
+108. **카드의 효과 성향·함정 조건은 코드가 굴려 지시하고 강제합니다** (`card-design-roll.js`). 4B 모델에게 "다양하게"는
+    통하지 않습니다 — 늘 적 피해·foePlaysUnit을 고릅니다. 효과 기본값에 `damage: atk`를 넣지 마세요(규칙 35). 소환수는
+    효과가 없으면 **바닐라**입니다. 팩 상점 이름을 프롬프트의 테마 단서로 쓰지 마세요("차원…" 카드군의 원인).
+    → [DECISIONS #102](docs/DECISIONS.md)

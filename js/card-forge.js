@@ -13,6 +13,7 @@ import { applyLlmDescription } from './card-describe.js';
 import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
+import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective } from './card-design-roll.js';
 import { getDust, spendDust, dustForExcessPower } from './card-copies.js';
 
 let currentLLMSkillData = null;
@@ -30,6 +31,9 @@ let currentForgeRarity = null;
 // ⚖️ 예산 초과 허용 시 남는 파워 초과분(단위)과, 옵션 변경 시 다시 정산할 마지막 기획 원본 (DECISIONS #100)
 let currentPowerDebt = 0;
 let lastPlanRaw = null;
+// 🎭 이번 기획에 코드가 굴린 효과 성향·함정 조건 (DECISIONS #102). 유저가 효과 설명·함정 조건을 적었으면 null.
+let forgeEffectRole = null;
+let forgeTrapPlan = null;
 
 /** 💎 생성 버튼 옆 가루 소모 안내 — 초과분이 있을 때만 보인다 */
 function renderForgeDustCost() {
@@ -186,7 +190,12 @@ export async function generatePromptWithLLM(isRandom = false) {
   const knownThemes = await getRelevantArchetypesPrompt(concept || targetType, 6);
 
   const custom = readCustomOverrides();
-  const customDirective = customOverridesToPrompt(custom);
+  // 🎭 유저가 효과를 적지 않았으면 성향을 코드가 굴린다(팩과 같은 규칙, DECISIONS #102). 적었으면 유저 요구가 성향이다.
+  //    🪤 함정 조건도 유저가 비웠으면 굴린다 — 비운 것은 LLM 몫이지만 4B 모델은 늘 foePlaysUnit을 고른다.
+  forgeEffectRole = custom.effectDesc ? null : rollEffectRole(targetType);
+  forgeTrapPlan = (targetType === 'trap' && !custom.trapTrigger) ? rollTrapTrigger({ element: custom.element || 'fire', themeName: custom.themeName }) : null;
+  if (forgeTrapPlan) { custom.trapTrigger = forgeTrapPlan.trapTrigger; custom.trapCondition = forgeTrapPlan.condition ? Object.values(forgeTrapPlan.condition)[0] : null; }
+  const customDirective = customOverridesToPrompt(custom) + effectRoleDirective(forgeEffectRole, targetType) + trapTriggerDirective(forgeTrapPlan);
 
   // 🎭 유저가 기존 카드군을 골랐으면 그 카드군의 플레이스타일 가이드를 싣는다.
   //    ⚠️ currentCardTheme을 쓰면 안 된다 — 그건 **생성이 끝난 뒤에** 대입되므로
@@ -839,7 +848,15 @@ export async function applyGeneratedCardData(rawData) {
   // 🎛️ 사전 정규화 후 사용자 지정 값을 덮어쓰고 밸런스 검증(등급·마나 예산)을 태운다.
   const normalized = normalizeIncomingCardData(rawData);
   lastPlanRaw = normalized;   // ⚖️ 옵션(예산 초과 허용 등)을 바꾸면 LLM을 다시 부르지 않고 이 기획에 다시 적용한다
-  const data = sanitizeAndClampCardData(applyCustomOverrides(normalized, readCustomOverrides()));
+  const overrides = readCustomOverrides();
+  // 🎭 굴린 성향에 안 맞는 효과는 뺀다 (유저가 효과를 적었으면 성향 없음 → 그대로). 🪤 굴린 함정 조건은 강제.
+  if (forgeEffectRole && !overrides.effectDesc && normalized.skill) {
+    const shaped = enforceEffectRole(normalized.skill, forgeEffectRole);
+    normalized.skill = shaped.skill; normalized.skills = [shaped.skill];
+    if (shaped.removed.length) console.info(`[Forge] 성향(${forgeEffectRole})에 맞춰 뺀 효과: ${shaped.removed.join(', ')}`);
+  }
+  if (forgeTrapPlan && !overrides.trapTrigger) { overrides.trapTrigger = forgeTrapPlan.trapTrigger; overrides.trapCondition = forgeTrapPlan.condition ? Object.values(forgeTrapPlan.condition)[0] : null; }
+  const data = sanitizeAndClampCardData(applyCustomOverrides(normalized, overrides));
   // 📐 정산을 마친 수치를 기억한다 — 저장이 다시 굴리지 않고 이 값을 쓴다 (DECISIONS #93)
   currentPlannedStats = pickPlannedStats(data);
   // 💎 예산 초과분(파워 단위) — 가루 소모량 표시·결제의 근거 (DECISIONS #100)
@@ -1158,14 +1175,15 @@ export async function completeForgedCard(name, element, rarity, prompt, imageUrl
     name: currentLLMSkillData.name || `${name}의 비기`,
     description: currentLLMSkillData.description || `${name}의 효과를 발동합니다.`,
     cost: cost
-  } : {
-    name: `${name}의 비기`,
-    description: `${name}의 효과를 발동합니다.`,
-    cost: cost,
-    value: cardType === 'spell' ? spellDmg : atk,
-    damage: cardType === 'spell' ? spellDmg : atk,
-    effectType: element === 'holy' ? 'shield' : 'damage'
-  };
+  } : (cardType === 'unit'
+    // 🃏 기획 없이 만든 소환수는 바닐라다. 🐛 예전엔 `damage: atk`를 지어 넣어 모든 소환수가 피해 카드가 됐다 (규칙 35, #102)
+    ? { name: `${name}의 비기`, description: '', cost: cost, isVanilla: true, flavorText: `${name}, 전장에 서다.` }
+    : {
+      name: `${name}의 비기`,
+      description: `${name}의 효과를 발동합니다.`,
+      cost: cost,
+      damage: spellDmg
+    });
 
   const finalTheme = currentCardTheme || findMatchingArchetype(name, element);
 

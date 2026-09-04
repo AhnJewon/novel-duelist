@@ -99,6 +99,10 @@ export function createCardElement(card, onClickHandler = null, isSmall = false, 
   // 엄격한 고정 크기 유지 (텍스트 길이에 관계없이 카드 크기 완전 일치)
   cardDiv.style.width = isSmall ? '160px' : '205px';
   cardDiv.style.height = isSmall ? '265px' : '335px';
+  // 🐛 flex 컨테이너 안에서 카드가 **줄어들지 않게** 한다. 팩 공개 슬롯(h-335, flex-col)이 카드+선택 버튼을 담으면서
+  //    카드를 299px로 눌렀고, 내부 구역은 고정 높이라 하단 스탯 바가 카드의 overflow-hidden에 잘렸다 (DECISIONS #102).
+  //    1:1 프레임(#101)으로 내부 합이 331이 되면서 드러났다 — 예전엔 283이라 눌려도 안 잘렸다.
+  cardDiv.style.flexShrink = '0';
 
   // 3D 마우스 무브 틸트 인터랙션
   cardDiv.addEventListener('mousemove', (e) => {

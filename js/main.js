@@ -7,7 +7,7 @@ import { refreshCustomThemeOptions, onCustomThemePick } from './custom-overrides
 import { loadBosses, openBossForgeModal, closeBossForgeModal, generateBossWithLLM, generateAIBoss, generateMockBoss, saveAndFightBoss } from './boss-forge.js';
 import { initBattle, playCard, attackWithMinion, playerEndTurn, changeBoss, restartBattle, renderBattleUI } from './battle-engine.js';
 import { updateForgePromptPreview, shuffleConceptInput, addTag, clearForgePrompt, expandCurrentPromptWithDanTagGen, generatePromptWithLLM, generatePromptSmartRandom, generateAICard, generateMockCard, setForgeType } from './card-forge.js';
-import { renderGrimoire, filterCollection, filterType, filterTheme, searchCollection, addToActiveDeck, removeFromActiveDeck, clearActiveDeck, autoFillRecommendedDeck, exportDeckJson, importDeckJsonPrompt, resetStarterCardsPrompt } from './deck-builder.js';
+import { renderGrimoire, filterCollection, filterType, filterTheme, searchCollection, filterRarity, filterCost, filterEffect, filterTrapTrigger, filterDeckStatus, sortCollection, resetGrimoireFilters, addToActiveDeck, removeFromActiveDeck, clearActiveDeck, autoFillRecommendedDeck, exportDeckJson, importDeckJsonPrompt, resetStarterCardsPrompt } from './deck-builder.js';
 import { renderPackShop, openBoosterPack, savePackCardsToCollection, addPackCardsToActiveDeck, onPackResolutionChange, setPackArchetype } from './card-pack.js';
 import { switchTab, checkCustomModelInput, checkCustomLlmInput, openSettingsModal, closeSettingsModal, saveSettingsFromModal, syncReasoningSelects } from './ui.js';
 import { checkOllamaOnline } from './ai-service.js';
@@ -25,7 +25,7 @@ Object.assign(window, {
   switchTab, toggleMute, initBattle, playCard, attackWithMinion, playerEndTurn, changeBoss, restartBattle, checkOllamaOnline,
   shuffleConceptInput, addTag, clearForgePrompt, expandCurrentPromptWithDanTagGen, generatePromptWithLLM, generatePromptSmartRandom, generateAICard, generateMockCard, setForgeType,
   renderPackShop, openBoosterPack, savePackCardsToCollection, addPackCardsToActiveDeck, onPackResolutionChange, setPackArchetype,
-  filterCollection, filterType, filterTheme, searchCollection, addToActiveDeck, removeFromActiveDeck, clearActiveDeck, autoFillRecommendedDeck, exportDeckJson, importDeckJsonPrompt, resetStarterCardsPrompt,
+  filterCollection, filterType, filterTheme, searchCollection, filterRarity, filterCost, filterEffect, filterTrapTrigger, filterDeckStatus, sortCollection, resetGrimoireFilters, addToActiveDeck, removeFromActiveDeck, clearActiveDeck, autoFillRecommendedDeck, exportDeckJson, importDeckJsonPrompt, resetStarterCardsPrompt,
   openSettingsModal, closeSettingsModal, saveSettingsFromModal, checkCustomModelInput, checkCustomLlmInput,
   openBossForgeModal, closeBossForgeModal, generateBossWithLLM, generateAIBoss, generateMockBoss, saveAndFightBoss,
   openCardCropModal, closeCardCropModal, onCropScaleChange, onCropXChange, onCropYChange, setCropPreset, saveCardCropSettings, downloadOriginalArt,
