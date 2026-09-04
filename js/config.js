@@ -1,6 +1,7 @@
 // config.js - 게임 상수 및 설정
 import { normalizeTrapTrigger, TRAP_TRIGGERS } from './trap-system.js';
 import { STATUS_EFFECTS } from './status-effects.js';
+import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
 import { targetCostMultiplier, readTargetSpec, MAX_TARGET_COUNT, TARGET_SCOPES, TARGET_SIDES, describeTarget,
          HP_TARGETS, readHpTarget, hpTargetCostMultiplier,
          DAMAGE_TARGETS, readDamageTarget, damageTargetCostMultiplier } from './effect-targets.js';
@@ -1138,7 +1139,7 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
   //    조건 없이 "적 1체에게 12 피해"만 적으면 플레이어가 세트할 판단을 못 한다.
   if (cardType === 'trap' && parts.length > 0) {
     const spec = TRAP_TRIGGERS[normalizeTrapTrigger(skill.trapTrigger)];
-    if (spec) return `${spec.label}: ${parts.join(' · ')}.`;
+    if (spec) return flavorRewrite(`${spec.label}: ${parts.join(' · ')}.`);
   }
 
   if (parts.length === 0) {
@@ -1146,9 +1147,9 @@ export function describeSkillFromData(skill = {}, cardType = 'unit') {
     //    "특별한 효과가 없습니다"는 카드를 실패작처럼 보이게 한다.
     //    바닐라는 스탯 효율로 값을 하는 정상적인 카드 종류다.
     if (skill.flavorText) return String(skill.flavorText);
-    return cardType === 'trap' ? '조건 충족 시 발동합니다.' : '';
+    return cardType === 'trap' ? flavorRewrite('조건 충족 시 발동합니다.') : '';
   }
-  return parts.join(' · ') + '.';
+  return flavorRewrite(parts.join(' · ') + '.');
 }
 
 // ============================================================

@@ -17,6 +17,7 @@ import { loadArchetypes, registerNewArchetype, findMatchingArchetype, mergeDupli
   resetArchetypes, restoreArchetypeReset } from './archetype-service.js';
 import { showKeywordInfo, closeKeywordInfoModal } from './keyword-service.js';
 import { getDust, getCopies, MAX_CARD_COPIES } from './card-copies.js';
+import { loadLocalFlavor } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (js/flavor.local.js가 있을 때만)
 import { ensureArchetypeEmbeddings, checkEmbeddingAvailable, findSimilarArchetypes } from './embedding-service.js';
 
 // Setup window bindings for HTML onclick handlers
@@ -55,6 +56,7 @@ window._setPackArchetype = (id) => { setPackArchetype(id); };
 window.addEventListener('DOMContentLoaded', async () => {
   await loadArchetypes();
   await loadInitialData();
+  await loadLocalFlavor();   // 🎭 설정을 읽은 뒤, 화면을 그리기 전에 이름 테이블을 갈아끼운다
   syncReasoningSelects();   // 🧠 추론 모드 선택칸(연성·카드팩·보스)을 저장된 설정으로 — 예전엔 부팅 시 아무 칸도 안 맞췄다 (DECISIONS #96)
   await repairArchetypeRecords();      // 🧰 괄호 키워드·원시 comboAction·지저분한 카드명 정리
   await mergeDuplicateArchetypes();     // 🧹 중복 카드군 병합 (보수 후에 해야 정확)

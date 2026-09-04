@@ -31,6 +31,7 @@ import { STATUS_EFFECTS, applyStatus, createStatusState, isEntityOnly,
          getIncomingDamageMultiplier, getOnHitBonusDamage } from '/js/status-effects.js';
 import { damageEntity, selectFrontTarget, applyPlayerSkillEffects, strikeFrontLine } from '/js/skill-effects.js';
 import { EXECUTE_MULT } from '/js/battle-rules.js';
+import { withFlavorDisabled } from '/js/local-flavor.js';
 import { readTargetSpec, needsTargetPick, collectTargetKeys, resolveTargetKey,
          describeTarget, targetCostMultiplier, hasTargetableEffect } from '/js/effect-targets.js';
 import { TRAP_TRIGGERS, checkTraps, normalizeTrapTrigger } from '/js/trap-system.js';
@@ -2637,6 +2638,12 @@ function suiteNegativeControl() {
 
 // ============================================================
 export async function runAll() {
+  // 🎭 로컬 플레이버 팩이 켜져 있으면 **끄고** 돌린다 — 이 하네스는 표시 문구("적 1체에게 12 피해")를 단언하고,
+  //    규칙·수치는 팩과 무관하다. 팩이 없으면 아무 일도 하지 않는다 (DECISIONS #103).
+  return withFlavorDisabled(runAllSuites);
+}
+
+async function runAllSuites() {
   results = [];
   const suites = [
     ['공격 규칙', suiteAttack], ['효과 대상', suiteTargets], ['카드 효과', suiteEffects],

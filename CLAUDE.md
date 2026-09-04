@@ -563,3 +563,8 @@ const A = await import('/_verify/battle-audit.js?v=' + Date.now()); await A.runA
     통하지 않습니다 — 늘 적 피해·foePlaysUnit을 고릅니다. 효과 기본값에 `damage: atk`를 넣지 마세요(규칙 35). 소환수는
     효과가 없으면 **바닐라**입니다. 팩 상점 이름을 프롬프트의 테마 단서로 쓰지 마세요("차원…" 카드군의 원인).
     → [DECISIONS #102](docs/DECISIONS.md)
+
+109. **로컬 플레이버 팩은 문구와 프롬프트까지만 바꿉니다** (`js/local-flavor.js` 확장점, 팩 파일은 `.gitignore`).
+    규칙·수치·예산을 팩이 건드릴 수 있게 만들지 마세요. `flavorRewrite`는 **우리가 만든** 문장의 낱말만 바꿉니다(규칙 81).
+    표시 문구를 단언하는 검사를 추가하면 하네스가 `withFlavorDisabled`로 도는지 확인하세요.
+    → [DECISIONS #103](docs/DECISIONS.md)

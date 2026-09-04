@@ -3,6 +3,7 @@
 import { state } from './storage.js';
 import { expandDanbooruTags } from './dan-tag-gen.js';
 import { expandTagsDetailed } from './tag-slm.js';
+import { flavorPositiveTags, flavorNegativeTags } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 
 /**
  * ⚡ 로컬 Ollama 서버 가동 여부 확인 (12초 타임아웃)
@@ -500,12 +501,13 @@ export async function generateNovelAIImage({ prompt, negativePrompt = '', elemen
   // 2. 🏷️ DanTagGen 스타일 태그 확장 및 CLIP 순서 최적화 + 언더스코어(_)를 스페이스( )로 변환 (NovelAI 전용 규격)
   // 🎨 태그 SLM이 있으면 그걸로 확장한다 (그림체 다양성). 없으면 규칙 기반 폴백.
   const expanded = await expandTagsDetailed(prompt, element, cardType, 30);
-  const expandedPrompt = expanded.prompt.replace(/_/g, ' ');
+  // 🎭 로컬 플레이버 팩 태그는 **맨 앞**에 둔다 (CLIP 가중치가 앞쪽에 실린다). 팩이 없으면 빈 배열이다.
+  const expandedPrompt = [...flavorPositiveTags(), expanded.prompt].filter(Boolean).join(', ').replace(/_/g, ' ');
 
   const defaultNegative = 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name'.replace(/_/g, ' ');
   // 태그 SLM이 걸러낸 유해 태그를 이 카드 전용으로 덧붙인다.
   // (SLM이 뱉은 `monochrome`, `sketch` 같은 건 기본 네거티브에 없다)
-  const finalNegative = [defaultNegative, expanded.negative, negativePrompt]
+  const finalNegative = [defaultNegative, expanded.negative, negativePrompt, flavorNegativeTags().join(', ')]
     .filter(Boolean).join(', ').replace(/_/g, ' ');
 
   const modelId = state.settings.model || 'nai-diffusion-4-5-full';

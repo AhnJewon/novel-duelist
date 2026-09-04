@@ -3,6 +3,7 @@
 import { ELEMENT_CONFIG, RARITY_STYLE, CARD_TYPES } from './config.js';
 import { escapeHtml, escapeJsString } from './dom-utils.js';
 import { STATUS_EFFECTS } from './status-effects.js';
+import { flavorRewrite } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 그대로 통과)
 
 // ============================================================
 // 🏷️ 스킬 뱃지
@@ -67,7 +68,8 @@ const STATUS_BADGE_LABEL = {
 };
 
 function badgeHtml(keywordKey, toneCls, text) {
-  return `<span onclick="event.stopPropagation(); window.showKeywordInfo && window.showKeywordInfo('${escapeJsString(keywordKey)}')" class="cursor-pointer hover:scale-105 transition px-1.5 py-0.2 rounded text-[8.5px] font-black border ${toneCls}" title="클릭하여 상세 설명 보기">${text}</span>`;
+  // 🎭 뱃지 문구도 플레이버 팩을 지난다 (팩이 없으면 원문 그대로)
+  return `<span onclick="event.stopPropagation(); window.showKeywordInfo && window.showKeywordInfo('${escapeJsString(keywordKey)}')" class="cursor-pointer hover:scale-105 transition px-1.5 py-0.2 rounded text-[8.5px] font-black border ${toneCls}" title="클릭하여 상세 설명 보기">${flavorRewrite(text)}</span>`;
 }
 
 export function getSkillBadgesHtml(skill) {

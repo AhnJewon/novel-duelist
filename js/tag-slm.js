@@ -43,6 +43,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { state } from './storage.js';
+import { flavorRating } from './local-flavor.js';   // 🎭 로컬 플레이버 팩 (없으면 safe)
 import { expandDanbooruTags, parseNaturalLanguageToDanbooru } from './dan-tag-gen.js';
 
 /**
@@ -69,7 +70,7 @@ export const TAG_SLM_PRESETS = {
     //    이어쓰기로 카드에 어울리는 작가를 스스로 채운다 (실측 확인).
     //    `artist: <|empty|>` 로 박아두면 봉인된다 — 그게 그림체 단조로움의 주범이었다.
     buildPrompt: (seeds, meta) =>
-      `quality: masterpiece\nrating: safe\n` +
+      `quality: masterpiece\nrating: ${flavorRating()}\n` +   // 🎭 로컬 플레이버 팩이 없으면 safe
       ((meta && meta.wantArtist) ? '' : 'artist: <|empty|>\n') +
       `characters: <|empty|>\ncopyrights: <|empty|>\naspect ratio: 1.0\n` +
       `target: <|long|>\ntag: ${seeds},<|input_end|>`
@@ -545,7 +546,7 @@ async function suggestArtistOnce(tagLine, timeoutMs) {
       signal: controller.signal,
       body: JSON.stringify({
         model: _resolvedModel || modelName(),
-        prompt: `quality: masterpiece\nrating: safe\ncharacters: <|empty|>\ncopyrights: <|empty|>\n` +
+        prompt: `quality: masterpiece\nrating: ${flavorRating()}\ncharacters: <|empty|>\ncopyrights: <|empty|>\n` +
                 `aspect ratio: 1.0\ntarget: <|long|>\ntag: ${tagLine}\nartist:`,
         raw: true,
         stream: false,

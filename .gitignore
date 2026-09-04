@@ -36,3 +36,6 @@ _verify/user-deck.json
 
 # 다른 에이전트(Antigravity) 세션의 스크래치 — 참고용으로만 보관, 로드되지 않는다
 _archive/antigravity-*/
+
+# 로컬 플레이버 팩 — 각자 로컬에만 둔다 (저장소에는 확장점 js/local-flavor.js만 올라간다)
+js/*.local.js

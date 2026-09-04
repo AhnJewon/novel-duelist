@@ -14,6 +14,7 @@ import { proposeArchetype } from './archetype-proposal.js';
 import { cardTypeRules, cardTypeStatRule } from './card-type-rules.js';
 import { readCustomOverrides, customOverridesToPrompt, applyCustomOverrides } from './custom-overrides.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective } from './card-design-roll.js';
+import { flavorConceptDirective } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 import { getDust, spendDust, dustForExcessPower } from './card-copies.js';
 
 let currentLLMSkillData = null;
@@ -195,7 +196,8 @@ export async function generatePromptWithLLM(isRandom = false) {
   forgeEffectRole = custom.effectDesc ? null : rollEffectRole(targetType);
   forgeTrapPlan = (targetType === 'trap' && !custom.trapTrigger) ? rollTrapTrigger({ element: custom.element || 'fire', themeName: custom.themeName }) : null;
   if (forgeTrapPlan) { custom.trapTrigger = forgeTrapPlan.trapTrigger; custom.trapCondition = forgeTrapPlan.condition ? Object.values(forgeTrapPlan.condition)[0] : null; }
-  const customDirective = customOverridesToPrompt(custom) + effectRoleDirective(forgeEffectRole, targetType) + trapTriggerDirective(forgeTrapPlan);
+  const customDirective = customOverridesToPrompt(custom) + effectRoleDirective(forgeEffectRole, targetType)
+    + trapTriggerDirective(forgeTrapPlan) + flavorConceptDirective();   // 🎭 로컬 플레이버 팩 (없으면 빈 문자열)
 
   // 🎭 유저가 기존 카드군을 골랐으면 그 카드군의 플레이스타일 가이드를 싣는다.
   //    ⚠️ currentCardTheme을 쓰면 안 된다 — 그건 **생성이 끝난 뒤에** 대입되므로

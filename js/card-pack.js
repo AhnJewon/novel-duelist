@@ -16,6 +16,7 @@ import { acquireCard, pickExistingCardForDuplicate, getCopies, getDust, MAX_CARD
 import { applyLlmDescription } from './card-describe.js';
 import { cardTypeRules } from './card-type-rules.js';
 import { rollEffectRole, effectRoleDirective, enforceEffectRole, rollTrapTrigger, trapTriggerDirective, hasAnyEffect } from './card-design-roll.js';
+import { flavorConceptDirective } from './local-flavor.js';   // 🎭 로컬 플레이버 팩
 
 export const PACK_THEMES = {
   fire_dark: {
@@ -627,7 +628,7 @@ Return ONLY JSON:
 
 🎯 대상 규칙: 범위가 넓을수록 카드가 강해지고 마나도 비싸진다.
    single(1배) < 2체(1.5배) < 3체(2배) < 전체(2.2배), random은 0.8배.
-   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}`;
+   예산을 넘으면 시스템이 범위를 좁힌다. 낮은 등급에 전체 대상은 대부분 잘린다.${effectRoleDirective(effectRole, cardType)}${trapTriggerDirective(trapPlan)}${flavorConceptDirective()}`;
 
       const packReasoningSelect = document.getElementById('pack-reasoning-select');
       const packReasoningMode = packReasoningSelect ? packReasoningSelect.value : (state.settings.reasoningMode || 'fast');
